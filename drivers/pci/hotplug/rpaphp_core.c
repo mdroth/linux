@@ -323,7 +323,7 @@ int rpaphp_add_slot(struct device_node *dn)
 	type = (char *) &types[1];
 	for (i = 0; i < indexes[0]; i++) {
 
-		slot = alloc_slot_struct(dn, indexes[i + 1], name, power_domains[i + 1]);
+		slot = alloc_slot_struct(dn, indexes[i + 1], name, power_domains[i + 1], i);
 		if (!slot)
 			return -ENOMEM;
 
