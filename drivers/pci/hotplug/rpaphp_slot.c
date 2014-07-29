@@ -48,7 +48,8 @@ void dealloc_slot_struct(struct slot *slot)
 }
 
 struct slot *alloc_slot_struct(struct device_node *dn,
-                       int drc_index, char *drc_name, int power_domain)
+                       int drc_index, char *drc_name, int power_domain,
+                       int slotnr)
 {
 	struct slot *slot;
 
@@ -67,6 +68,7 @@ struct slot *alloc_slot_struct(struct device_node *dn,
 		goto error_info;
 	slot->dn = dn;
 	slot->index = drc_index;
+	slot->number = slotnr;
 	slot->power_domain = power_domain;
 	slot->hotplug_slot->private = slot;
 	slot->hotplug_slot->ops = &rpaphp_hotplug_slot_ops;
@@ -118,7 +120,6 @@ int rpaphp_register_slot(struct slot *slot)
 {
 	struct hotplug_slot *php_slot = slot->hotplug_slot;
 	int retval;
-	int slotno;
 
 	dbg("%s registering slot:path[%s] index[%x], name[%s] pdomain[%x] type[%d]\n",
 		__func__, slot->dn->full_name, slot->index, slot->name,
@@ -130,11 +131,7 @@ int rpaphp_register_slot(struct slot *slot)
 		return -EAGAIN;
 	}
 
-	if (slot->dn->child)
-		slotno = PCI_SLOT(PCI_DN(slot->dn->child)->devfn);
-	else
-		slotno = -1;
-	retval = pci_hp_register(php_slot, slot->bus, slotno, slot->name);
+	retval = pci_hp_register(php_slot, slot->bus, slot->number, slot->name);
 	if (retval) {
 		err("pci_hp_register failed with error %d\n", retval);
 		return retval;

@@ -328,7 +328,7 @@ int rpaphp_add_slot(struct device_node *dn)
 
 		index = be32_to_cpu(indexes[i + 1]);
 		slot = alloc_slot_struct(dn, index, name,
-					 be32_to_cpu(power_domains[i + 1]));
+					 be32_to_cpu(power_domains[i + 1]), i);
 		if (!slot)
 			return -ENOMEM;
 

@@ -71,6 +71,7 @@ struct slot {
 	struct list_head rpaphp_slot_list;
 	int state;
 	u32 index;
+	u32 number;
 	u32 type;
 	u32 power_domain;
 	char *name;
@@ -96,7 +97,8 @@ int rpaphp_get_drc_props(struct device_node *dn, int *drc_index,
 
 /* rpaphp_slot.c */
 void dealloc_slot_struct(struct slot *slot);
-struct slot *alloc_slot_struct(struct device_node *dn, int drc_index, char *drc_name, int power_domain);
+struct slot *alloc_slot_struct(struct device_node *dn, int drc_index,
+			       char *drc_name, int power_domain, int slotnr);
 int rpaphp_register_slot(struct slot *slot);
 int rpaphp_deregister_slot(struct slot *slot);
 
