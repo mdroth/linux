@@ -151,8 +151,18 @@ int __init early_serial8250_setup(struct earlycon_device *device,
 	device->con->write = early_serial8250_write;
 	return 0;
 }
+
+int __init early_uartamd_setup(struct earlycon_device *device, const char *options)
+{
+	struct uart_port *port = &device->port;
+
+	port->uartclk = 48000000;
+	return early_serial8250_setup(device, options);
+}
+
 EARLYCON_DECLARE(uart8250, early_serial8250_setup);
 EARLYCON_DECLARE(uart, early_serial8250_setup);
+EARLYCON_DECLARE(uartamd, early_uartamd_setup);
 OF_EARLYCON_DECLARE(ns16550, "ns16550", early_serial8250_setup);
 OF_EARLYCON_DECLARE(ns16550a, "ns16550a", early_serial8250_setup);
 OF_EARLYCON_DECLARE(uart, "nvidia,tegra20-uart", early_serial8250_setup);
