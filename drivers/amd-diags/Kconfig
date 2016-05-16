@@ -1,0 +1,6 @@
+config AMD_DIAGS_MMIO_DRV
+	tristate "Userspace MMIO access driver"
+	depends on HAS_IOMEM
+	default m
+	help
+	  Diagnostic MMIO userspace interface.
