@@ -481,25 +481,23 @@ static int dlpar_parse_id_type(char **cmd, struct pseries_hp_errorlog *hp_elog)
 
 		cstr = kstrdup(arg, GFP_KERNEL);
 		if (!cstr) {
-			rc = -EINVAL;
-			pr_err("kstrudup failed before parse : \"%s\"\n", buf);
-			goto dlpar_store_out;
+			pr_err("kstrudup failed before parse : \"%s\"\n", arg);
+			return -EINVAL;
 		}
 
 		istr = strchr(cstr, ' ');
 		if (!istr) {
-			rc = -EINVAL;
-			pr_err("Invalid indexed-count command : \"%s\"\n", buf);
-			goto dlpar_store_out;
+			pr_err("Invalid indexed-count command : \"%s\"\n", arg);
+			kfree(cstr);
+			return -EINVAL;
 		}
 
 		*istr++ = '\0';
 
 		if (kstrtou32(cstr, 0, &count) || kstrtou32(istr, 0, &index)) {
-			rc = -EINVAL;
-			pr_err("Invalid index or count : \"%s\"\n", buf);
+			pr_err("Invalid index or count : \"%s\"\n", arg);
 			kfree(cstr);
-			goto dlpar_store_out;
+			return -EINVAL;
 		}
 
 		kfree(cstr);
