@@ -310,6 +310,8 @@ int rpaphp_add_slot(struct device_node *dn)
 	int i;
 	const int *indexes, *names, *types, *power_domains;
 	char *name, *type;
+	u32 slot_count;
+	bool dedicated_bus;
 
 	if (!dn->name || strcmp(dn->name, "pci"))
 		return 0;
@@ -323,19 +325,22 @@ int rpaphp_add_slot(struct device_node *dn)
 	/* register PCI devices */
 	name = (char *) &names[1];
 	type = (char *) &types[1];
-	for (i = 0; i < be32_to_cpu(indexes[0]); i++) {
+	slot_count = be32_to_cpu(indexes[0]);
+	dedicated_bus = (slot_count == 1) ? true : false;
+	for (i = 0; i < slot_count; i++) {
 		int index;
 
 		index = be32_to_cpu(indexes[i + 1]);
 		slot = alloc_slot_struct(dn, index, name,
-					 be32_to_cpu(power_domains[i + 1]));
+					 be32_to_cpu(power_domains[i + 1]),
+					 dedicated_bus);
 		if (!slot)
 			return -ENOMEM;
 
 		slot->type = simple_strtoul(type, NULL, 10);
 
-		dbg("Found drc-index:0x%x drc-name:%s drc-type:%s\n",
-				index, name, type);
+		dbg("Found drc-index:0x%x drc-name:%s drc-type:%s dedicated bus:%d\n",
+				index, name, type, dedicated_bus ? 1 : 0);
 
 		retval = rpaphp_enable_slot(slot);
 		if (!retval)
@@ -422,11 +427,27 @@ static int enable_slot(struct hotplug_slot *hotplug_slot)
 static int disable_slot(struct hotplug_slot *hotplug_slot)
 {
 	struct slot *slot = (struct slot *)hotplug_slot->private;
+	struct pci_dev *dev, *tmp;
+
 	if (slot->state == NOT_CONFIGURED)
 		return -EINVAL;
 
+	if (!slot->dedicated_bus) {
+		list_for_each_entry_safe_reverse(dev, tmp, slot->pci_devs, bus_list) {
+			u32 dev_index;
+			if (!of_property_read_u32(pci_device_to_OF_node(dev),
+						  "ibm,my-drc-index", &dev_index)) {
+				if (dev_index == slot->index)
+					break;
+			}
+		}
+	}
+
 	pci_lock_rescan_remove();
-	pci_hp_remove_devices(slot->bus);
+	if (dev)
+		pci_stop_and_remove_bus_device(dev);
+	else
+		pci_hp_remove_devices(slot->bus);
 	pci_unlock_rescan_remove();
 	vm_unmap_aliases();
 

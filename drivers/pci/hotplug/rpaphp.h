@@ -78,6 +78,7 @@ struct slot {
 	struct pci_bus *bus;
 	struct list_head *pci_devs;
 	struct hotplug_slot *hotplug_slot;
+	bool dedicated_bus;
 };
 
 extern struct hotplug_slot_ops rpaphp_hotplug_slot_ops;
@@ -96,7 +97,7 @@ int rpaphp_get_drc_props(struct device_node *dn, int *drc_index,
 
 /* rpaphp_slot.c */
 void dealloc_slot_struct(struct slot *slot);
-struct slot *alloc_slot_struct(struct device_node *dn, int drc_index, char *drc_name, int power_domain);
+struct slot *alloc_slot_struct(struct device_node *dn, int drc_index, char *drc_name, int power_domain, bool dedicated_bus);
 int rpaphp_register_slot(struct slot *slot);
 int rpaphp_deregister_slot(struct slot *slot);
 

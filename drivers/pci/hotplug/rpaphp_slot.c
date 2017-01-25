@@ -48,7 +48,8 @@ void dealloc_slot_struct(struct slot *slot)
 }
 
 struct slot *alloc_slot_struct(struct device_node *dn,
-		int drc_index, char *drc_name, int power_domain)
+		int drc_index, char *drc_name, int power_domain,
+		bool dedicated_bus)
 {
 	struct slot *slot;
 
@@ -68,6 +69,7 @@ struct slot *alloc_slot_struct(struct device_node *dn,
 	slot->dn = dn;
 	slot->index = drc_index;
 	slot->power_domain = power_domain;
+	slot->dedicated_bus = dedicated_bus;
 	slot->hotplug_slot->private = slot;
 	slot->hotplug_slot->ops = &rpaphp_hotplug_slot_ops;
 	slot->hotplug_slot->release = &rpaphp_release_slot;
