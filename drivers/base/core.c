@@ -2111,19 +2111,25 @@ int device_offline(struct device *dev)
 {
 	int ret;
 
+	pr_info("device_offline: marker 0\n");
 	if (dev->offline_disabled)
 		return -EPERM;
 
+	pr_info("device_offline: marker 1\n");
 	ret = device_for_each_child(dev, NULL, device_check_offline);
 	if (ret)
 		return ret;
 
+	pr_info("device_offline: marker 3\n");
 	device_lock(dev);
 	if (device_supports_offline(dev)) {
 		if (dev->offline) {
+			pr_info("device_offline: marker 4\n");
 			ret = 1;
 		} else {
+			pr_info("device_offline: marker 5a\n");
 			ret = dev->bus->offline(dev);
+			pr_info("device_offline: marker 5b, bus->offline ret: %d\n", ret);
 			if (!ret) {
 				kobject_uevent(&dev->kobj, KOBJ_OFFLINE);
 				dev->offline = true;

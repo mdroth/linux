@@ -298,13 +298,16 @@ static int memory_subsys_offline(struct device *dev)
 {
 	struct memory_block *mem = to_memory_block(dev);
 
+	pr_info("bus_offline marker 0\n");
 	if (mem->state == MEM_OFFLINE)
 		return 0;
 
+	pr_info("bus_offline marker 1\n");
 	/* Can't offline block with non-present sections */
 	if (mem->section_count != sections_per_block)
 		return -EINVAL;
 
+	pr_info("bus_offline marker 2, section_count: %d, sections_per_block: %d\n", mem->section_count, sections_per_block);
 	return memory_block_change_state(mem, MEM_OFFLINE, MEM_ONLINE);
 }
 

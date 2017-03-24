@@ -426,18 +426,23 @@ static int dlpar_remove_lmb(struct of_drconf_cell *lmb)
 	unsigned long block_sz;
 	int nid, rc;
 
+	pr_info("remove_lmb: marker 0\n");
 	if (!lmb_is_removable(lmb))
 		return -EINVAL;
 
+	pr_info("remove_lmb: marker 1\n");
 	mem_block = lmb_to_memblock(lmb);
 	if (!mem_block)
 		return -EINVAL;
 
+	pr_info("remove_lmb: marker 2a\n");
 	rc = device_offline(&mem_block->dev);
 	put_device(&mem_block->dev);
+	pr_info("remove_lmb: marker 2b, device_offline rc: %d\n", rc);
 	if (rc)
 		return rc;
 
+	pr_info("remove_lmb: marker 3\n");
 	block_sz = pseries_memory_block_size();
 	nid = memory_add_physaddr_to_nid(lmb->base_addr);
 
