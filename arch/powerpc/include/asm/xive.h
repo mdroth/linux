@@ -110,6 +110,7 @@ extern bool __xive_enabled;
 
 static inline bool xive_enabled(void) { return __xive_enabled; }
 
+extern bool xive_hv_init(void);
 extern bool xive_native_init(void);
 extern void xive_smp_probe(void);
 extern int  xive_smp_prepare_cpu(unsigned int cpu);
