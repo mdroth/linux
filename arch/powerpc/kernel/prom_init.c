@@ -174,6 +174,7 @@ struct platform_support {
 	bool hash_mmu;
 	bool radix_mmu;
 	bool radix_gtse;
+	bool xive;
 };
 
 /* Platforms codes are now obsolete in the kernel. Now only used within this
@@ -1051,6 +1052,12 @@ static void __init prom_parse_platform_support(u8 index, u8 val,
 			support->radix_gtse = true;
 		}
 		break;
+	case OV5_INDX(OV5_XIVE_EXPLOIT): /* XIVE Exploitation mode */
+		if (val & OV5_FEAT(OV5_XIVE_EXPLOIT)) {
+			prom_debug("XIVE - exploitation mode\n");
+			support->xive = true;
+		}
+		break;
 	}
 }
 
@@ -1059,7 +1066,8 @@ static void __init prom_check_platform_support(void)
 	struct platform_support supported = {
 		.hash_mmu = false,
 		.radix_mmu = false,
-		.radix_gtse = false
+		.radix_gtse = false,
+		.xive = false
 	};
 	int prop_len = prom_getproplen(prom.chosen,
 				       "ibm,arch-vec-5-platform-support");
@@ -1091,6 +1099,11 @@ static void __init prom_check_platform_support(void)
 	} else {
 		/* We're probably on a legacy hypervisor */
 		prom_debug("Assuming legacy hash support\n");
+	}
+
+	if (supported.xive) {
+		prom_debug("Asking for XIVE\n");
+		ibm_architecture_vec.vec5.intarch = OV5_FEAT(OV5_XIVE_EXPLOIT);
 	}
 }
 
