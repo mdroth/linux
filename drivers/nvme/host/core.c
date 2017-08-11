@@ -692,6 +692,10 @@ static void nvme_keep_alive_end_io(struct request *rq, blk_status_t status)
 
 	blk_mq_free_request(rq);
 
+	dev_warn(ctrl->device,
+		 "ka: end_io, rq: %p, status: %d\n",
+		 rq, status);
+
 	if (status) {
 		dev_err(ctrl->device,
 			"failed nvme_keep_alive_end_io error=%d\n",
@@ -710,6 +714,8 @@ static int nvme_keep_alive(struct nvme_ctrl *ctrl)
 	memset(&c, 0, sizeof(c));
 	c.common.opcode = nvme_admin_keep_alive;
 
+	dev_warn(ctrl->device, "ka: allocating rq...\n");
+
 	rq = nvme_alloc_request(ctrl->admin_q, &c, BLK_MQ_REQ_RESERVED,
 			NVME_QID_ANY);
 	if (IS_ERR(rq))
@@ -717,6 +723,10 @@ static int nvme_keep_alive(struct nvme_ctrl *ctrl)
 
 	rq->timeout = ctrl->kato * HZ;
 	rq->end_io_data = ctrl;
+
+	dev_warn(ctrl->device,
+		 "ka: executing allocated rq: %p, rq->internal_tag: %d, timeout: %lld\n",
+		 rq, rq->internal_tag, rq->timeout);
 
 	blk_execute_rq_nowait(rq->q, NULL, rq, 0, nvme_keep_alive_end_io);
 
