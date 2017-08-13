@@ -1469,21 +1469,6 @@ err:
 	return BLK_STS_IOERR;
 }
 
-static blk_status_t nvme_rdma_queue_rq_debug(struct blk_mq_hw_ctx *hctx,
-		const struct blk_mq_queue_data *bd)
-{
-	struct nvme_rdma_queue *queue = hctx->driver_data;
-	struct request *rq = bd->rq;
-	blk_status_t ret;
-
-	ret = nvme_rdma_queue_is_ready(queue, rq);
-
-	dev_info(queue->ctrl->ctrl.device,
-		 "queue_rq: %p, queue_is_ready: %d\n", rq, ret);
-
-	return nvme_rdma_queue_rq(hctx, bd);
-}
-
 static int nvme_rdma_poll(struct blk_mq_hw_ctx *hctx, unsigned int tag)
 {
 	struct nvme_rdma_queue *queue = hctx->driver_data;
@@ -1513,14 +1498,6 @@ static void nvme_rdma_complete_rq(struct request *rq)
 	nvme_complete_rq(rq);
 }
 
-static void nvme_rdma_complete_rq_debug(struct request *rq)
-{
-	struct nvme_rdma_request *req = blk_mq_rq_to_pdu(rq);
-	dev_info(req->queue->ctrl->ctrl.device,
-		 "complete_rq: %p\n", rq);
-	nvme_rdma_complete_rq(rq);
-}
-
 static const struct blk_mq_ops nvme_rdma_mq_ops = {
 	.queue_rq	= nvme_rdma_queue_rq,
 	.complete	= nvme_rdma_complete_rq,
@@ -1533,8 +1510,8 @@ static const struct blk_mq_ops nvme_rdma_mq_ops = {
 };
 
 static const struct blk_mq_ops nvme_rdma_admin_mq_ops = {
-	.queue_rq	= nvme_rdma_queue_rq_debug,
-	.complete	= nvme_rdma_complete_rq_debug,
+	.queue_rq	= nvme_rdma_queue_rq,
+	.complete	= nvme_rdma_complete_rq,
 	.init_request	= nvme_rdma_init_request,
 	.exit_request	= nvme_rdma_exit_request,
 	.reinit_request	= nvme_rdma_reinit_request,
