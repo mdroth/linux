@@ -116,6 +116,8 @@ static bool __read_mostly enable_preemption_timer = 1;
 module_param_named(preemption_timer, enable_preemption_timer, bool, S_IRUGO);
 #endif
 
+static bool __read_mostly have_spec_ctrl;
+
 #define KVM_GUEST_CR0_MASK (X86_CR0_NW | X86_CR0_CD)
 #define KVM_VM_CR0_ALWAYS_ON_UNRESTRICTED_GUEST (X86_CR0_WP | X86_CR0_NE)
 #define KVM_VM_CR0_ALWAYS_ON						\
@@ -576,6 +578,8 @@ struct vcpu_vmx {
 	u64 		      msr_host_kernel_gs_base;
 	u64 		      msr_guest_kernel_gs_base;
 #endif
+	u64		      spec_ctrl;
+
 	u32 vm_entry_controls_shadow;
 	u32 vm_exit_controls_shadow;
 	u32 secondary_exec_control;
@@ -3259,6 +3263,9 @@ static int vmx_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	case MSR_IA32_TSC:
 		msr_info->data = guest_read_tsc(vcpu);
 		break;
+	case MSR_IA32_SPEC_CTRL:
+		msr_info->data = to_vmx(vcpu)->spec_ctrl;
+		break;
 	case MSR_IA32_SYSENTER_CS:
 		msr_info->data = vmcs_read32(GUEST_SYSENTER_CS);
 		break;
@@ -3365,6 +3372,9 @@ static int vmx_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		break;
 	case MSR_IA32_TSC:
 		kvm_write_tsc(vcpu, msr_info);
+		break;
+	case MSR_IA32_SPEC_CTRL:
+		to_vmx(vcpu)->spec_ctrl = data;
 		break;
 	case MSR_IA32_CR_PAT:
 		if (vmcs_config.vmentry_ctrl & VM_ENTRY_LOAD_IA32_PAT) {
@@ -6733,6 +6743,17 @@ static __init int hardware_setup(void)
 		goto out;
 	}
 
+	/*
+	 * FIXME: this is only needed until SPEC_CTRL is supported
+	 * by upstream Linux in cpufeatures, then it can be replaced
+	 * with static_cpu_has.
+	 */
+	have_spec_ctrl = cpu_has_spec_ctrl();
+	if (have_spec_ctrl)
+		pr_info("kvm: SPEC_CTRL available\n");
+	else
+		pr_info("kvm: SPEC_CTRL not available\n");
+
 	if (boot_cpu_has(X86_FEATURE_NX))
 		kvm_enable_efer_bits(EFER_NX);
 
@@ -6796,6 +6817,8 @@ static __init int hardware_setup(void)
 	vmx_disable_intercept_for_msr(MSR_IA32_SYSENTER_CS, false);
 	vmx_disable_intercept_for_msr(MSR_IA32_SYSENTER_ESP, false);
 	vmx_disable_intercept_for_msr(MSR_IA32_SYSENTER_EIP, false);
+	vmx_disable_intercept_for_msr(MSR_IA32_SPEC_CTRL, false);
+	vmx_disable_intercept_for_msr(MSR_IA32_PRED_CMD, false);
 
 	memcpy(vmx_msr_bitmap_legacy_x2apic_apicv,
 			vmx_msr_bitmap_legacy, PAGE_SIZE);
@@ -9297,6 +9320,13 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 
 	vmx_arm_hv_timer(vcpu);
 
+	/*
+	 * MSR_IA32_SPEC_CTRL is restored after the last indirect branch
+	 * before vmentry.
+	 */
+	if (have_spec_ctrl && vmx->spec_ctrl != 0)
+		wrmsrl(MSR_IA32_SPEC_CTRL, vmx->spec_ctrl);
+
 	vmx->__launched = vmx->loaded_vmcs->launched;
 	asm(
 		/* Store host registers */
@@ -9402,6 +9432,18 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 		, "eax", "ebx", "edi", "esi"
 #endif
 	      );
+
+	if (have_spec_ctrl) {
+		rdmsrl(MSR_IA32_SPEC_CTRL, vmx->spec_ctrl);
+		if (vmx->spec_ctrl != 0)
+			wrmsrl(MSR_IA32_SPEC_CTRL, 0);
+	}
+	/*
+	 * Speculative execution past the above wrmsrl might encounter
+	 * an indirect branch and use guest-controlled contents of the
+	 * indirect branch predictor; block it.
+	 */
+	asm("lfence");
 
 	/* MSR_IA32_DEBUGCTLMSR is zeroed on vmexit. Restore it if needed */
 	if (debugctlmsr)
