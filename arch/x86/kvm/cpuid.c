@@ -389,7 +389,12 @@ static inline int __do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 
 	/* cpuid 7.0.edx*/
 	const u32 kvm_cpuid_7_0_edx_x86_features =
-		KF(AVX512_4VNNIW) | KF(AVX512_4FMAPS);
+		KF(AVX512_4VNNIW) | KF(AVX512_4FMAPS) |
+		KF(SPEC_CTRL) | KF(STIBP);
+
+	/* cpuid 0x80000008.edx */
+	const u32 kvm_cpuid_80000008_ebx_x86_features =
+		KF(IBPB_SUPPORT);
 
 	/* all calls to cpuid_count() should be made on the same cpu */
 	get_cpu();
@@ -474,7 +479,14 @@ static inline int __do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 			if (!tdp_enabled || !boot_cpu_has(X86_FEATURE_OSPKE))
 				entry->ecx &= ~F(PKU);
 			entry->edx &= kvm_cpuid_7_0_edx_x86_features;
-			entry->edx &= get_scattered_cpuid_leaf(7, 0, CPUID_EDX);
+			/*
+			 * FIXME: the special casing of SPEC_CTRL and STIBP
+			 * can be removed once they become regular
+			 * cpufeatures.
+			 */
+			entry->edx &= (
+				get_scattered_cpuid_leaf(7, 0, CPUID_EDX) |
+				KF(SPEC_CTRL) | KF(STIBP));
 		} else {
 			entry->ebx = 0;
 			entry->ecx = 0;
@@ -624,7 +636,13 @@ static inline int __do_cpuid_ent(struct kvm_cpuid_entry2 *entry, u32 function,
 		if (!g_phys_as)
 			g_phys_as = phys_as;
 		entry->eax = g_phys_as | (virt_as << 8);
-		entry->ebx = entry->edx = 0;
+		/*
+		 * FIXME: mask against cpufeatures, with
+		 * get_scattered_cpuid_leaf(0x80000008, 0, CPUID_EBX),
+		 * once IBPB_SUPPORT becomes a regular cpufeature.
+		 */
+		entry->ebx &= kvm_cpuid_80000008_ebx_x86_features;
+		entry->edx = 0;
 		break;
 	}
 	case 0x80000019:
