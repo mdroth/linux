@@ -2282,6 +2282,8 @@ static void vmx_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 	if (per_cpu(current_vmcs, cpu) != vmx->loaded_vmcs->vmcs) {
 		per_cpu(current_vmcs, cpu) = vmx->loaded_vmcs->vmcs;
 		vmcs_load(vmx->loaded_vmcs->vmcs);
+		if (have_spec_ctrl)
+			wrmsrl(MSR_IA32_PRED_CMD, PRED_CMD_IBPB);
 	}
 
 	if (!already_loaded) {
@@ -3839,6 +3841,13 @@ static void free_loaded_vmcs(struct loaded_vmcs *loaded_vmcs)
 	free_vmcs(loaded_vmcs->vmcs);
 	loaded_vmcs->vmcs = NULL;
 	WARN_ON(loaded_vmcs->shadow_vmcs != NULL);
+
+	/*
+	 * The VMCS could be recycled, causing a false negative in
+	 * vmx_vcpu_load; block speculative execution.
+	 */
+	if (have_spec_ctrl)
+		wrmsrl(MSR_IA32_PRED_CMD, PRED_CMD_IBPB);
 }
 
 static void free_kvm_area(void)
