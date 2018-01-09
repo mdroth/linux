@@ -155,6 +155,28 @@ static inline int guest_cpuid_stepping(struct kvm_vcpu *vcpu)
 	return x86_stepping(best->eax);
 }
 
+/* These are scattered features in cpufeatures.h. */
+#define KVM_CPUID_BIT_AVX512_4VNNIW	2
+#define KVM_CPUID_BIT_AVX512_4FMAPS	3
+#define KVM_CPUID_BIT_SPEC_CTRL		26
+#define KVM_CPUID_BIT_STIBP		27
+
+/* CPUID[eax=0x80000008].ebx */
+#define KVM_CPUID_BIT_IBPB_SUPPORT	12
+
+static inline bool cpu_has_spec_ctrl(void)
+{
+	u32 eax, ebx, ecx, edx;
+	cpuid_count(7, 0, &eax, &ebx, &ecx, &edx);
+
+	return edx & bit(KVM_CPUID_BIT_SPEC_CTRL);
+}
+
+static inline bool cpu_has_ibpb_support(void)
+{
+	return cpuid_ebx(0x80000008) & bit(KVM_CPUID_BIT_IBPB_SUPPORT);
+}
+
 static inline bool supports_cpuid_fault(struct kvm_vcpu *vcpu)
 {
 	return vcpu->arch.msr_platform_info & MSR_PLATFORM_INFO_CPUID_FAULT;
