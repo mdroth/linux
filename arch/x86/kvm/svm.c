@@ -183,6 +183,8 @@ struct vcpu_svm {
 		u64 gs_base;
 	} host;
 
+	u64 spec_ctrl;
+
 	u32 *msrpm;
 
 	ulong nmi_iret_rip;
@@ -248,6 +250,8 @@ static const struct svm_direct_access_msrs {
 	{ .index = MSR_CSTAR,				.always = true  },
 	{ .index = MSR_SYSCALL_MASK,			.always = true  },
 #endif
+	{ .index = MSR_IA32_SPEC_CTRL,			.always = true  },
+	{ .index = MSR_IA32_PRED_CMD,			.always = true  },
 	{ .index = MSR_IA32_LASTBRANCHFROMIP,		.always = false },
 	{ .index = MSR_IA32_LASTBRANCHTOIP,		.always = false },
 	{ .index = MSR_IA32_LASTINTFROMIP,		.always = false },
@@ -283,6 +287,8 @@ module_param(vls, int, 0444);
 /* enable/disable Virtual GIF */
 static int vgif = true;
 module_param(vgif, int, 0444);
+ 
+static bool __read_mostly have_spec_ctrl;
 
 static void svm_set_cr0(struct kvm_vcpu *vcpu, unsigned long cr0);
 static void svm_flush_tlb(struct kvm_vcpu *vcpu);
@@ -1131,6 +1137,17 @@ static __init int svm_hardware_setup(void)
 		else
 			pr_info("Virtual GIF supported\n");
 	}
+
+	/*
+	 * FIXME: this is only needed until SPEC_CTRL is supported
+	 * by upstream Linux in cpufeatures, then it can be replaced
+	 * with static_cpu_has.
+	 */
+	have_spec_ctrl = cpu_has_spec_ctrl();
+	if (have_spec_ctrl)
+		pr_info("kvm: SPEC_CTRL available\n");
+	else
+		pr_info("kvm: SPEC_CTRL not available\n");
 
 	return 0;
 
@@ -3576,6 +3593,9 @@ static int svm_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	case MSR_VM_CR:
 		msr_info->data = svm->nested.vm_cr_msr;
 		break;
+	case MSR_IA32_SPEC_CTRL:
+		msr_info->data = svm->spec_ctrl;
+		break;
 	case MSR_IA32_UCODE_REV:
 		msr_info->data = 0x01000065;
 		break;
@@ -3723,6 +3743,9 @@ static int svm_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr)
 		return svm_set_vm_cr(vcpu, data);
 	case MSR_VM_IGNNE:
 		vcpu_unimpl(vcpu, "unimplemented wrmsr: 0x%x data 0x%llx\n", ecx, data);
+		break;
+	case MSR_IA32_SPEC_CTRL:
+		svm->spec_ctrl = data;
 		break;
 	case MSR_IA32_APICBASE:
 		if (kvm_vcpu_apicv_active(vcpu))
@@ -4912,6 +4935,13 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 
 	local_irq_enable();
 
+	/*
+	 * MSR_IA32_SPEC_CTRL is restored after the last indirect branch
+	 * before vmentry.
+	 */
+	if (have_spec_ctrl && svm->spec_ctrl != 0)
+		wrmsrl(MSR_IA32_SPEC_CTRL, svm->spec_ctrl);
+
 	asm volatile (
 		"push %%" _ASM_BP "; \n\t"
 		"mov %c[rbx](%[svm]), %%" _ASM_BX " \n\t"
@@ -4984,6 +5014,18 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 		, "ebx", "ecx", "edx", "esi", "edi"
 #endif
 		);
+
+	if (have_spec_ctrl) {
+		rdmsrl(MSR_IA32_SPEC_CTRL, svm->spec_ctrl);
+		if (svm->spec_ctrl != 0)
+			wrmsrl(MSR_IA32_SPEC_CTRL, 0);
+	}
+	/*
+	 * Speculative execution past the above wrmsrl might encounter
+	 * an indirect branch and use guest-controlled contents of the
+	 * indirect branch predictor; block it.
+	 */
+	asm("lfence");
 
 #ifdef CONFIG_X86_64
 	wrmsrl(MSR_GS_BASE, svm->host.gs_base);
