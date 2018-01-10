@@ -39,6 +39,7 @@
 #include <asm/switch_to.h>
 #include <asm/desc.h>
 #include <asm/prctl.h>
+#include <asm/spec_ctrl.h>
 
 /*
  * per-CPU TSS segments. Threads are completely 'soft' on Linux,
@@ -461,11 +462,15 @@ static __cpuidle void mwait_idle(void)
 			mb(); /* quirk */
 		}
 
+		spec_ctrl_unprotected_begin();
 		__monitor((void *)&current_thread_info()->flags, 0, 0);
-		if (!need_resched())
+		if (!need_resched()) {
 			__sti_mwait(0, 0);
-		else
+			spec_ctrl_unprotected_end();
+		} else {
+			spec_ctrl_unprotected_end();
 			local_irq_enable();
+		}
 		trace_cpu_idle_rcuidle(PWR_EVENT_EXIT, smp_processor_id());
 	} else {
 		local_irq_enable();

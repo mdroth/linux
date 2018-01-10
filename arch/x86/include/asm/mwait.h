@@ -6,6 +6,7 @@
 #include <linux/sched/idle.h>
 
 #include <asm/cpufeature.h>
+#include <asm/spec_ctrl.h>
 
 #define MWAIT_SUBSTATE_MASK		0xf
 #define MWAIT_CSTATE_MASK		0xf
@@ -106,9 +107,21 @@ static inline void mwait_idle_with_hints(unsigned long eax, unsigned long ecx)
 			mb();
 		}
 
+	       /*
+		* CPUs run faster with speculation protection
+		* disabled.  All CPU threads in a core must
+		* disable speculation protection for it to be
+		* disabled.  Disable it while we are idle so the
+		* other hyperthread can run fast.
+		*
+		* Interrupts have been disabled at this point.
+		*/
+
+		spec_ctrl_unprotected_begin();
 		__monitor((void *)&current_thread_info()->flags, 0, 0);
 		if (!need_resched())
 			__mwait(eax, ecx);
+		spec_ctrl_unprotected_end();
 	}
 	current_clr_polling();
 }
