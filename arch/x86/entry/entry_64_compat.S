@@ -54,6 +54,7 @@ ENTRY(entry_SYSENTER_compat)
 	SWITCH_TO_KERNEL_CR3 scratch_reg=%rsp
 
 	movq	PER_CPU_VAR(cpu_current_top_of_stack), %rsp
+	ENABLE_IBRS
 
 	/*
 	 * User tracing code (ptrace or signal handlers) might assume that
@@ -225,7 +226,12 @@ GLOBAL(entry_SYSCALL_compat_after_hwframe)
 	pushq   $0			/* pt_regs->r15 = 0 */
 
 	/*
-	 * User mode is traced as though IRQs are on, and SYSENTER
+	 * We just saved %rdi so it is safe to clobber.  It is not
+	 * preserved during the C calls inside TRACE_IRQS_OFF anyway.
+	 */
+	ENABLE_IBRS_CLOBBER /* clobbers %rax, %rcx, %rdx */
+
+	/* User mode is traced as though IRQs are on, and SYSENTER
 	 * turned them off.
 	 */
 	TRACE_IRQS_OFF
@@ -239,6 +245,12 @@ GLOBAL(entry_SYSCALL_compat_after_hwframe)
 	/* Opportunistic SYSRET */
 sysret32_from_system_call:
 	TRACE_IRQS_ON			/* User mode traces as IRQs on. */
+	/*
+	 * Clobber of %rax, %rcx, %rdx is OK before register restoring.
+	 * This is safe to do here because we have no indirect branches
+	 * between here and the return to userspace (sysretl).
+	 */
+	DISABLE_IBRS_CLOBBER
 	movq	RBX(%rsp), %rbx		/* pt_regs->rbx */
 	movq	RBP(%rsp), %rbp		/* pt_regs->rbp */
 	movq	EFLAGS(%rsp), %r11	/* pt_regs->flags (in r11) */

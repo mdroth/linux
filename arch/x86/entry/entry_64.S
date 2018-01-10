@@ -171,6 +171,8 @@ ENTRY(entry_SYSCALL_64_trampoline)
 
 	/* Load the top of the task stack into RSP */
 	movq	CPU_ENTRY_AREA_tss + TSS_sp1 + CPU_ENTRY_AREA, %rsp
+	/* Stack is usable, use the non-clobbering IBRS enable: */
+	ENABLE_IBRS
 
 	/* Start building the simulated IRET frame. */
 	pushq	$__USER_DS			/* pt_regs->ss */
@@ -214,6 +216,8 @@ ENTRY(entry_SYSCALL_64)
 	 */
 	movq	%rsp, PER_CPU_VAR(rsp_scratch)
 	movq	PER_CPU_VAR(cpu_current_top_of_stack), %rsp
+	/* Stack is usable, use the non-clobbering IBRS enable: */
+	ENABLE_IBRS
 
 	TRACE_IRQS_OFF
 
@@ -413,6 +417,7 @@ syscall_return_via_sysret:
 	 * We are on the trampoline stack.  All regs except RDI are live.
 	 * We can do future final exit work right here.
 	 */
+	DISABLE_IBRS
 	SWITCH_TO_USER_CR3_STACK scratch_reg=%rdi
 
 	popq	%rdi
@@ -751,6 +756,7 @@ GLOBAL(swapgs_restore_regs_and_return_to_usermode)
 	 * We can do future final exit work right here.
 	 */
 
+	DISABLE_IBRS
 	SWITCH_TO_USER_CR3_STACK scratch_reg=%rdi
 
 	/* Restore RDI. */
@@ -837,6 +843,14 @@ native_irq_return_ldt:
 	pushq	%rdi				/* Stash user RDI */
 	SWAPGS					/* to kernel GS */
 	SWITCH_TO_KERNEL_CR3 scratch_reg=%rdi	/* to kernel CR3 */
+
+	/*
+	 * Normally we enable IBRS when we switch to kernel's CR3.
+	 * But we are going to switch back to user CR3 immediately
+	 * in this routine after fixing ESPFIX stack.  There is
+	 * no vulnerable code branching for IBRS to protect.
+	 * We don't toggle IBRS to avoid the cost of two MSR writes.
+	 */
 
 	movq	PER_CPU_VAR(espfix_waddr), %rdi
 	movq	%rax, (0*8)(%rdi)		/* user RAX */
@@ -971,6 +985,8 @@ ENTRY(switch_to_thread_stack)
 	SWITCH_TO_KERNEL_CR3 scratch_reg=%rdi
 	movq	%rsp, %rdi
 	movq	PER_CPU_VAR(cpu_current_top_of_stack), %rsp
+	/* Stack is usable, use the non-clobbering IBRS enable: */
+	ENABLE_IBRS
 	UNWIND_HINT sp_offset=16 sp_reg=ORC_REG_DI
 
 	pushq	7*8(%rdi)		/* regs->ss */
@@ -1271,6 +1287,7 @@ ENTRY(paranoid_entry)
 
 1:
 	SAVE_AND_SWITCH_TO_KERNEL_CR3 scratch_reg=%rax save_reg=%r14
+	ENABLE_IBRS_SAVE_AND_CLOBBER save_reg=%r13d
 
 	ret
 END(paranoid_entry)
@@ -1294,6 +1311,7 @@ ENTRY(paranoid_exit)
 	testl	%ebx, %ebx			/* swapgs needed? */
 	jnz	.Lparanoid_exit_no_swapgs
 	TRACE_IRQS_IRETQ
+	RESTORE_IBRS_CLOBBER save_reg=%r13d
 	RESTORE_CR3	scratch_reg=%rbx save_reg=%r14
 	SWAPGS_UNSAFE_STACK
 	jmp	.Lparanoid_exit_restore
@@ -1324,6 +1342,7 @@ ENTRY(error_entry)
 	SWAPGS
 	/* We have user CR3.  Change to kernel CR3. */
 	SWITCH_TO_KERNEL_CR3 scratch_reg=%rax
+	ENABLE_IBRS_CLOBBER
 
 .Lerror_entry_from_usermode_after_swapgs:
 	/* Put us onto the real thread stack. */
@@ -1371,6 +1390,7 @@ ENTRY(error_entry)
 	 */
 	SWAPGS
 	SWITCH_TO_KERNEL_CR3 scratch_reg=%rax
+	ENABLE_IBRS_CLOBBER
 	jmp .Lerror_entry_done
 
 .Lbstep_iret:
@@ -1385,6 +1405,7 @@ ENTRY(error_entry)
 	 */
 	SWAPGS
 	SWITCH_TO_KERNEL_CR3 scratch_reg=%rax
+	ENABLE_IBRS
 
 	/*
 	 * Pretend that the exception came from user mode: set up pt_regs
@@ -1486,6 +1507,7 @@ ENTRY(nmi)
 	SWITCH_TO_KERNEL_CR3 scratch_reg=%rdx
 	movq	%rsp, %rdx
 	movq	PER_CPU_VAR(cpu_current_top_of_stack), %rsp
+	ENABLE_IBRS
 	UNWIND_HINT_IRET_REGS base=%rdx offset=8
 	pushq	5*8(%rdx)	/* pt_regs->ss */
 	pushq	4*8(%rdx)	/* pt_regs->rsp */
@@ -1736,6 +1758,7 @@ end_repeat_nmi:
 	movq	$-1, %rsi
 	call	do_nmi
 
+	RESTORE_IBRS_CLOBBER save_reg=%r13d
 	RESTORE_CR3 scratch_reg=%r15 save_reg=%r14
 
 	testl	%ebx, %ebx			/* swapgs needed? */
