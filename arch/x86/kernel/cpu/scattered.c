@@ -8,6 +8,7 @@
 #include <asm/processor.h>
 
 #include <asm/apic.h>
+#include <asm/spec_ctrl.h>
 
 struct cpuid_bit {
 	u16 feature;
@@ -57,6 +58,7 @@ void init_scattered_cpuid_features(struct cpuinfo_x86 *c)
 		if (regs[cb->reg] & (1 << cb->bit))
 			set_cpu_cap(c, cb->feature);
 	}
+	spec_ctrl_scan_feature(c);
 }
 
 u32 get_scattered_cpuid_leaf(unsigned int level, unsigned int sub_leaf,

@@ -3920,6 +3920,9 @@
 			off  - unconditionally disable
 			auto - kernel detects whether your CPU model is
 			       vulnerable
+			ibrs - Use indirect branch restricted speculation
+			(IBRS) to restrict speculation in kernel.  For
+			use cases requiring maximum security.
 
 			Selecting 'on' will, and 'auto' may, choose a
 			mitigation method at run time according to the
