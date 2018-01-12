@@ -3266,10 +3266,6 @@ static int vmx_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		msr_info->data = guest_read_tsc(vcpu);
 		break;
 	case MSR_IA32_SPEC_CTRL:
-		if (!static_cpu_has(X86_FEATURE_SPEC_CTRL) ||
-		    (!msr_info->host_initiated &&
-		     !guest_cpuid_has(vcpu, X86_FEATURE_SPEC_CTRL)))
-			return 1;
 		msr_info->data = to_vmx(vcpu)->spec_ctrl;
 		break;
 	case MSR_IA32_SYSENTER_CS:
@@ -3380,10 +3376,6 @@ static int vmx_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		kvm_write_tsc(vcpu, msr_info);
 		break;
 	case MSR_IA32_SPEC_CTRL:
-		if (!static_cpu_has(X86_FEATURE_SPEC_CTRL) ||
-		    (!msr_info->host_initiated &&
-		     !guest_cpuid_has(vcpu, X86_FEATURE_SPEC_CTRL)))
-			return 1;
 		to_vmx(vcpu)->spec_ctrl = data;
 		break;
 	case MSR_IA32_CR_PAT:
