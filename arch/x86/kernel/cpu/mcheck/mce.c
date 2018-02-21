@@ -1465,13 +1465,12 @@ EXPORT_SYMBOL_GPL(mce_notify_irq);
 static int __mcheck_cpu_mce_banks_init(void)
 {
 	int i;
-	u8 num_banks = mca_cfg.banks;
 
-	mce_banks = kzalloc(num_banks * sizeof(struct mce_bank), GFP_KERNEL);
+	mce_banks = kcalloc(MAX_NR_BANKS, sizeof(struct mce_bank), GFP_KERNEL);
 	if (!mce_banks)
 		return -ENOMEM;
 
-	for (i = 0; i < num_banks; i++) {
+	for (i = 0; i < MAX_NR_BANKS; i++) {
 		struct mce_bank *b = &mce_banks[i];
 
 		b->ctl = -1ULL;
@@ -1480,29 +1479,33 @@ static int __mcheck_cpu_mce_banks_init(void)
 	return 0;
 }
 
+u8 max_num_banks;
+static void print_num_banks(void)
+{
+	pr_info("CPU supports %d MCE banks\n", max_num_banks);
+
+	if (max_num_banks > MAX_NR_BANKS) {
+		pr_warn("Using only %u machine check banks out of %u\n",
+			MAX_NR_BANKS, max_num_banks);
+	}
+}
 /*
  * Initialize Machine Checks for a CPU.
  */
 static int __mcheck_cpu_cap_init(void)
 {
-	unsigned b;
+	u8 b;
 	u64 cap;
 
 	rdmsrl(MSR_IA32_MCG_CAP, cap);
 
 	b = cap & MCG_BANKCNT_MASK;
-	if (!mca_cfg.banks)
-		pr_info("CPU supports %d MCE banks\n", b);
+	max_num_banks = max(max_num_banks, b);
 
-	if (b > MAX_NR_BANKS) {
-		pr_warn("Using only %u machine check banks out of %u\n",
-			MAX_NR_BANKS, b);
+	if (b > MAX_NR_BANKS)
 		b = MAX_NR_BANKS;
-	}
 
-	/* Don't support asymmetric configurations today */
-	WARN_ON(mca_cfg.banks != 0 && b != mca_cfg.banks);
-	mca_cfg.banks = b;
+	mca_cfg.banks = max(mca_cfg.banks, b);
 
 	if (!mce_banks) {
 		int err = __mcheck_cpu_mce_banks_init();
@@ -2359,6 +2362,8 @@ static __init int mcheck_init_device(void)
 		err = -EIO;
 		goto err_out;
 	}
+
+	print_num_banks();
 
 	if (!zalloc_cpumask_var(&mce_device_initialized, GFP_KERNEL)) {
 		err = -ENOMEM;
