@@ -129,6 +129,11 @@ static inline void native_wbinvd(void)
 	asm volatile("wbinvd": : :"memory");
 }
 
+static inline void wbnoinvd(void)
+{
+	asm volatile(".byte 0xf3; wbinvd": : :"memory");
+}
+
 extern asmlinkage void native_load_gs_index(unsigned);
 
 static inline unsigned long __read_cr4(void)
