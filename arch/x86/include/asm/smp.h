@@ -142,6 +142,8 @@ void native_play_dead(void);
 void play_dead_common(void);
 void wbinvd_on_cpu(int cpu);
 int wbinvd_on_all_cpus(void);
+void wbnoinvd_on_cpu(int cpu);
+int wbnoinvd_on_all_cpus(void);
 
 void native_smp_send_reschedule(int cpu);
 void native_send_call_func_ipi(const struct cpumask *mask);
@@ -175,11 +177,19 @@ extern int safe_smp_processor_id(void);
 
 #else /* !CONFIG_SMP */
 #define wbinvd_on_cpu(cpu)     wbinvd()
+#define wbnoinvd_on_cpu(cpu)     wbnoinvd()
 static inline int wbinvd_on_all_cpus(void)
 {
 	wbinvd();
 	return 0;
 }
+
+static inline int wbnoinvd_on_all_cpus(void)
+{
+	wbnoinvd();
+	return 0;
+}
+
 #endif /* CONFIG_SMP */
 
 extern unsigned disabled_cpus;
