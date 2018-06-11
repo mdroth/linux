@@ -142,6 +142,7 @@ static struct smca_hwid smca_hwid_mcatypes[] = {
 
 	/* Data Fabric MCA types */
 	{ SMCA_CS,	 HWID_MCATYPE(0x2E, 0x0), 0x1FF },
+	{ SMCA_CS,	 HWID_MCATYPE(0x2E, 0x2), 0x3FFF },
 	{ SMCA_PIE,	 HWID_MCATYPE(0x2E, 0x1), 0xF },
 
 	/* Unified Memory Controller MCA type */
@@ -152,9 +153,11 @@ static struct smca_hwid smca_hwid_mcatypes[] = {
 
 	/* Platform Security Processor MCA type */
 	{ SMCA_PSP,	 HWID_MCATYPE(0xFF, 0x0), 0x1 },
+	{ SMCA_PSP,	 HWID_MCATYPE(0xFF, 0x1), 0x3FFFF },
 
 	/* System Management Unit MCA type */
 	{ SMCA_SMU,	 HWID_MCATYPE(0x01, 0x0), 0x1 },
+	{ SMCA_SMU,	 HWID_MCATYPE(0x01, 0x1), 0x7FF },
 
 	/* Microprocessor 5 Unit MCA type */
 	{ SMCA_MP5,	 HWID_MCATYPE(0x01, 0x2), 0x3FF },
