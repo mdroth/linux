@@ -394,7 +394,7 @@ static void mce_threshold_block_init(struct threshold_block *b, int offset)
 		.lvt_off		= offset,
 	};
 
-	b->threshold_limit		= 1;
+	b->threshold_limit		= THRESHOLD_MAX;
 	threshold_restart_bank(&tr);
 };
 
@@ -1141,7 +1141,7 @@ static int allocate_threshold_blocks(unsigned int cpu, unsigned int bank,
 	b->address		= address;
 	b->interrupt_enable	= 0;
 	b->interrupt_capable	= lvt_interrupt_supported(bank, high);
-	b->threshold_limit	= 1;
+	b->threshold_limit	= THRESHOLD_MAX;
 
 	if (b->interrupt_capable) {
 		threshold_ktype.default_attrs[2] = &interrupt_enable.attr;
