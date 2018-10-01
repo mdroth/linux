@@ -281,6 +281,13 @@ extern int kvmppc_hcall_impl_pr(unsigned long cmd);
 extern int kvmppc_hcall_impl_hv_realmode(unsigned long cmd);
 extern void kvmppc_copy_to_svcpu(struct kvm_vcpu *vcpu);
 extern void kvmppc_copy_from_svcpu(struct kvm_vcpu *vcpu);
+extern void kvmppc_slot_enable_dirty_log(struct kvm *kvm,
+				         const struct kvm_userspace_memory_region *mem,
+				         const struct kvm_memory_slot *slot);
+extern void kvmppc_slot_disable_dirty_log(struct kvm *kvm,
+				          const struct kvm_userspace_memory_region *mem,
+				          const struct kvm_memory_slot *slot);
+
 
 #ifdef CONFIG_PPC_TRANSACTIONAL_MEM
 void kvmppc_save_tm_pr(struct kvm_vcpu *vcpu);

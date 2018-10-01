@@ -4383,6 +4383,16 @@ static void kvmppc_core_commit_memory_region_hv(struct kvm *kvm,
 	 */
 	if (npages)
 		atomic64_inc(&kvm->arch.mmio_update);
+
+	if (new->flags & KVM_MEM_LOG_DIRTY_PAGES &&
+	    !(old->flags & KVM_MEM_LOG_DIRTY_PAGES)) {
+		if (kvm->arch.kvm_ops->slot_enable_dirty_log)
+			kvm->arch.kvm_ops->slot_enable_dirty_log(kvm, mem, new);
+	} else if (old->flags & KVM_MEM_LOG_DIRTY_PAGES &&
+		   !(new->flags & KVM_MEM_LOG_DIRTY_PAGES)) {
+		if (kvm->arch.kvm_ops->slot_disable_dirty_log)
+			kvm->arch.kvm_ops->slot_disable_dirty_log(kvm, mem, new);
+	}
 }
 
 /*
@@ -5254,6 +5264,8 @@ static struct kvmppc_ops kvm_ops_hv = {
 	.get_rmmu_info = kvmhv_get_rmmu_info,
 	.set_smt_mode = kvmhv_set_smt_mode,
 	.enable_nested = kvmhv_enable_nested,
+	.slot_enable_dirty_log = kvmppc_slot_enable_dirty_log,
+	.slot_disable_dirty_log = kvmppc_slot_disable_dirty_log,
 };
 
 static int kvm_init_subcore_bitmap(void)

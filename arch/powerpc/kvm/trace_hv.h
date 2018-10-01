@@ -331,6 +331,230 @@ TRACE_EVENT(kvm_page_fault_exit,
 		   __entry->hpte_v, __entry->hpte_r, __entry->ret)
 );
 
+TRACE_EVENT(kvm_page_fault_exit_radix,
+	TP_PROTO(struct kvm_vcpu *vcpu, unsigned long gpa,
+		 unsigned long ea,
+		 unsigned int level,
+		 long ret),
+
+	TP_ARGS(vcpu, gpa, ea, level, ret),
+
+	TP_STRUCT__entry(
+		__field(int,		vcpu_id)
+		__field(unsigned long,	gpa)
+		__field(unsigned long,	ea)
+		__field(unsigned int,	level)
+		__field(long,		ret)
+	),
+
+	TP_fast_assign(
+		__entry->vcpu_id     = vcpu->vcpu_id;
+		__entry->gpa	     = gpa;
+		__entry->ea	     = ea;
+		__entry->level	     = level;
+		__entry->ret	     = ret;
+	),
+
+	TP_printk("VCPU %d: gpa=0x%lx ea=0x%lx level=0x%x ret=0x%lx",
+		   __entry->vcpu_id, __entry->gpa, __entry->ea,
+		   __entry->level, __entry->ret)
+);
+
+TRACE_EVENT(kvm_page_fault_enter_radix,
+	TP_PROTO(struct kvm_vcpu *vcpu, unsigned long gpa,
+		 unsigned long ea, struct kvm_memory_slot *memslot,
+		 unsigned long dsisr),
+
+	TP_ARGS(vcpu, gpa, ea, memslot, dsisr),
+
+	TP_STRUCT__entry(
+		__field(int,		vcpu_id)
+		__field(unsigned long,	gpa)
+		__field(unsigned long,	ea)
+		__field(u64,		base_gfn)
+		__field(u32,		slot_flags)
+		__field(u32,		dsisr)
+	),
+
+	TP_fast_assign(
+		__entry->vcpu_id  = vcpu->vcpu_id;
+		__entry->gpa	  = gpa;
+		__entry->ea	  = ea;
+		__entry->dsisr	  = dsisr;
+		__entry->base_gfn = memslot ? memslot->base_gfn : -1UL;
+		__entry->slot_flags = memslot ? memslot->flags : 0;
+	),
+
+	TP_printk("VCPU %d: gpa=0x%lx ea=0x%lx,%x slot=0x%llx,0x%x",
+		   __entry->vcpu_id,
+		   __entry->gpa, __entry->ea, __entry->dsisr,
+		   __entry->base_gfn, __entry->slot_flags)
+);
+
+TRACE_EVENT(kvm_split_huge_pte,
+	TP_PROTO(struct kvm_vcpu *vcpu, unsigned long gpa,
+		 struct kvm_memory_slot *memslot,
+		 unsigned int shift),
+
+	TP_ARGS(vcpu, gpa, memslot, shift),
+
+	TP_STRUCT__entry(
+		__field(int,		vcpu_id)
+		__field(unsigned long,	gpa)
+		__field(u64,		base_gfn)
+		__field(u32,		slot_flags)
+		__field(u32,		shift)
+	),
+
+	TP_fast_assign(
+		__entry->vcpu_id  = vcpu->vcpu_id;
+		__entry->gpa	  = gpa;
+		__entry->shift	  = shift;
+		__entry->base_gfn = memslot ? memslot->base_gfn : -1UL;
+		__entry->slot_flags = memslot ? memslot->flags : 0;
+	),
+
+	TP_printk("VCPU %d: gpa=0x%lx shift=0x%x slot=0x%llx,0x%x",
+		   __entry->vcpu_id,
+		   __entry->gpa, __entry->shift,
+		   __entry->base_gfn, __entry->slot_flags)
+);
+
+TRACE_EVENT(kvm_collapse_huge_pte,
+	TP_PROTO(unsigned long gpa, struct kvm_memory_slot *memslot,
+		 unsigned long hva, unsigned int old_shift,
+		 unsigned int new_shift, bool succeeded),
+
+	TP_ARGS(gpa, memslot, hva, old_shift, new_shift, succeeded),
+
+	TP_STRUCT__entry(
+		__field(unsigned long,	gpa)
+		__field(unsigned long,	hva)
+		__field(u64,		base_gfn)
+		__field(u32,		slot_flags)
+		__field(u32,		old_shift)
+		__field(u32,		new_shift)
+		__field(int,		succeeded)
+	),
+
+	TP_fast_assign(
+		__entry->gpa	  = gpa;
+		__entry->hva	  = hva;
+		__entry->old_shift = old_shift;
+		__entry->new_shift = new_shift;
+		__entry->base_gfn = memslot ? memslot->base_gfn : -1UL;
+		__entry->slot_flags = memslot ? memslot->flags : 0;
+		__entry->succeeded = succeeded ? 1 : 0;
+	),
+
+	TP_printk("gpa=0x%lx hva=0x%lx old_shift=0x%x new_shift=0x%x slot=0x%llx,0x%x succeeded=%d",
+		   __entry->gpa, __entry->hva, __entry->old_shift,
+		   __entry->new_shift, __entry->base_gfn, __entry->slot_flags,
+		   __entry->succeeded)
+);
+
+TRACE_EVENT(kvm_pte_level_adjust,
+	TP_PROTO(struct kvm_vcpu *vcpu, unsigned long gpa,
+		 unsigned long hva, struct kvm_memory_slot *memslot,
+		 unsigned int shift),
+
+	TP_ARGS(vcpu, gpa, hva, memslot, shift),
+
+	TP_STRUCT__entry(
+		__field(int,		vcpu_id)
+		__field(unsigned long,	gpa)
+		__field(unsigned long,	hva)
+		__field(u64,		base_gfn)
+		__field(u32,		slot_flags)
+		__field(u32,		shift)
+	),
+
+	TP_fast_assign(
+		__entry->vcpu_id  = vcpu->vcpu_id;
+		__entry->gpa	  = gpa;
+		__entry->hva	  = hva;
+		__entry->shift	  = shift;
+		__entry->base_gfn = memslot ? memslot->base_gfn : -1UL;
+		__entry->slot_flags = memslot ? memslot->flags : 0;
+	),
+
+	TP_printk("VCPU %d: gpa=0x%lx hva=0x%lx shift=0x%x slot=0x%llx,0x%x",
+		   __entry->vcpu_id, __entry->gpa, __entry->hva,
+		   __entry->shift, __entry->base_gfn, __entry->slot_flags)
+);
+
+TRACE_EVENT(kvm_dirty_log_enable,
+	TP_PROTO(const struct kvm_memory_slot *memslot),
+
+	TP_ARGS(memslot),
+
+	TP_STRUCT__entry(
+		__field(u64,	base_gfn)
+		__field(u32,	slot_flags)
+	),
+
+	TP_fast_assign(
+		__entry->base_gfn = memslot ? memslot->base_gfn : -1UL;
+		__entry->slot_flags = memslot ? memslot->flags : 0;
+	),
+
+	TP_printk("slot=0x%llx,0x%x",
+		   __entry->base_gfn, __entry->slot_flags)
+);
+
+TRACE_EVENT(kvm_dirty_log_disable,
+	TP_PROTO(const struct kvm_memory_slot *memslot),
+
+	TP_ARGS(memslot),
+
+	TP_STRUCT__entry(
+		__field(u64,	base_gfn)
+		__field(u32,	slot_flags)
+	),
+
+	TP_fast_assign(
+		__entry->base_gfn = memslot ? memslot->base_gfn : -1UL;
+		__entry->slot_flags = memslot ? memslot->flags : 0;
+	),
+
+	TP_printk("slot=0x%llx,0x%x",
+		   __entry->base_gfn, __entry->slot_flags)
+);
+
+TRACE_EVENT(kvm_change_pte_prot,
+	TP_PROTO(const struct kvm_memory_slot *memslot,
+		 unsigned long gpa, unsigned int shift,
+		 unsigned long clear, unsigned long set,
+		 unsigned long old),
+
+	TP_ARGS(memslot, gpa, shift, clear, set, old),
+
+	TP_STRUCT__entry(
+		__field(unsigned long,	gpa)
+		__field(u32,		shift)
+		__field(unsigned long,	clear)
+		__field(unsigned long,	set)
+		__field(unsigned long,	old)
+		__field(u64,		base_gfn)
+		__field(u32,		slot_flags)
+	),
+
+	TP_fast_assign(
+		__entry->gpa	  = gpa;
+		__entry->shift	  = shift;
+		__entry->set	  = set;
+		__entry->clear	  = clear;
+		__entry->old	  = old;
+		__entry->base_gfn = memslot ? memslot->base_gfn : -1UL;
+		__entry->slot_flags = memslot ? memslot->flags : 0;
+	),
+
+	TP_printk("gpa=0x%lx shift=0x%x set=0x%lx clear=0x%lx old=0x%lx slot=0x%llx,0x%x",
+		   __entry->gpa, __entry->shift,
+		   __entry->set, __entry->clear, __entry->old,
+		   __entry->base_gfn, __entry->slot_flags)
+);
+
 TRACE_EVENT(kvm_hcall_enter,
 	TP_PROTO(struct kvm_vcpu *vcpu),
 

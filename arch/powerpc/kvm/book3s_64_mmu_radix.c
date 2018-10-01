@@ -22,6 +22,8 @@
 #include <asm/pgalloc.h>
 #include <asm/pte-walk.h>
 
+#include "trace_hv.h"
+
 /*
  * Supported radix tree geometry.
  * Like p9, we support either 5 or 9 bits at the first (lowest) level,
@@ -681,8 +683,28 @@ int kvmppc_book3s_instantiate_page(struct kvm_vcpu *vcpu,
 	bool upgrade_write = false;
 	bool *upgrade_p = &upgrade_write;
 	pte_t pte, *ptep;
-	unsigned int shift, level;
+	unsigned int shift, level, guest_level;
 	int ret;
+
+	/*
+	 * When dirty logging, check to see if we had a huge PTE mapped already
+	 * and got here due to it being set to write-protected when logging was
+	 * enabled. If so, remove the entry and let the rest of the code
+	 * handle it like a normal fault.
+	 */
+	if (memslot->dirty_bitmap) {
+		spin_lock(&kvm->mmu_lock);
+		ptep = __find_linux_pte(kvm->arch.pgtable,
+					gpa, NULL, &shift);
+		if (ptep && pte_present(*ptep) &&
+		    (shift == PUD_SHIFT || shift == PMD_SHIFT)) {
+			kvmppc_radix_update_pte(kvm, ptep, ~0UL, 0,
+						gpa, shift);
+			kvmppc_radix_tlbie_page(kvm, gpa, shift, kvm->arch.lpid);
+			trace_kvm_split_huge_pte(vcpu, gpa, memslot, shift);
+		}
+		spin_unlock(&kvm->mmu_lock);
+	}
 
 	/* used to check for invalidations in progress */
 	mmu_seq = kvm->mmu_notifier_seq;
@@ -743,15 +765,24 @@ int kvmppc_book3s_instantiate_page(struct kvm_vcpu *vcpu,
 		level = 1;
 	} else {
 		level = 0;
-		if (shift > PAGE_SHIFT) {
-			/*
-			 * If the pte maps more than one page, bring over
-			 * bits from the virtual address to get the real
-			 * address of the specific single page we want.
-			 */
-			unsigned long rpnmask = (1ul << shift) - PAGE_SIZE;
-			pte = __pte(pte_val(pte) | (hva & rpnmask));
-		}
+	}
+
+	/*
+	 * Force a level 0 mapping if dirty logging is enabled so
+	 * we can collect dirty bits with PAGE_SIZE granularity
+	 * on this and subsequent faults.
+	 */
+	guest_level = (memslot && memslot->dirty_bitmap) ? 0 : level;
+
+	if (guest_level == 0 && shift > PAGE_SHIFT) {
+		/*
+		 * If the pte maps more than one page, bring over
+		 * bits from the virtual address to get the real
+		 * address of the specific single page we want.
+		 */
+		unsigned long rpnmask = (1ul << shift) - PAGE_SIZE;
+		pte = __pte(pte_val(pte) | (hva & rpnmask));
+		trace_kvm_pte_level_adjust(vcpu, gpa, hva, memslot, shift);
 	}
 
 	pte = __pte(pte_val(pte) | _PAGE_EXEC | _PAGE_ACCESSED);
@@ -763,12 +794,12 @@ int kvmppc_book3s_instantiate_page(struct kvm_vcpu *vcpu,
 	}
 
 	/* Allocate space in the tree and write the PTE */
-	ret = kvmppc_create_pte(kvm, kvm->arch.pgtable, pte, gpa, level,
+	ret = kvmppc_create_pte(kvm, kvm->arch.pgtable, pte, gpa, guest_level,
 				mmu_seq, kvm->arch.lpid, NULL, NULL);
 	if (inserted_pte)
 		*inserted_pte = pte;
 	if (levelp)
-		*levelp = level;
+		*levelp = guest_level;
 
 	if (page) {
 		if (!ret && (pte_val(pte) & _PAGE_WRITE))
@@ -788,6 +819,7 @@ int kvmppc_book3s_radix_page_fault(struct kvm_run *run, struct kvm_vcpu *vcpu,
 	long ret;
 	bool writing = !!(dsisr & DSISR_ISSTORE);
 	bool kvm_ro = false;
+	unsigned int level = 0;
 
 	/* Check for unusual errors */
 	if (dsisr & DSISR_UNSUPP_MMU) {
@@ -810,6 +842,8 @@ int kvmppc_book3s_radix_page_fault(struct kvm_run *run, struct kvm_vcpu *vcpu,
 
 	/* Get the corresponding memslot */
 	memslot = gfn_to_memslot(kvm, gfn);
+
+	trace_kvm_page_fault_enter_radix(vcpu, gpa, ea, memslot, dsisr);
 
 	/* No memslot means it's an emulated MMIO region */
 	if (!memslot || (memslot->flags & KVM_MEMSLOT_INVALID)) {
@@ -850,10 +884,13 @@ int kvmppc_book3s_radix_page_fault(struct kvm_run *run, struct kvm_vcpu *vcpu,
 
 	/* Try to insert a pte */
 	ret = kvmppc_book3s_instantiate_page(vcpu, gpa, memslot, writing,
-					     kvm_ro, NULL, NULL);
+					     kvm_ro, NULL, &level);
 
 	if (ret == 0 || ret == -EAGAIN)
 		ret = RESUME_GUEST;
+
+	trace_kvm_page_fault_exit_radix(vcpu, gpa, ea, level, ret);
+
 	return ret;
 }
 
@@ -952,6 +989,156 @@ long kvmppc_hv_get_dirty_log_radix(struct kvm *kvm,
 	}
 	return 0;
 }
+
+/*
+ * Undo the write-protects we set on huge PTEs when enabling logging.
+ *
+ * TODO: we also need to collapse any huge PTEs we split during logging
+ * or else they might stick around forever. we can just nuke the leaf
+ * PTEs corresponding to pages marked as huge on the host side. careful
+ * of races....
+ *
+ * TODO: confirm write-protect can be inferred completely from memslot
+ * flags
+ *
+ * TODO: this assumes we are aligned on PUD/PMD boundaries, but that's
+ * up to userspace
+ */
+static void kvmppc_slot_wrprot_huge_ptes(struct kvm *kvm,
+					 const struct kvm_memory_slot *memslot,
+					 bool write_protect)
+{
+	unsigned long i;
+	unsigned long pages;
+	unsigned long flags_set = 0, flags_clear = 0;
+
+	if (write_protect)
+		flags_clear = _PAGE_WRITE;
+	else
+		flags_set = _PAGE_WRITE;
+
+	for (i = 0; i < memslot->npages; i += pages) {
+		unsigned long gfn = memslot->base_gfn + i;
+		unsigned long gpa = gfn << PAGE_SHIFT;
+		unsigned long old;
+		unsigned shift = 0;
+		pte_t *ptep;
+
+		pages = 1;
+		spin_lock(&kvm->mmu_lock);
+
+		ptep = __find_linux_pte(kvm->arch.pgtable, gpa, NULL, &shift);
+		if (ptep && pte_present(*ptep)) {
+			/* TODO: consider weird interleaving of prepare/commit
+			 * that might change memslot flags on us between log
+			 * start/stop
+			 */
+			if (!(memslot->flags & KVM_MEM_READONLY) &&
+			    (shift == PUD_SHIFT || shift == PMD_SHIFT)) {
+				old = kvmppc_radix_update_pte(kvm, ptep,
+							      flags_clear,
+							      flags_set, gpa, shift);
+				trace_kvm_change_pte_prot(memslot, gpa, shift,
+							  flags_clear, flags_set, old);
+				/* TODO: make this conditional on old once
+				 * we confirm it contains the expected flags
+				 */
+				kvmppc_radix_tlbie_page(kvm, gpa, shift, kvm->arch.lpid);
+				pages = 1UL << (shift - PAGE_SHIFT);
+				pages -= (gpa & (PMD_SIZE - 1)) >> PAGE_SHIFT;
+			}
+		}
+
+		spin_unlock(&kvm->mmu_lock);
+	}
+}
+
+void kvmppc_slot_enable_dirty_log(struct kvm *kvm,
+				  const struct kvm_userspace_memory_region *mem,
+				  const struct kvm_memory_slot *memslot)
+{
+	trace_kvm_dirty_log_enable(memslot);
+
+	if (!kvm_is_radix(kvm))
+		return;
+
+	kvmppc_slot_wrprot_huge_ptes(kvm, memslot, true);
+}
+
+/* TODO: looks like this needs to be moved to book3s_64_mmu_radix...
+ * sigh...
+ */
+void kvmppc_slot_disable_dirty_log(struct kvm *kvm,
+				   const struct kvm_userspace_memory_region *mem,
+				   const struct kvm_memory_slot *memslot)
+{
+	unsigned long pages, i;
+
+	trace_kvm_dirty_log_disable(memslot);
+
+	if (!kvm_is_radix(kvm))
+		return;
+
+	kvmppc_slot_wrprot_huge_ptes(kvm, memslot, false);
+
+	/*
+	 * Clear out level 0 PTE entries for guest if they're in a range
+	 * that can possibly be re-mapped with PUD/PMD-level PTEs during
+	 * a future page fault.
+	 */
+	for (i = 0; i < memslot->npages; i += pages) {
+		unsigned long gfn_start = memslot->base_gfn + i;
+		unsigned long hva;
+		unsigned shift;
+		pte_t *ptep;
+		unsigned long j;
+
+		pages = 1;
+		hva = gfn_to_hva_memslot((struct kvm_memory_slot *)memslot, gfn_start);
+
+		/* TODO: when/why do we need this exactly? */
+		local_irq_disable();
+		ptep = __find_linux_pte(current->mm->pgd, hva, NULL, &shift);
+		if (!ptep) {
+			local_irq_enable();
+			continue;
+		}
+		local_irq_enable();
+
+		if (!(shift == PUD_SHIFT || shift == PMD_SHIFT))
+			continue;
+
+		pr_debug("dirty log disable: huge PTE found for process, hva: %lx, gpa: %lx, shift: %x\n",
+			 hva, gfn_start << PAGE_SHIFT, shift);
+
+		/* Initial hva translation may be unaligned to minimum huge page size */
+		pages = (PMD_SIZE - (hva & (PMD_SIZE - 1))) >> PAGE_SHIFT;
+
+		for (j = 0; j < pages && (i + j) < memslot->npages; j++) {
+			unsigned shift_guest;
+			pte_t *ptep_guest;
+			unsigned long gfn = gfn_start + j;
+			unsigned long gpa = gfn << PAGE_SHIFT;
+
+			spin_lock(&kvm->mmu_lock);
+			ptep_guest = __find_linux_pte(kvm->arch.pgtable, gpa, NULL,
+						      &shift_guest);
+			if (ptep_guest && pte_present(*ptep_guest)) {
+				if (shift_guest > 0) {
+					pr_debug("dirty log disable: already mapped as huge PTE found for partition, hva: %lx, gpa: %lx, shift: %x\n",
+						 hva, gpa, shift);
+					spin_unlock(&kvm->mmu_lock);
+					break;
+				}
+				pr_debug("dirty log disable: unmapping PMD entries, hva: %lx, gpa: %lx, process/partition shift: %x/%x\n",
+					 hva, gpa, shift, shift_guest);
+				kvm_unmap_radix(kvm, (struct kvm_memory_slot *)memslot, gfn);
+			}
+			spin_unlock(&kvm->mmu_lock);
+		}
+	}
+}
+
 
 static void add_rmmu_ap_encoding(struct kvm_ppc_rmmu_info *info,
 				 int psize, int *indexp)

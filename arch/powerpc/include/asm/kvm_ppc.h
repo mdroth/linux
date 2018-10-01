@@ -326,6 +326,12 @@ struct kvmppc_ops {
 			    unsigned long flags);
 	void (*giveup_ext)(struct kvm_vcpu *vcpu, ulong msr);
 	int (*enable_nested)(struct kvm *kvm);
+	void (*slot_enable_dirty_log)(struct kvm *kvm,
+				      const struct kvm_userspace_memory_region *mem,
+				      const struct kvm_memory_slot *slot);
+	void (*slot_disable_dirty_log)(struct kvm *kvm,
+				       const struct kvm_userspace_memory_region *mem,
+				       const struct kvm_memory_slot *slot);
 };
 
 extern struct kvmppc_ops *kvmppc_hv_ops;
