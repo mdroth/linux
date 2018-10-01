@@ -84,6 +84,18 @@ config PPC_SMP_MUXED_IPI
 	  cpu.	This will enable the generic code to multiplex the 4
 	  messages on to one ipi.
 
+config PPC_SYSTEMSIM
+	bool "IBM Full System Simulator (systemsim) support"
+	depends on PPC_CELL || PPC_PSERIES || PPC_MAPLE || PPC_NATIVE
+	default y
+	help
+          Support booting resulting image under IBMs Full System Simulator.
+          If you enable this option, you are able to select device
+          drivers (e.g. network and disk) for purely simulated devices
+          that are provided by systemsim.
+          The Full system simulator is available for download from
+          http://www.alphaworks.ibm.com/tech/.
+
 config IPIC
 	bool
 	default n
