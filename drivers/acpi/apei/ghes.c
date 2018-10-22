@@ -1491,6 +1491,9 @@ static int __init ghes_init(void)
 	else
 		pr_info(GHES_PFX "Failed to enable APEI firmware first mode.\n");
 
+	pr_info(GHES_PFX "APEI GHES_ASSIST %senabled by GHES_ASSIST bit.\n",
+		osc_ghes_assist_support_acked ? "" : "not ");
+
 	return 0;
 err:
 	return rc;

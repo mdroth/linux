@@ -269,6 +269,7 @@ out_kfree:
 EXPORT_SYMBOL(acpi_run_osc);
 
 bool osc_sb_apei_support_acked;
+bool osc_ghes_assist_support_acked;
 
 /*
  * ACPI 6.0 Section 8.4.4.2 Idle State Coordination
@@ -324,8 +325,10 @@ static void acpi_bus_osc_negotiate_platform_control(void)
 	if (IS_ENABLED(CONFIG_USB4))
 		capbuf[OSC_SUPPORT_DWORD] |= OSC_SB_NATIVE_USB4_SUPPORT;
 
-	if (!ghes_disable)
+	if (!ghes_disable) {
 		capbuf[OSC_SUPPORT_DWORD] |= OSC_SB_APEI_SUPPORT;
+		capbuf[OSC_SUPPORT_DWORD] |= OSC_SB_GHES_ASSIST_SUPPORT;
+	}
 	if (ACPI_FAILURE(acpi_get_handle(NULL, "\\_SB", &handle)))
 		return;
 
