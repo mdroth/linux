@@ -4383,6 +4383,8 @@ static void kvmppc_core_commit_memory_region_hv(struct kvm *kvm,
 	 */
 	if (npages)
 		atomic64_inc(&kvm->arch.mmio_update);
+
+	trace_kvm_commit_mr_hv(mem, old, new);
 }
 
 /*
