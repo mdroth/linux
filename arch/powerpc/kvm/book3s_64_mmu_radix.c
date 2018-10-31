@@ -22,6 +22,8 @@
 #include <asm/pgalloc.h>
 #include <asm/pte-walk.h>
 
+#include "trace_hv.h"
+
 /*
  * Supported radix tree geometry.
  * Like p9, we support either 5 or 9 bits at the first (lowest) level,
@@ -788,6 +790,7 @@ int kvmppc_book3s_radix_page_fault(struct kvm_run *run, struct kvm_vcpu *vcpu,
 	long ret;
 	bool writing = !!(dsisr & DSISR_ISSTORE);
 	bool kvm_ro = false;
+	unsigned int level = 0;
 
 	/* Check for unusual errors */
 	if (dsisr & DSISR_UNSUPP_MMU) {
@@ -810,6 +813,8 @@ int kvmppc_book3s_radix_page_fault(struct kvm_run *run, struct kvm_vcpu *vcpu,
 
 	/* Get the corresponding memslot */
 	memslot = gfn_to_memslot(kvm, gfn);
+
+	trace_kvm_page_fault_enter_radix(vcpu, gpa, ea, memslot, dsisr);
 
 	/* No memslot means it's an emulated MMIO region */
 	if (!memslot || (memslot->flags & KVM_MEMSLOT_INVALID)) {
@@ -850,10 +855,13 @@ int kvmppc_book3s_radix_page_fault(struct kvm_run *run, struct kvm_vcpu *vcpu,
 
 	/* Try to insert a pte */
 	ret = kvmppc_book3s_instantiate_page(vcpu, gpa, memslot, writing,
-					     kvm_ro, NULL, NULL);
+					     kvm_ro, NULL, &level);
 
 	if (ret == 0 || ret == -EAGAIN)
 		ret = RESUME_GUEST;
+
+	trace_kvm_page_fault_exit_radix(vcpu, gpa, ea, level, ret);
+
 	return ret;
 }
 

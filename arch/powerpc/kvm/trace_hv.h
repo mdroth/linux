@@ -331,6 +331,118 @@ TRACE_EVENT(kvm_page_fault_exit,
 		   __entry->hpte_v, __entry->hpte_r, __entry->ret)
 );
 
+TRACE_EVENT(kvm_commit_mr_hv,
+	TP_PROTO(const struct kvm_userspace_memory_region *mem,
+		 const struct kvm_memory_slot *old,
+		 const struct kvm_memory_slot *new),
+
+	TP_ARGS(mem, old, new),
+
+	TP_STRUCT__entry(
+		__field(u32,		slot)
+		__field(u32,		flags)
+		__field(u64,		memory_size)
+		__field(short,		old_slot_id)
+		__field(u32,		old_flags)
+		__field(u64,		old_base_gfn)
+		__field(unsigned long,	old_npages)
+		__field(unsigned long,	old_uaddr)
+		__field(short,		new_slot_id)
+		__field(u32,		new_flags)
+		__field(u64,		new_base_gfn)
+		__field(unsigned long,	new_npages)
+		__field(unsigned long,	new_uaddr)
+	),
+
+	TP_fast_assign(
+		__entry->slot			= mem->slot;
+		__entry->flags			= mem->flags;
+		__entry->memory_size		= mem->memory_size;
+		__entry->old_slot_id		= old->id;
+		__entry->old_flags		= old->flags;
+		__entry->old_base_gfn		= old->base_gfn;
+		__entry->old_npages		= old->npages;
+		__entry->old_uaddr		= old->userspace_addr;
+		__entry->new_slot_id		= new->id;
+		__entry->new_flags		= new->flags;
+		__entry->new_base_gfn		= new->base_gfn;
+		__entry->new_npages		= new->npages;
+		__entry->new_uaddr		= new->userspace_addr;
+	),
+
+	TP_printk("SLOT: %x flags=%x memory_size=%llx"
+		  "old_slot_id=%x old_flags=%x old_base_gfn=%llx"
+		  "old_npages=%lx old_uaddr=%lx"
+		  "new_slot_id=%x new_flags=%x new_base_gfn=%llx"
+		  "new_npages=%lx new_uaddr=%lx",
+		  __entry->slot, __entry->flags, __entry->memory_size,
+		  __entry->old_slot_id, __entry->old_flags,
+		  __entry->old_base_gfn, __entry->old_npages,
+		  __entry->old_uaddr, __entry->new_slot_id, __entry->new_flags,
+		  __entry->new_base_gfn, __entry->new_npages,
+		  __entry->new_uaddr)
+);
+
+TRACE_EVENT(kvm_page_fault_exit_radix,
+	TP_PROTO(struct kvm_vcpu *vcpu, unsigned long gpa,
+		 unsigned long ea,
+		 unsigned int level,
+		 long ret),
+
+	TP_ARGS(vcpu, gpa, ea, level, ret),
+
+	TP_STRUCT__entry(
+		__field(int,		vcpu_id)
+		__field(unsigned long,	gpa)
+		__field(unsigned long,	ea)
+		__field(unsigned int,	level)
+		__field(long,		ret)
+	),
+
+	TP_fast_assign(
+		__entry->vcpu_id     = vcpu->vcpu_id;
+		__entry->gpa	     = gpa;
+		__entry->ea	     = ea;
+		__entry->level	     = level;
+		__entry->ret	     = ret;
+	),
+
+	TP_printk("VCPU %d: gpa=0x%lx ea=0x%lx level=0x%x ret=0x%lx",
+		   __entry->vcpu_id, __entry->gpa, __entry->ea,
+		   __entry->level, __entry->ret)
+);
+
+TRACE_EVENT(kvm_page_fault_enter_radix,
+	TP_PROTO(struct kvm_vcpu *vcpu, unsigned long gpa,
+		 unsigned long ea, struct kvm_memory_slot *memslot,
+		 unsigned long dsisr),
+
+	TP_ARGS(vcpu, gpa, ea, memslot, dsisr),
+
+	TP_STRUCT__entry(
+		__field(int,		vcpu_id)
+		__field(unsigned long,	gpa)
+		__field(unsigned long,	ea)
+		__field(u64,		base_gfn)
+		__field(u32,		slot_flags)
+		__field(u32,		dsisr)
+	),
+
+	TP_fast_assign(
+		__entry->vcpu_id  = vcpu->vcpu_id;
+		__entry->gpa	  = gpa;
+		__entry->ea	  = ea;
+		__entry->dsisr	  = dsisr;
+		__entry->base_gfn = memslot ? memslot->base_gfn : -1UL;
+		__entry->slot_flags = memslot ? memslot->flags : 0;
+	),
+
+	TP_printk("VCPU %d: gpa=0x%lx ea=0x%lx,%x slot=0x%llx,0x%x",
+		   __entry->vcpu_id,
+		   __entry->gpa, __entry->ea, __entry->dsisr,
+		   __entry->base_gfn, __entry->slot_flags)
+);
+
 TRACE_EVENT(kvm_hcall_enter,
 	TP_PROTO(struct kvm_vcpu *vcpu),
 
