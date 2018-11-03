@@ -302,6 +302,9 @@ void kvmppc_unmap_pte(struct kvm *kvm, pte_t *pte, unsigned long gpa,
 	if (lpid != kvm->arch.lpid)
 		return;
 
+	/* TODO: should we still record the nest pte dirty flags into bitmap though? */
+	/* TODO: nest might not even get here (full=true in caller unmap routines) */
+
 	if (!memslot) {
 		memslot = gfn_to_memslot(kvm, gfn);
 		if (!memslot)
@@ -411,6 +414,16 @@ void kvmppc_free_pgtable_radix(struct kvm *kvm, pgd_t *pgd, unsigned int lpid)
 		if (!pgd_present(*pgd))
 			continue;
 		pud = pud_offset(pgd, 0);
+		/* TODO: we call this for emulation of L1 tlbie to full the
+		 * shadow pgtbl, but we free as 'full' so we directly wipe
+		 * instead of kvmppc_unmap_pte() so we might possibly lose dirty
+		 * flags here
+		 *
+		 * fixing that might help L1 dirty failure (so we collect
+		 * bits dirtied by L2 that aren't recorded in L1 patb), but
+		 * for L2 dirty failure we need to hands these bits back up
+		 * to L1 somehow...shadow bitmap?
+		 */
 		kvmppc_unmap_free_pud(kvm, pud, lpid);
 		pgd_clear(pgd);
 	}

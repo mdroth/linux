@@ -704,6 +704,9 @@ static void kvmhv_remove_nest_rmap(struct kvm *kvm, u64 n_rmap,
 	/* Find and invalidate the pte */
 	ptep = __find_linux_pte(gp->shadow_pgtable, gpa, NULL, &shift);
 	/* Don't spuriously invalidate ptes if the pfn has changed */
+	/* TODO: when would nested gpa not point to the hpa mapped by L1's
+	 * memslot? and shouldn't it be invalidated still?
+	 */
 	if (ptep && pte_present(*ptep) && ((pte_val(*ptep) & mask) == hpa))
 		kvmppc_unmap_pte(kvm, ptep, gpa, shift, NULL, gp->shadow_lpid);
 }
