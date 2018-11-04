@@ -606,6 +606,62 @@ TRACE_EVENT(kvmppc_run_vcpu_exit,
 			__entry->vcpu_id, __entry->exit, __entry->ret)
 );
 
+TRACE_EVENT(kvm_emulate_priv_tlbie_enter,
+	TP_PROTO(struct kvm_vcpu *vcpu, unsigned long rsval,
+		 unsigned long rbval, unsigned int instr, int ric, int prs,
+		 int r, int lpid, int is),
+
+	TP_ARGS(vcpu, rsval, rbval, instr, ric, prs, r, lpid, is),
+
+	TP_STRUCT__entry(
+		__field(int,		vcpu_id)
+		__field(unsigned long,	rsval)
+		__field(unsigned long,	rbval)
+		__field(unsigned int,	instr)
+		__field(int,		ric)
+		__field(int,		prs)
+		__field(int,		r)
+		__field(int,		lpid)
+		__field(int,		is)
+	),
+
+	TP_fast_assign(
+		__entry->vcpu_id	= vcpu->vcpu_id;
+		__entry->rsval		= rsval;
+		__entry->rbval		= rbval;
+		__entry->instr		= instr;
+		__entry->ric		= ric;
+		__entry->prs		= prs;
+		__entry->r		= r;
+		__entry->lpid		= lpid;
+		__entry->is		= is;
+	),
+
+	TP_printk("VCPU %d: rsval=%lu rbval=%lu instr=%u ric=%d prs=%d r=%d lpid=%d is=%d",
+		  __entry->vcpu_id, __entry->rsval, __entry->rbval,
+		  __entry->instr, __entry->ric,
+		  __entry->prs, __entry->r, __entry->lpid, __entry->is)
+);
+
+TRACE_EVENT(kvm_emulate_priv_tlbie_exit,
+	TP_PROTO(struct kvm_vcpu *vcpu, int ret),
+
+	TP_ARGS(vcpu, ret),
+
+	TP_STRUCT__entry(
+		__field(int,		vcpu_id)
+		__field(int,		ret)
+	),
+
+	TP_fast_assign(
+		__entry->vcpu_id	= vcpu->vcpu_id;
+		__entry->ret		= ret;
+	),
+
+	TP_printk("VCPU %d: ret=%d",
+		  __entry->vcpu_id, __entry->ret)
+);
+
 #endif /* _TRACE_KVM_HV_H */
 
 /* This part must be outside protection */

@@ -20,6 +20,8 @@
 #include <asm/pte-walk.h>
 #include <asm/reg.h>
 
+#include "trace_hv.h"
+
 static struct patb_entry *pseries_partition_tb;
 
 static void kvmhv_update_ptbl_cache(struct kvm_nested_guest *gp);
@@ -922,6 +924,8 @@ static int kvmhv_emulate_priv_tlbie(struct kvm_vcpu *vcpu, unsigned int instr,
 	lpid = get_lpid(rsval);
 	is = get_is(rbval);
 
+	trace_kvm_emulate_priv_tlbie_enter(vcpu, rsval, rbval, instr, ric, prs, r, lpid, is);
+
 	/*
 	 * These cases are invalid and are not handled:
 	 * r   != 1 -> Only radix supported
@@ -961,6 +965,7 @@ static int kvmhv_emulate_priv_tlbie(struct kvm_vcpu *vcpu, unsigned int instr,
 		break;
 	}
 
+	trace_kvm_emulate_priv_tlbie_exit(vcpu, ret);
 	return ret;
 }
 
