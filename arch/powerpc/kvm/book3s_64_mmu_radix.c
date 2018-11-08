@@ -298,11 +298,9 @@ void kvmppc_unmap_pte(struct kvm *kvm, pte_t *pte, unsigned long gpa,
 	old = kvmppc_radix_update_pte(kvm, pte, ~0UL, 0, gpa, shift);
 	kvmppc_radix_tlbie_page(kvm, gpa, shift, lpid);
 
-	/* TODO: if it's coming from:
-	 * kvm_emulate_priv_tlbie_enter: VCPU 24: rsval=1 rbval=35717280 instr=65536 ric=0 prs=0 r=1 lpid=1 is=0
-	 * then this code would catch it if not for the
-	 * check above. hence changes below
-	 */
+	/* The following only applies to L1 entries */
+	if (lpid != kvm->arch.lpid)
+		return;
 
 	/* TODO: should we still record the nest pte dirty flags into bitmap though? */
 	/* TODO: nest might not even get here (full=true in caller unmap routines) */
@@ -315,18 +313,12 @@ void kvmppc_unmap_pte(struct kvm *kvm, pte_t *pte, unsigned long gpa,
 	if (shift)
 		page_size = 1ul << shift;
 
-	if ((old & _PAGE_DIRTY) && memslot->dirty_bitmap)
-		kvmppc_update_dirty_map(memslot, gfn, page_size);
-
-	/* The following only applies to L1 entries */
-	if (lpid != kvm->arch.lpid)
-		return;
-
-
 	gpa &= ~(page_size - 1);
 	hpa = old & PTE_RPN_MASK;
 	kvmhv_remove_nest_rmap_range(kvm, memslot, gpa, hpa, page_size);
 
+	if ((old & _PAGE_DIRTY) && memslot->dirty_bitmap)
+		kvmppc_update_dirty_map(memslot, gfn, page_size);
 }
 
 /*
