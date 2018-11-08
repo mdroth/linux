@@ -1791,6 +1791,8 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *run)
 	} else if (vcpu->arch.hcall_needed) {
 		int i;
 
+		pr_debug("setting hcall return state from userspace, nr: %lld, ret: %lld\n",
+			 run->papr_hcall.nr, run->papr_hcall.ret);
 		kvmppc_set_gpr(vcpu, 3, run->papr_hcall.ret);
 		for (i = 0; i < 9; ++i)
 			kvmppc_set_gpr(vcpu, 4 + i, run->papr_hcall.args[i]);
