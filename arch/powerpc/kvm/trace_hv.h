@@ -637,7 +637,7 @@ TRACE_EVENT(kvm_emulate_priv_tlbie_enter,
 		__entry->is		= is;
 	),
 
-	TP_printk("VCPU %d: rsval=%lu rbval=%lu instr=%u ric=%d prs=%d r=%d lpid=%d is=%d",
+	TP_printk("VCPU %d: rsval=0x%lx rbval=0x%lx instr=0x%x ric=0x%x prs=0x%x r=0x%x lpid=0x%x is=0x%x",
 		  __entry->vcpu_id, __entry->rsval, __entry->rbval,
 		  __entry->instr, __entry->ric,
 		  __entry->prs, __entry->r, __entry->lpid, __entry->is)
