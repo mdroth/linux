@@ -662,6 +662,34 @@ TRACE_EVENT(kvm_emulate_priv_tlbie_exit,
 		  __entry->vcpu_id, __entry->ret)
 );
 
+TRACE_EVENT(kvm_unmap_pte,
+	TP_PROTO(struct kvm *kvm, unsigned long gpa,
+		 unsigned long pte, unsigned int shift, unsigned int lpid),
+
+	TP_ARGS(kvm, gpa, pte, shift, lpid),
+
+	TP_STRUCT__entry(
+		__field(unsigned long,	gpa)
+		__field(unsigned long,	pte)
+		__field(unsigned int,	shift)
+		__field(unsigned int,	kvm_lpid)
+		__field(unsigned int,	lpid)
+	),
+
+	TP_fast_assign(
+		__entry->gpa		= gpa;
+		__entry->pte		= pte;
+		__entry->shift		= shift;
+		__entry->kvm_lpid	= kvm->arch.lpid;
+		__entry->lpid		= lpid;
+	),
+
+	TP_printk("gpa=0x%lx pte=0x%lx shift=0x%x kvm_lpid=0x%x lpid=0x%x",
+		  __entry->gpa, __entry->pte, __entry->shift,
+		  __entry->kvm_lpid, __entry->lpid)
+);
+
+
 #endif /* _TRACE_KVM_HV_H */
 
 /* This part must be outside protection */

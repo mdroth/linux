@@ -296,6 +296,8 @@ void kvmppc_unmap_pte(struct kvm *kvm, pte_t *pte, unsigned long gpa,
 	unsigned long hpa;
 
 	old = kvmppc_radix_update_pte(kvm, pte, ~0UL, 0, gpa, shift);
+
+	trace_kvm_unmap_pte(kvm, gpa, old, shift, lpid);
 	kvmppc_radix_tlbie_page(kvm, gpa, shift, lpid);
 
 	/* The following only applies to L1 entries */
