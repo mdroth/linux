@@ -322,6 +322,8 @@
 #define H_GET_SESSION_TOKEN	0x19
 #define H_SESSION_ERR_DETECTED	0x1A
 
+/* Ultravisor hcalls */
+#define H_TPM_COMM		0xEF50
 
 /* Platform specific hcalls, used by KVM */
 #define H_RTAS			0xf000
