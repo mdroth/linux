@@ -231,7 +231,6 @@ __setup("hest_disable", setup_hest_disable);
 void __init acpi_hest_init(void)
 {
 	acpi_status status;
-	int rc;
 	unsigned int ghes_count = 0;
 
 	if (hest_disable) {
@@ -251,18 +250,14 @@ void __init acpi_hest_init(void)
 		return;
 	}
 
-	rc = apei_hest_parse(hest_parse_cmc, NULL);
-	if (rc)
+	if (apei_hest_parse(hest_parse_cmc, NULL))
 		goto err;
 
 	if (!ghes_disable) {
-		rc = apei_hest_parse(hest_parse_ghes_count, &ghes_count);
-		if (rc)
+		if (apei_hest_parse(hest_parse_ghes_count, &ghes_count))
 			goto err;
 
-		if (ghes_count)
-			rc = hest_ghes_dev_register(ghes_count);
-		if (rc)
+		if (ghes_count && hest_ghes_dev_register(ghes_count))
 			goto err;
 	}
 
