@@ -368,8 +368,39 @@ static const char * const pcie_port_type_strs[] = {
 	"root complex event collector",
 };
 
+static void cper_print_aer_info(const struct cper_sec_pcie *pcie,
+				const struct acpi_hest_generic_data *gdata)
+{
+	unsigned int domain, bus, devfn;
+	struct pci_dev *pdev;
+	int aer_severity;
+
+	if (!(pcie->validation_bits & CPER_PCIE_VALID_DEVICE_ID &&
+	      pcie->validation_bits & CPER_PCIE_VALID_AER_INFO))
+		return;
+
+	domain = pcie->device_id.segment;
+	bus = pcie->device_id.bus;
+	devfn = PCI_DEVFN(pcie->device_id.device, pcie->device_id.function);
+
+	pdev = pci_get_domain_bus_and_slot(domain, bus, devfn);
+	if (!pdev) {
+		pr_err("CPER Print: Can not find pci_dev for %04x:%02x:%02x:%x\n",
+		       domain, bus, PCI_SLOT(devfn), PCI_FUNC(devfn));
+		return;
+	}
+
+	aer_severity = cper_severity_to_aer(gdata->error_severity);
+
+	cper_print_aer(pdev, aer_severity,
+		       (struct aer_capability_regs *)pcie->aer_info);
+
+	pci_dev_put(pdev);
+}
+
 static void cper_print_pcie(const char *pfx, const struct cper_sec_pcie *pcie,
-			    const struct acpi_hest_generic_data *gdata)
+			    const struct acpi_hest_generic_data *gdata,
+			    int flags)
 {
 	if (pcie->validation_bits & CPER_PCIE_VALID_PORT_TYPE)
 		printk("%s""port_type: %d, %s\n", pfx, pcie->port_type,
@@ -417,6 +448,10 @@ static void cper_print_pcie(const char *pfx, const struct cper_sec_pcie *pcie,
 		       aer->header_log.dw0, aer->header_log.dw1,
 		       aer->header_log.dw2, aer->header_log.dw3);
 	}
+
+	/* Print AER Info now if record was found in BERT. */
+	if (flags & CPER_FLAGS_BOOT)
+		cper_print_aer_info(pcie, gdata);
 }
 
 static const char * const fw_err_rec_type_strs[] = {
@@ -494,7 +529,7 @@ static void cper_print_tstamp(const char *pfx,
 
 static void
 cper_estatus_print_section(const char *pfx, struct acpi_hest_generic_data *gdata,
-			   int sec_no)
+			   int sec_no, int flags)
 {
 	guid_t *sec_type = (guid_t *)gdata->section_type;
 	__u16 severity;
@@ -535,7 +570,7 @@ cper_estatus_print_section(const char *pfx, struct acpi_hest_generic_data *gdata
 
 		printk("%s""section_type: PCIe error\n", newpfx);
 		if (gdata->error_data_length >= sizeof(*pcie))
-			cper_print_pcie(newpfx, pcie, gdata);
+			cper_print_pcie(newpfx, pcie, gdata, flags);
 		else
 			goto err_section_too_small;
 #if defined(CONFIG_ARM64) || defined(CONFIG_ARM)
@@ -585,7 +620,8 @@ err_section_too_small:
 }
 
 void cper_estatus_print(const char *pfx,
-			const struct acpi_hest_generic_status *estatus)
+			const struct acpi_hest_generic_status *estatus,
+			int flags)
 {
 	struct acpi_hest_generic_data *gdata;
 	int sec_no = 0;
@@ -601,7 +637,7 @@ void cper_estatus_print(const char *pfx,
 	snprintf(newpfx, sizeof(newpfx), "%s ", pfx);
 
 	apei_estatus_for_each_section(estatus, gdata) {
-		cper_estatus_print_section(newpfx, gdata, sec_no);
+		cper_estatus_print_section(newpfx, gdata, sec_no, flags);
 		sec_no++;
 	}
 }
