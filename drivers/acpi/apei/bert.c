@@ -71,7 +71,7 @@ static void __init bert_print_all(struct acpi_bert_region *region,
 		if (estatus_len < ACPI_BERT_PRINT_MAX_LEN &&
 		    printed < ACPI_BERT_PRINT_MAX_RECORDS) {
 			pr_info_once("Error records from previous boot:\n");
-			cper_estatus_print(KERN_INFO HW_ERR, estatus);
+			cper_estatus_print(KERN_INFO HW_ERR, estatus, CPER_FLAGS_BOOT);
 			printed++;
 		} else {
 			skipped++;
