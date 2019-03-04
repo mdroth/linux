@@ -59,7 +59,7 @@ static void __init bert_print_all(struct acpi_bert_region *region,
 
 		pr_info_once("Error records from previous boot:\n");
 
-		cper_estatus_print(KERN_INFO HW_ERR, estatus);
+		cper_estatus_print(KERN_INFO HW_ERR, estatus, CPER_FLAGS_BOOT);
 
 		/*
 		 * Because the boot error source is "one-time polled" type,
