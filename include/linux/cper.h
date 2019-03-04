@@ -314,6 +314,10 @@ enum {
 #define CPER_ARM_ERR_ACCESS_MODE_SHIFT		43
 #define CPER_ARM_ERR_ACCESS_MODE_MASK		GENMASK(0,0)
 
+/* Linux CPER flags that control how records are handled. */
+/* Flag that indicates a record was reported through BERT. */
+#define CPER_FLAGS_BOOT				BIT(0)
+
 /*
  * All tables and structs must be byte-packed to match CPER
  * specification, since the tables are provided by the system BIOS
