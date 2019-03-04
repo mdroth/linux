@@ -797,6 +797,7 @@ void cper_print_aer(struct pci_dev *dev, int aer_severity,
 	trace_aer_event(dev_name(&dev->dev), (status & ~mask),
 			aer_severity, tlp_header_valid, &aer->header_log);
 }
+EXPORT_SYMBOL_GPL(cper_print_aer);
 #endif
 
 /**

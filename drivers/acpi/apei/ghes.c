@@ -687,7 +687,7 @@ static void __ghes_print_estatus(const char *pfx,
 	snprintf(pfx_seq, sizeof(pfx_seq), "%s{%u}" HW_ERR, pfx, curr_seqno);
 	printk("%s""Hardware error from APEI Generic Hardware Error Source: %d\n",
 	       pfx_seq, generic->header.source_id);
-	cper_estatus_print(pfx_seq, estatus);
+	cper_estatus_print(pfx_seq, estatus, 0);
 }
 
 static int ghes_print_estatus(const char *pfx,
