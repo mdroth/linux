@@ -106,7 +106,7 @@ static void __print_extlog_rcd(const char *pfx,
 	curr_seqno = atomic_inc_return(&seqno);
 	snprintf(pfx_seq, sizeof(pfx_seq), "%s{%u}", pfx, curr_seqno);
 	printk("%s""Hardware error detected on CPU%d\n", pfx_seq, cpu);
-	cper_estatus_print(pfx_seq, estatus);
+	cper_estatus_print(pfx_seq, estatus, 0);
 }
 
 static int print_extlog_rcd(const char *pfx,
