@@ -131,7 +131,8 @@ static inline u32 cper_estatus_len(struct acpi_hest_generic_status *estatus)
 }
 
 void cper_estatus_print(const char *pfx,
-			const struct acpi_hest_generic_status *estatus);
+			const struct acpi_hest_generic_status *estatus,
+			int flags);
 int cper_estatus_check_header(const struct acpi_hest_generic_status *estatus);
 int cper_estatus_check(const struct acpi_hest_generic_status *estatus);
 
