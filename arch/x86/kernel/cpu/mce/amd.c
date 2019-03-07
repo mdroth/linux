@@ -71,6 +71,22 @@ static const char * const smca_umc_block_names[] = {
 	"misc_umc"
 };
 
+#define HWID_MCATYPE(hwid, mcatype) (((hwid) << 16) | (mcatype))
+
+struct smca_hwid {
+	unsigned int bank_type;	/* Use with smca_bank_types for easy indexing. */
+	u32 hwid_mcatype;	/* (hwid,mcatype) tuple */
+	u8 count;		/* Number of instances. */
+};
+
+struct smca_bank {
+	struct smca_hwid *hwid;
+	u32 id;			/* Value of MCA_IPID[InstanceId]. */
+	u8 sysfs_id;		/* Value used for sysfs name. */
+};
+
+static struct smca_bank smca_banks[MAX_NR_BANKS];
+
 struct smca_bank_name {
 	const char *name;	/* Short name for sysfs */
 	const char *long_name;	/* Long name for pretty-printing */
@@ -119,7 +135,7 @@ const char *smca_get_long_name(enum smca_bank_types t)
 }
 EXPORT_SYMBOL_GPL(smca_get_long_name);
 
-static enum smca_bank_types smca_get_bank_type(unsigned int bank)
+enum smca_bank_types smca_get_bank_type(unsigned int bank)
 {
 	struct smca_bank *b;
 
@@ -132,6 +148,7 @@ static enum smca_bank_types smca_get_bank_type(unsigned int bank)
 
 	return b->hwid->bank_type;
 }
+EXPORT_SYMBOL_GPL(smca_get_bank_type);
 
 static struct smca_hwid smca_hwid_mcatypes[] = {
 	/* { bank_type, hwid_mcatype } */
@@ -189,9 +206,6 @@ static struct smca_hwid smca_hwid_mcatypes[] = {
 	/* WAFL PHY MCA type */
 	{ SMCA_WAFL_PHY, HWID_MCATYPE(0x267, 0x0)	},
 };
-
-struct smca_bank smca_banks[MAX_NR_BANKS];
-EXPORT_SYMBOL_GPL(smca_banks);
 
 /*
  * In SMCA enabled processors, we can have multiple banks for a given IP type.
