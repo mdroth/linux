@@ -1,0 +1,136 @@
+[
+  {
+    "EventName": "df_event_1",
+    "PublicDescription": "DfEvent[0x00000007004002C7]",
+    "EventCode": "0x7c7",
+    "UMask": "0x02",
+    "PerPkg": "1",
+    "Unit": "DFPMC"
+  },
+  {
+    "EventName": "df_event_2",
+    "PublicDescription": "DfEvent[0x0000000800400207]",
+    "EventCode": "0x807",
+    "UMask": "0x02",
+    "PerPkg": "1",
+    "Unit": "DFPMC"
+  },
+  {
+    "EventName": "df_event_3",
+    "PublicDescription": "DfEvent[0x0000000800400247]",
+    "EventCode": "0x847",
+    "UMask": "0x02",
+    "PerPkg": "1",
+    "Unit": "DFPMC"
+  },
+  {
+    "EventName": "df_event_4",
+    "PublicDescription": "DfEvent[0x0000000800400287]",
+    "EventCode": "0x887",
+    "UMask": "0x02",
+    "PerPkg": "1",
+    "Unit": "DFPMC"
+  },
+  {
+    "PublicDescription": "(DfEvent[0x00000007004002C7] + DfEvent[0x0000000800400207] + DfEvent[0x0000000800400247] + DfEvent[0x0000000800400287])*32B",
+    "BriefDescription": "Approximate: Outbound data bytes for all Remote Links for a node (die)",
+    "PerPkg": "1",
+    "MetricExpr": "df_event_1 + df_event_2 + df_event_3 + df_event_4",
+    "ScaleUnit": "3.05e-05MiB",
+    "MetricName": "remote_outbound",
+    "MetricGroup": "data_fabric"
+  },
+  {
+    "EventName": "df_event_5",
+    "PublicDescription": "(DfEvent[0x0000000000403807]",
+    "EventCode": "0x7",
+    "UMask": "0x38",
+    "PerPkg": "1",
+    "Unit": "DFPMC"
+  },
+  {
+    "EventName": "df_event_6",
+    "PublicDescription": "DfEvent[0x0000000000403847]",
+    "EventCode": "0x807",
+    "UMask": "0x02",
+    "PerPkg": "1",
+    "Unit": "DFPMC"
+  },
+  {
+    "EventName": "df_event_7",
+    "PublicDescription": "DfEvent[0x0000000000403887]",
+    "EventCode": "0x847",
+    "UMask": "0x02",
+    "PerPkg": "1",
+    "Unit": "DFPMC"
+  },
+  {
+    "EventName": "df_event_8",
+    "PublicDescription": "DfEvent[0x00000000004038C7]",
+    "EventCode": "0x847",
+    "UMask": "0x02",
+    "PerPkg": "1",
+    "Unit": "DFPMC"
+  },
+  {
+    "EventName": "df_event_9",
+    "PublicDescription": "DfEvent[0x0000000100403807]",
+    "EventCode": "0x107",
+    "UMask": "0x38",
+    "PerPkg": "1",
+    "Unit": "DFPMC"
+  },
+  {
+    "EventName": "df_event_10",
+    "PublicDescription": "DfEvent[0x0000000100403847]",
+    "EventCode": "0x147",
+    "UMask": "0x38",
+    "PerPkg": "1",
+    "Unit": "DFPMC"
+  },
+  {
+    "EventName": "df_event_11",
+    "PublicDescription": "DfEvent[0x0000000100403887]",
+    "EventCode": "0x187",
+    "UMask": "0x38",
+    "PerPkg": "1",
+    "Unit": "DFPMC"
+  },
+  {
+    "EventName": "df_event_12",
+    "PublicDescription": "DfEvent[0x00000001004038C7])",
+    "EventCode": "0x1c7",
+    "UMask": "0x38",
+    "PerPkg": "1",
+    "Unit": "DFPMC"
+  },
+  {
+    "PublicDescription": "(DfEvent[0x0000000000403807] + DfEvent[0x0000000000403847] + DfEvent[0x0000000000403887] + DfEvent[0x00000000004038C7]) * 64B",
+    "BriefDescription": "part 1 of: Approximate: Combined DRAM B/bytes of all channels on a NPS1 node (die)",
+    "PerPkg": "1",
+    "MetricExpr": "df_event_5 + df_event_6 + df_event_7 + df_event_8",
+    "ScaleUnit": "6.1e-05MiB",
+    "MetricName": "combined-dram-1",
+    "MetricGroup": "data_fabric"
+  },
+  {
+    "PublicDescription": "(DfEvent[0x0000000100403807] + DfEvent[0x0000000100403847] + DfEvent[0x0000000100403887] + DfEvent[0x00000001004038C7]) * 64B",
+    "BriefDescription": "part 2 of: Approximate: Combined DRAM B/bytes of all channels on a NPS1 node (die)",
+    "PerPkg": "1",
+    "MetricExpr": "df_event_9 + df_event_10 + df_event_11 + df_event_12",
+    "ScaleUnit": "6.1e-05MiB",
+    "MetricName": "combined-dram-2",
+    "MetricGroup": "data_fabric"
+  },
+  {
+    "PublicDescription": "(DfEvent[0x0000000000403807] + DfEvent[0x0000000000403847] + DfEvent[0x0000000000403887] + DfEvent[0x00000000004038C7] + DfEvent[0x0000000100403807] + DfEvent[0x0000000100403847] + DfEvent[0x0000000100403887] + DfEvent[0x00000001004038C7]) * 64B",
+    "BriefDescription": "Approximate: Combined DRAM B/bytes of all channels on a NPS1 node (die)",
+    "PerPkg": "1",
+    "MetricExpr": "combined_dram_1 + combined_dram_2",
+    "ScaleUnit": "6.1e-05MiB",
+    "MetricName": "combined_dram",
+    "MetricGroup": "data_fabric"
+  }
+]
+
+

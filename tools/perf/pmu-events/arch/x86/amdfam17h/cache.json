@@ -110,6 +110,13 @@
     "UMask": "0x8"
   },
   {
+    "EventName": "l2_request_g1.rd_blk_l_rd_blk_x_change_to_x",
+    "EventCode": "0x60",
+    "BriefDescription": "L2 cache accesses from data cache misses (including prefetch)",
+    "PublicDescription": "L2 cache accesses from data cache misses (including prefetch)",
+    "UMask": "0xc8"
+  },
+  {
     "EventName": "l2_request_g1.prefetch_l2",
     "EventCode": "0x60",
     "BriefDescription": "Requests to L2 Group1.",
@@ -164,6 +171,13 @@
     "BriefDescription": "Multi-events in that LS and IF requests can be received simultaneous.",
     "PublicDescription": "Multi-events in that LS and IF requests can be received simultaneous.",
     "UMask": "0x8"
+  },
+  {
+    "EventName": "l2_request_g2.ic_rd_sized_all",
+    "EventCode": "0x61",
+    "BriefDescription": "Multi-events in that LS and IF requests can be received simultaneous.",
+    "PublicDescription": "Multi-events in that LS and IF requests can be received simultaneous.",
+    "UMask": "0x18"
   },
   {
     "EventName": "l2_request_g2.smc_inval",
@@ -250,9 +264,16 @@
     "UMask": "0x10"
   },
   {
+    "EventName": "l2_cache_req_stat.ls_rd_blk_l_hit_x_ls_rd_blk_l_hit_s_ls_rd_blk_x",
+    "EventCode": "0x64",
+    "BriefDescription": "L2 cache hits from data cache misses",
+    "PublicDescription": "This event does not count accesses to the L2 cache by the L2 prefetcher, but it does count accesses by the L1 prefetcher.",
+    "UMask": "0x70"
+  },
+  {
     "EventName": "l2_cache_req_stat.ls_rd_blk_c",
     "EventCode": "0x64",
-    "BriefDescription": "LS Read Block C S L X Change to X Miss.",
+    "BriefDescription": "L2 cache miss from data cache miss: LS Read Block C S L X Change to X Miss.",
     "PublicDescription": "This event does not count accesses to the L2 cache by the L2 prefetcher, but it does count accesses by the L1 prefetcher. LS Read Block C S L X Change to X Miss.",
     "UMask": "0x8"
   },
@@ -271,9 +292,16 @@
     "UMask": "0x2"
   },
   {
+    "EventName": "l2_cache_req_stat.ic_fill_hit_x_ic_fill_hit_s",
+    "EventCode": "0x64",
+    "BriefDescription": "L2 cache hits from instruction cache misses",
+    "PublicDescription": "This event does not count accesses to the L2 cache by the L2 prefetcher, but it does count accesses by the L1 prefetcher.",
+    "UMask": "0x6"
+  },
+  {
     "EventName": "l2_cache_req_stat.ic_fill_miss",
     "EventCode": "0x64",
-    "BriefDescription": "IC Fill Miss.",
+    "BriefDescription": "L2 cache misses from instruction cache misses: IC Fill Miss.",
     "PublicDescription": "This event does not count accesses to the L2 cache by the L2 prefetcher, but it does count accesses by the L1 prefetcher. IC Fill Miss.",
     "UMask": "0x1"
   },

@@ -1,0 +1,50 @@
+[
+    {
+        "BriefDescription": "Instructions Per Cycle (per logical thread)",
+        "MetricExpr": "ex_ret_instr / ls_not_halted_cyc",
+        "MetricGroup": "TopDownL1",
+        "MetricName": "IPC"
+    },
+    {
+        "BriefDescription": "Uops Per Instruction",
+        "MetricExpr": "ex_ret_cops / ex_ret_instr",
+        "MetricGroup": "Pipeline",
+        "MetricName": "UPI"
+    },
+    {
+        "BriefDescription": "Cycles Per Instruction (threaded)",
+        "MetricExpr": "1 / (ex_ret_instr / cycles)",
+        "MetricGroup": "Pipeline;Summary",
+        "MetricName": "CPI"
+    },
+    {
+        "BriefDescription": "Per-thread actual clocks when the logical processor is active. This is called 'Clockticks' in VTune.",
+        "MetricExpr": "ls_not_halted_cyc",
+        "MetricGroup": "Summary",
+        "MetricName": "CLKS"
+    },
+    {
+        "BriefDescription": "Total number of retired Instructions",
+        "MetricExpr": "ex_ret_instr",
+        "MetricGroup": "Summary",
+        "MetricName": "Instructions"
+    },
+    {
+        "BriefDescription": "Percent of all branches mispredicted (Execution-Time Branch Misprediction Percent (Non-Speculative))",
+        "MetricExpr": "(ex_ret_brn_misp / ex_ret_brn) * 100",
+        "MetricGroup": "BP",
+        "MetricName": "Branch_Misprediction_Percent"
+    },
+    {
+        "BriefDescription": "L2 cache access from IC miss (including prefetch)",
+        "MetricExpr": "l2_request_g1.cacheable_ic_read + l2_request_g2.ic_rd_sized_all",
+        "MetricGroup": "CACHING",
+        "MetricName": "L2_access_from_ic_miss"
+    },
+    {
+        "BriefDescription": "IC (32B) fetch miss percent",
+        "MetricExpr": "(ic_fw32_miss / ic_fw32) * 100",
+        "MetricGroup": "CACHING",
+        "MetricName": "ic_fetch_miss_percent"
+    }
+]

@@ -28,6 +28,13 @@
     "UMask": "0x1"
   },
   {
+    "EventName": "ls_dispatch.ld_store_ld_st_dispatch",
+    "EventCode": "0x29",
+    "BriefDescription": "All data cache accesses",
+    "PublicDescription": "Counts the sum of the number of load, store, and load-op-store operations dispatched to the LS unit.",
+    "UMask": "0x7"
+  },
+  {
     "EventName": "ls_stlf",
     "EventCode": "0x35",
     "BriefDescription": "Number of STLF hits."
@@ -40,64 +47,71 @@
   {
     "EventName": "ls_l1_d_tlb_miss.all",
     "EventCode": "0x45",
-    "BriefDescription": "L1 DTLB Miss or Reload off all sizes.",
-    "PublicDescription": "L1 DTLB Miss or Reload off all sizes.",
+    "BriefDescription": "L1 DTLB Misses.",
+    "PublicDescription": "L1 DTLB Misses of all sizes.",
     "UMask": "0xff"
+  },
+  {
+    "EventName": "ls_l1_d_tlb_miss_tlb_reload_l2_miss.all",
+    "EventCode": "0x45",
+    "BriefDescription": "L1 DTLB Misses that also missed in the L2 TLB and caused data page table walks.",
+    "PublicDescription": "L1 DTLB Misses of all sizes that also missed in the L2 TLB and caused data page table walks.",
+    "UMask": "0xf0"
   },
   {
     "EventName": "ls_l1_d_tlb_miss.tlb_reload_1g_l2_miss",
     "EventCode": "0x45",
-    "BriefDescription": "L1 DTLB Miss of a page of 1G size.",
-    "PublicDescription": "L1 DTLB Miss of a page of 1G size.",
+    "BriefDescription": "L1 DTLB Misses of 1G sized pages that also missed in the L2 TLB and caused data page table walks.",
+    "PublicDescription": "L1 DTLB Misses of 1G sized pages that also missed in the L2 TLB and caused data page table walks.",
     "UMask": "0x80"
   },
   {
     "EventName": "ls_l1_d_tlb_miss.tlb_reload_2m_l2_miss",
     "EventCode": "0x45",
-    "BriefDescription": "L1 DTLB Miss of a page of 2M size.",
-    "PublicDescription": "L1 DTLB Miss of a page of 2M size.",
+    "BriefDescription": "L1 DTLB Misses of 2M sized pages that also missed in the L2 TLB and caused data page table walks.",
+    "PublicDescription": "L1 DTLB Misses of 2M sized pages that also missed in the L2 TLB and caused data page table walks.",
     "UMask": "0x40"
   },
   {
     "EventName": "ls_l1_d_tlb_miss.tlb_reload_32k_l2_miss",
     "EventCode": "0x45",
-    "BriefDescription": "L1 DTLB Miss of a page of 32K size.",
-    "PublicDescription": "L1 DTLB Miss of a page of 32K size.",
+    "BriefDescription": "L1 DTLB Misses of 32K sized pages that also missed in the L2 TLB and caused data page table walks.",
+    "PublicDescription": "L1 DTLB Misses of 32K sized pages that also missed in the L2 TLB and caused data page table walks.",
     "UMask": "0x20"
   },
   {
     "EventName": "ls_l1_d_tlb_miss.tlb_reload_4k_l2_miss",
     "EventCode": "0x45",
-    "BriefDescription": "L1 DTLB Miss of a page of 4K size.",
-    "PublicDescription": "L1 DTLB Miss of a page of 4K size.",
+    "BriefDescription": "L1 DTLB Misses of 4K sized pages that also missed in the L2 TLB and caused data page table walks.",
+    "PublicDescription": "L1 DTLB Misses of 4K sized pages that also missed in the L2 TLB and caused data page table walks.",
     "UMask": "0x10"
   },
   {
     "EventName": "ls_l1_d_tlb_miss.tlb_reload_1g_l2_hit",
     "EventCode": "0x45",
-    "BriefDescription": "L1 DTLB Reload of a page of 1G size.",
-    "PublicDescription": "L1 DTLB Reload of a page of 1G size.",
+    "BriefDescription": "L1 DTLB Misses of 1G sized pages that hit in the L2 TLB and did not cause data page table walks.",
+    "PublicDescription": "L1 DTLB Misses of 1G sized pages that hit in the L2 TLB and did not cause data page table walks.",
     "UMask": "0x8"
   },
   {
     "EventName": "ls_l1_d_tlb_miss.tlb_reload_2m_l2_hit",
     "EventCode": "0x45",
-    "BriefDescription": "L1 DTLB Reload of a page of 2M size.",
-    "PublicDescription": "L1 DTLB Reload of a page of 2M size.",
+    "BriefDescription": "L1 DTLB Misses of 2M sized pages that hit in the L2 TLB and did not cause data page table walks.",
+    "PublicDescription": "L1 DTLB Misses of 2M sized pages that hit in the L2 TLB and did not cause data page table walks.",
     "UMask": "0x4"
   },
   {
     "EventName": "ls_l1_d_tlb_miss.tlb_reload_32k_l2_hit",
     "EventCode": "0x45",
-    "BriefDescription": "L1 DTLB Reload of a page of 32K size.",
-    "PublicDescription": "L1 DTLB Reload of a page of 32K size.",
+    "BriefDescription": "L1 DTLB Misses of 32K sized pages that hit in the L2 TLB and did not cause data page table walks.",
+    "PublicDescription": "L1 DTLB Misses of 32K sized pages that hit in the L2 TLB and did not cause data page table walks.",
     "UMask": "0x2"
   },
   {
     "EventName": "ls_l1_d_tlb_miss.tlb_reload_4k_l2_hit",
     "EventCode": "0x45",
-    "BriefDescription": "L1 DTLB Reload of a page of 4K size.",
-    "PublicDescription": "L1 DTLB Reload of a page of 4K size.",
+    "BriefDescription": "L1 DTLB Misses of 4K sized pages that hit in the L2 TLB and did not cause data page table walks.",
+    "PublicDescription": "L1 DTLB Misses of 4K sized pages that hit in the L2 TLB and did not cause data page table walks.",
     "UMask": "0x1"
   },
   {
