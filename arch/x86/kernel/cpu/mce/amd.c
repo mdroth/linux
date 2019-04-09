@@ -822,7 +822,10 @@ static void __log_error(unsigned int bank, u64 status, u64 addr, u64 misc)
 		}
 	}
 
+	ghes_assist_get_phys_addr(&m);
 	mce_log(&m);
+
+
 }
 
 DEFINE_IDTENTRY_SYSVEC(sysvec_deferred_error)
@@ -850,7 +853,6 @@ _log_error_bank(unsigned int bank, u32 msr_stat, u32 msr_addr, u64 misc)
 		rdmsrl(msr_addr, addr);
 
 	__log_error(bank, status, addr, misc);
-
 	wrmsrl(msr_stat, 0);
 
 	return status & MCI_STATUS_DEFERRED;
