@@ -150,6 +150,8 @@
  */
 #define MCE_IN_KERNEL_RECOV	BIT_ULL(6)
 
+#define MCE_INVALID_PADDR		-1ULL
+
 /*
  * Indicates an MCE that happened in kernel space while copying data
  * from user. In this case fixup_exception() gets the kernel to the

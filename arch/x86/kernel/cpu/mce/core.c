@@ -144,6 +144,7 @@ noinstr void mce_setup(struct mce *m)
 		m->ppin = __rdmsr(MSR_AMD_PPIN);
 
 	m->microcode = boot_cpu_data.microcode;
+	m->paddr = MCE_INVALID_PADDR;
 }
 
 DEFINE_PER_CPU(struct mce, injectm);
