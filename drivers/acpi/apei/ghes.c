@@ -437,6 +437,38 @@ static void ghes_kick_task_work(struct callback_head *head)
 	gen_pool_free(ghes_estatus_pool, (unsigned long)estatus_node, node_len);
 }
 
+int ghes_get_phys_addr(struct acpi_hest_generic *generic, u64 *paddr)
+{
+	struct acpi_hest_generic_status *estatus;
+	struct acpi_hest_generic_data *gdata;
+	struct ghes *ghes;
+	guid_t *sec_type;
+	int rc = -EINVAL;
+	u64 buf_paddr;
+
+	ghes = ghes_new(generic);
+	estatus = ghes->estatus;
+
+	if (ghes_read_estatus(ghes, estatus, &buf_paddr, FIX_APEI_GHES_IRQ))
+		return rc;
+
+	apei_estatus_for_each_section(estatus, gdata) {
+		sec_type = (guid_t *)gdata->section_type;
+		if (guid_equal(sec_type, &CPER_SEC_PLATFORM_MEM)) {
+			struct cper_sec_mem_err *mem_err = acpi_hest_get_payload(gdata);
+			if (mem_err->validation_bits & CPER_MEM_VALID_PA) {
+				*paddr = mem_err->physical_addr;
+				rc = 0;
+			}
+		}
+	}
+
+	ghes_clear_estatus(ghes, estatus, buf_paddr, FIX_APEI_GHES_IRQ);
+	ghes_fini(ghes);
+
+	return rc;
+}
+
 static bool ghes_do_memory_failure(u64 physical_addr, int flags)
 {
 	unsigned long pfn;
