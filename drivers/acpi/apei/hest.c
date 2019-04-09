@@ -55,6 +55,11 @@ static inline bool is_generic_error(struct acpi_hest_header *hest_hdr)
 	       hest_hdr->type == ACPI_HEST_TYPE_GENERIC_ERROR_V2;
 }
 
+static inline bool __init is_related_ghes(struct acpi_hest_header *hest_hdr)
+{
+	return (((struct acpi_hest_generic *)hest_hdr)->related_source_id != 0xFFFF);
+}
+
 static int hest_esrc_len(struct acpi_hest_header *hest_hdr)
 {
 	u16 hest_type = hest_hdr->type;
@@ -147,8 +152,9 @@ static int __init hest_parse_ghes_count(struct acpi_hest_header *hest_hdr, void 
 {
 	int *count = data;
 
-	if (is_generic_error(hest_hdr))
+	if (is_generic_error(hest_hdr) && !is_related_ghes(hest_hdr))
 		(*count)++;
+
 	return 0;
 }
 
@@ -162,6 +168,8 @@ static int __init hest_parse_ghes(struct acpi_hest_header *hest_hdr, void *data)
 		return 0;
 
 	if (!((struct acpi_hest_generic *)hest_hdr)->enabled)
+		return 0;
+	if (is_related_ghes(hest_hdr))
 		return 0;
 	for (i = 0; i < ghes_arr->count; i++) {
 		struct acpi_hest_header *hdr;
