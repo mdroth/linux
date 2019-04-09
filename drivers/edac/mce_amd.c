@@ -1313,8 +1313,12 @@ amd_decode_mce(struct notifier_block *nb, unsigned long val, void *data)
 
 	pr_cont("]: 0x%016llx\n", m->status);
 
-	if (m->status & MCI_STATUS_ADDRV)
-		pr_emerg(HW_ERR "Error Addr: 0x%016llx\n", m->addr);
+	if (m->status & MCI_STATUS_ADDRV) {
+		pr_emerg(HW_ERR "Error Addr: 0x%016llx", m->addr);
+
+		if (m->paddr != MCE_INVALID_PADDR)
+			pr_cont(", Physical Addr: 0x%016llx\n", m->paddr);
+	}
 
 	if (m->ppin)
 		pr_emerg(HW_ERR "PPIN: 0x%016llx\n", m->ppin);
