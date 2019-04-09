@@ -143,6 +143,107 @@ static int __init hest_parse_cmc(struct acpi_hest_header *hest_hdr, void *data)
 	return 0;
 }
 
+struct ghes_assist_source ghes_assist_sources[NR_GHES_ASSIST_SOURCES];
+
+static int __init ghes_assist_save_source(struct acpi_hest_header *hest_hdr,
+					   enum ghes_assist_source_types type)
+{
+	/* MC, CMC, and DMC have the same struct layout up to flags. */
+	u8 flags = ((struct acpi_hest_ia_machine_check *)hest_hdr)->flags;
+
+	if (!(flags & ACPI_HEST_GHES_ASSIST))
+		return 0;
+
+	if (flags & ACPI_HEST_FIRMWARE_FIRST) {
+		// TODO: Print error message
+		return -EINVAL;
+	}
+
+	ghes_assist_sources[type].source_hdr = hest_hdr;
+
+	return 0;
+}
+
+static int __init hest_parse_ghes_assist_sources(struct acpi_hest_header *hest_hdr, void *data)
+{
+	switch (hest_hdr->type) {
+		case ACPI_HEST_TYPE_IA32_CHECK:
+				ghes_assist_save_source(hest_hdr, MCE);
+				break;
+		case ACPI_HEST_TYPE_IA32_CORRECTED_CHECK:
+				ghes_assist_save_source(hest_hdr, CMC);
+				break;
+		case ACPI_HEST_TYPE_IA32_DEFERRED_CHECK:
+				ghes_assist_save_source(hest_hdr, DMC);
+				break;
+		default:
+				break;
+	}
+
+	return 0;
+}
+
+static int __init hest_parse_ghes_assist_related_sources(struct acpi_hest_header *hest_hdr, void *data)
+{
+	struct acpi_hest_header *src_hdr;
+	struct acpi_hest_generic *ghes_hdr;
+	int i = 0;
+
+	if (!is_generic_error(hest_hdr))
+		return 0;
+
+	if (!is_related_ghes(hest_hdr))
+		return 0;
+
+	ghes_hdr = (struct acpi_hest_generic *)hest_hdr;
+
+	for (i = 0; i < NR_GHES_ASSIST_SOURCES; i++) {
+		src_hdr = ghes_assist_sources[i].source_hdr;
+		if (!src_hdr)
+			continue;
+
+		if (src_hdr->source_id == ghes_hdr->related_source_id) {
+			if (!ghes_assist_sources[i].ghes_hdr)
+				ghes_assist_sources[i].ghes_hdr = ghes_hdr;
+
+			// TODO: Can we map this somewhere else?
+			apei_map_generic_address(&ghes_hdr->error_status_address);
+			break;
+		}
+	}
+
+	return 0;
+}
+
+static void __init print_ghes_assist(void)
+{
+	int i = 0;
+	struct ghes_assist_source *src;
+
+	for (i = 0; i < NR_GHES_ASSIST_SOURCES; i++) {
+		pr_info("AMD_DEBUG: GHES_ASSIST Type %d", i);
+		src = &ghes_assist_sources[i];
+		if (src->source_hdr)
+			pr_info(" AMD_DEBUG: Source ID = 0x%x", src->source_hdr->source_id);
+		if (src->ghes_hdr)
+			pr_info(" AMD_DEBUG: GHES Source ID = 0x%x", src->ghes_hdr->header.source_id);
+	}
+}
+
+static int __init hest_parse_ghes_assist(void)
+{
+	if (apei_hest_parse(hest_parse_ghes_assist_sources, NULL))
+		goto err;
+	if (apei_hest_parse(hest_parse_ghes_assist_related_sources, NULL))
+		goto err;
+
+	print_ghes_assist();
+
+	return 0;
+err:
+	return 1;
+}
+
 struct ghes_arr {
 	struct platform_device **ghes_devs;
 	unsigned int count;
@@ -262,6 +363,8 @@ void __init acpi_hest_init(void)
 		goto err;
 
 	if (!ghes_disable) {
+		if (hest_parse_ghes_assist())
+			goto err;
 		if (apei_hest_parse(hest_parse_ghes_count, &ghes_count))
 			goto err;
 

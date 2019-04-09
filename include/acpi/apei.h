@@ -27,6 +27,20 @@ extern int hest_disable;
 extern int erst_disable;
 #ifdef CONFIG_ACPI_APEI_GHES
 extern bool ghes_disable;
+
+struct ghes_assist_source {
+	struct acpi_hest_header *source_hdr;
+	struct acpi_hest_generic *ghes_hdr;
+};
+
+enum ghes_assist_source_types {
+	MCE = 0,
+	CMC,
+	DMC,
+	NR_GHES_ASSIST_SOURCES,
+};
+extern struct ghes_assist_source ghes_assist_sources[NR_GHES_ASSIST_SOURCES];
+
 #else
 #define ghes_disable 1
 #endif
