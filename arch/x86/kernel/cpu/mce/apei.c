@@ -26,6 +26,41 @@
 
 #include "internal.h"
 
+void ghes_assist_get_phys_addr(struct mce *m)
+{
+	struct ghes_assist_source *src;
+	struct acpi_hest_generic *ghes;
+	u64 index, paddr;
+	u8 num_banks;
+
+	if (m->status & MCI_STATUS_DEFERRED)
+		src = &ghes_assist_sources[DMC];
+	else if (m->status & MCI_STATUS_UC)
+		src = &ghes_assist_sources[MCE];
+	else
+		src = &ghes_assist_sources[CMC];
+
+	if (!(src->source_hdr && src->ghes_hdr))
+	       return;
+
+	if (m->status & MCI_STATUS_DEFERRED)
+		num_banks = ((struct acpi_hest_ia_deferred_check *)(src->source_hdr))->num_hardware_banks;
+	else if (m->status & MCI_STATUS_UC)
+		num_banks = ((struct acpi_hest_ia_machine_check *)(src->source_hdr))->num_hardware_banks;
+	else
+		num_banks = ((struct acpi_hest_ia_corrected *)(src->source_hdr))->num_hardware_banks;
+
+	// TODO: Clarify where "MCA Banks per CPU comes from"
+	index = (m->cpu * num_banks) + m->bank;
+
+	ghes = src->ghes_hdr + index;
+
+	if(!ghes_get_phys_addr(ghes, &paddr))
+		m->paddr = paddr;
+
+	return;
+}
+
 void apei_mce_report_mem_error(int severity, struct cper_sec_mem_err *mem_err)
 {
 	struct mce m;

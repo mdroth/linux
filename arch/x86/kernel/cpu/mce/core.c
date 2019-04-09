@@ -802,6 +802,7 @@ log_it:
 
 		mce_read_aux(&m, i);
 		m.severity = mce_severity(&m, NULL, mca_cfg.tolerant, NULL, false);
+		ghes_assist_get_phys_addr(&m);
 		/*
 		 * Don't get the IP here because it's unlikely to
 		 * have anything to do with the actual error location.
@@ -1231,6 +1232,7 @@ static void __mc_scan_banks(struct mce *m, struct pt_regs *regs, struct mce *fin
 
 		/* assuming valid severity level != 0 */
 		m->severity = severity;
+		ghes_assist_get_phys_addr(m);
 
 		mce_log(m);
 
@@ -1384,6 +1386,8 @@ noinstr void do_machine_check(struct pt_regs *regs)
 	}
 
 	__mc_scan_banks(&m, regs, final, toclear, valid_banks, no_way_out, &worst);
+
+	ghes_assist_get_phys_addr(&m);
 
 	if (!no_way_out)
 		mce_clear_state(toclear);
