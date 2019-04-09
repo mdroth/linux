@@ -38,6 +38,7 @@ struct mce {
 	__u64 kflags;		/* Internal kernel use */
 	__u64 synd1;		/* MCA_SYND1 MSR: only valid on SMCA systems */
 	__u64 synd2;		/* MCA_SYND2 MSR: only valid on SMCA systems */
+	__u64 paddr;		/* Physical address */
 };
 
 #define MCE_GET_RECORD_LEN   _IOR('M', 1, int)
