@@ -145,4 +145,5 @@ int ghes_notify_sea(void);
 static inline int ghes_notify_sea(void) { return -ENOENT; }
 #endif
 
+int ghes_get_phys_addr(struct acpi_hest_generic *ghes, u64 *paddr);
 #endif /* GHES_H */
