@@ -392,10 +392,6 @@ static int ghes_read_estatus(struct ghes *ghes,
 	if (rc)
 		return rc;
 
-	rc = __ghes_check_estatus(ghes, estatus);
-	if (rc)
-		return rc;
-
 	return __ghes_read_estatus(estatus, *buf_paddr, fixmap_idx,
 				   cper_estatus_len(estatus));
 }
