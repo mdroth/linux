@@ -82,7 +82,7 @@ void apei_mce_report_mem_error(int severity, struct cper_sec_mem_err *mem_err)
 		m.tsc = rdtsc();
 	}
 
-	m.addr = mem_err->physical_addr;
+	m.addr = m.paddr = mem_err->physical_addr;
 	mce_log(&m);
 }
 EXPORT_SYMBOL_GPL(apei_mce_report_mem_error);
