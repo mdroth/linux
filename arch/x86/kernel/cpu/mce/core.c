@@ -528,7 +528,7 @@ static void mce_irq_work_cb(struct irq_work *entry)
  * be somewhat complicated (e.g. segment offset would require an instruction
  * parser). So only support physical addresses up to page granularity for now.
  */
-int mce_usable_address(struct mce *m)
+static int mce_usable_address(struct mce *m)
 {
 	if (!(m->status & MCI_STATUS_ADDRV))
 		return 0;
@@ -547,9 +547,9 @@ int mce_usable_address(struct mce *m)
 	if (MCI_MISC_ADDR_MODE(m->misc) != MCI_MISC_ADDR_PHYS)
 		return 0;
 
+	m->paddr = m->addr;
 	return 1;
 }
-EXPORT_SYMBOL_GPL(mce_usable_address);
 
 bool mce_is_memory_error(struct mce *m)
 {
@@ -642,10 +642,12 @@ static int uc_decode_notifier(struct notifier_block *nb, unsigned long val,
 	    mce->severity != MCE_DEFERRED_SEVERITY)
 		return NOTIFY_DONE;
 
-	pfn = mce->addr >> PAGE_SHIFT;
-	if (!memory_failure(pfn, 0)) {
-		set_mce_nospec(pfn, whole_page(mce));
-		mce->kflags |= MCE_HANDLED_UC;
+	if ((mce->paddr != MCE_INVALID_PADDR) && (mce->severity == MCE_AO_SEVERITY)) {
+		pfn = mce->paddr >> PAGE_SHIFT;
+		if (!memory_failure(pfn, 0)) {
+			set_mce_nospec(pfn, whole_page(mce));
+			mce->kflags |= MCE_HANDLED_UC;
+		}
 	}
 
 	return NOTIFY_OK;

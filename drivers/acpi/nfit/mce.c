@@ -22,7 +22,7 @@ static int nfit_handle_mce(struct notifier_block *nb, unsigned long val,
 		return NOTIFY_DONE;
 
 	/* Verify the address reported in the MCE is valid. */
-	if (!mce_usable_address(mce))
+	if (mce->paddr == MCE_INVALID_PADDR)
 		return NOTIFY_DONE;
 
 	/*
@@ -42,9 +42,9 @@ static int nfit_handle_mce(struct notifier_block *nb, unsigned long val,
 			if (nfit_spa_type(spa) != NFIT_SPA_PM)
 				continue;
 			/* find the spa that covers the mce addr */
-			if (spa->address > mce->addr)
+			if (spa->address > mce->paddr)
 				continue;
-			if ((spa->address + spa->length - 1) < mce->addr)
+			if ((spa->address + spa->length - 1) < mce->paddr)
 				continue;
 			found_match = 1;
 			dev_dbg(dev, "addr in SPA %d (0x%llx, 0x%llx)\n",
