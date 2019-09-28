@@ -486,6 +486,9 @@ struct protection_domain {
 	unsigned long flags;	/* flags to find out type of domain */
 	unsigned dev_cnt;	/* devices assigned to this domain */
 	unsigned dev_iommu[MAX_IOMMUS]; /* per-IOMMU reference count */
+#ifdef CONFIG_AMD_IOMMU_DEBUGFS
+	struct amd_iommu_debug *dbg;
+#endif
 };
 
 /* For decocded pt_root */
@@ -493,6 +496,16 @@ struct domain_pgtable {
 	int mode;
 	u64 *root;
 };
+
+#ifdef CONFIG_AMD_IOMMU_DEBUGFS
+struct amd_iommu_debug {
+	u16 devid;
+	u16 domid;
+	bool mapping_trace_enabled;
+	bool intremap_trace_enabled;
+	struct protection_domain *tmp_dom;
+};
+#endif
 
 /*
  * Structure where we save information about one hardware AMD IOMMU in the
@@ -612,7 +625,7 @@ struct amd_iommu {
 
 #ifdef CONFIG_AMD_IOMMU_DEBUGFS
 	/* DebugFS Info */
-	struct dentry *debugfs;
+	struct amd_iommu_debug dbg;
 #endif
 	/* IRQ notifier for IntCapXT interrupt */
 	struct irq_affinity_notify intcapxt_notify;
@@ -899,6 +912,10 @@ struct amd_ir_data {
 	int ga_vector;
 	int ga_root_ptr;
 	int ga_tag;
+
+#ifdef CONFIG_AMD_IOMMU_DEBUGFS
+	struct amd_iommu_debug *dbg;
+#endif
 };
 
 struct amd_irte_ops {

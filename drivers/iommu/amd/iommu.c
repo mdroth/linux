@@ -146,10 +146,11 @@ static inline int get_device_id(struct device *dev)
 	return devid;
 }
 
-static struct protection_domain *to_pdomain(struct iommu_domain *dom)
+struct protection_domain *to_pdomain(struct iommu_domain *dom)
 {
 	return container_of(dom, struct protection_domain, domain);
 }
+EXPORT_SYMBOL(to_pdomain);
 
 static void amd_iommu_domain_get_pgtable(struct protection_domain *domain,
 					 struct domain_pgtable *pgtable)
@@ -1744,6 +1745,136 @@ static struct page *free_clear_pte(u64 *pte, u64 pteval, struct page *freelist)
 	return free_sub_pt(pt, mode, freelist);
 }
 
+#ifdef CONFIG_AMD_IOMMU_DEBUGFS
+
+#define IOMMU_TRACE_MAP	0x1
+#define IOMMU_TRACE_UNMAP	0x2
+
+static void trace_map_page(struct protection_domain *pdom,
+			unsigned long start,
+			unsigned long paddr,
+			unsigned int page_size)
+{
+	u16 devid;
+	struct amd_iommu *iommu;
+
+	if (!pdom->dbg)
+		return;
+
+	devid = pdom->dbg->devid;
+	if (!devid)
+		return;
+
+	iommu = amd_iommu_rlookup_table[devid];
+	if ((iommu->dbg.mapping_trace_enabled & IOMMU_TRACE_MAP) &&
+	    (iommu->dbg.devid == devid)) {
+		printk("DEBUG: %s: domid=%#x, iova=%#lx, paddr=%#lx, pagesize=%u\n",
+			__func__, pdom->id, start, paddr, page_size);
+	}
+}
+
+static void trace_unmap_page(struct protection_domain *pdom,
+				unsigned long start,
+				unsigned long page_size)
+{
+	if (!pdom->dbg)
+		return;
+
+	if ((pdom->dbg->mapping_trace_enabled & IOMMU_TRACE_UNMAP) &&
+	    (pdom->dbg->domid == pdom->id)) {
+		printk("DEBUG: %s: domid=%#x, iova=%#lx, page_size=%lu\n", __func__,
+			pdom->id, start, page_size);
+	}
+}
+
+static void trace_update_intremap(struct amd_ir_data *data, void *entry, bool ga_mode)
+{
+	u16 devid;
+
+	if (!data->dbg)
+		return;
+
+	devid = data->dbg->devid;
+	if (!devid)
+		return;
+
+	if ((data->dbg->intremap_trace_enabled & IOMMU_TRACE_MAP) &&
+	    (data->dbg->devid == data->irq_2_irte.devid)) {
+		if (ga_mode) {
+			struct irte_ga *irte = (struct irte_ga *) entry;
+
+			printk("DEBUG: %s: ga=1,  devid=%#x, index=%#04x, hi:lo=%#016llx:%016llx\n",
+				__func__, data->irq_2_irte.devid, data->irq_2_irte.index,
+				irte->hi.val, irte->lo.val);
+		} else {
+			union irte *irte = (union irte *) entry;
+
+			printk("DEBUG: %s: ga=0, devid=%#x, index=%#04x, entry=%#04x\n",
+				__func__, data->irq_2_irte.devid, data->irq_2_irte.index,
+				irte->val);
+		}
+	}
+}
+
+static void trace_map_intremap(struct amd_ir_data *data, bool ga_mode)
+{
+	u16 devid;
+
+	if (!data->dbg)
+		return;
+
+	devid = data->dbg->devid;
+	if (!devid)
+		return;
+
+	if ((data->dbg->intremap_trace_enabled & IOMMU_TRACE_MAP) &&
+	    (data->dbg->devid == data->irq_2_irte.devid)) {
+		if (ga_mode) {
+			struct irte_ga *irte = (struct irte_ga *) data->entry;
+
+			printk("DEBUG: %s: ga=1,  devid=%#x, index=%#04x, hi:lo=%#016llx:%016llx\n",
+				__func__, data->irq_2_irte.devid, data->irq_2_irte.index,
+				irte->hi.val, irte->lo.val);
+		} else {
+			union irte *irte = (union irte *) data->entry;
+
+			printk("DEBUG: %s: ga=0, devid=%#x, index=%#04x, entry=%#04x\n",
+				__func__, data->irq_2_irte.devid, data->irq_2_irte.index,
+				irte->val);
+		}
+	}
+}
+
+static void trace_unmap_intremap(struct amd_ir_data *data, bool ga_mode)
+{
+	u16 devid;
+
+	if (!data->dbg)
+		return;
+
+	devid = data->dbg->devid;
+	if (!devid)
+		return;
+
+	if ((data->dbg->intremap_trace_enabled & IOMMU_TRACE_UNMAP) &&
+	    (data->dbg->devid == data->irq_2_irte.devid)) {
+		if (ga_mode) {
+			struct irte_ga *irte = (struct irte_ga *) data->entry;
+
+			printk("DEBUG: %s: devid=%#x, index=%#04x, hi:lo=%#016llx:%016llx\n",
+				__func__, data->irq_2_irte.devid, data->irq_2_irte.index,
+				irte->hi.val, irte->lo.val);
+		} else {
+			union irte *irte = (union irte *) data->entry;
+
+			printk("DEBUG: %s: devid=%#x, index=%#04x, entry=%#04x\n",
+				__func__, data->irq_2_irte.devid, data->irq_2_irte.index,
+				irte->val);
+		}
+	}
+}
+#endif
+
 /*
  * Generic mapping functions. It maps a physical address into a DMA
  * address space. It allocates the page table pages if necessary.
@@ -1799,6 +1930,10 @@ static int iommu_map_page(struct protection_domain *dom,
 
 	ret = 0;
 
+#ifdef CONFIG_AMD_IOMMU_DEBUGFS
+	trace_map_page(dom, bus_addr, phys_addr, page_size);
+#endif
+
 out:
 	if (updated) {
 		unsigned long flags;
@@ -1831,6 +1966,10 @@ static unsigned long iommu_unmap_page(struct protection_domain *dom,
 	BUG_ON(!is_power_of_2(page_size));
 
 	unmapped = 0;
+
+#ifdef CONFIG_AMD_IOMMU_DEBUGFS
+	trace_unmap_page(dom, bus_addr, page_size);
+#endif
 
 	while (unmapped < page_size) {
 
@@ -3445,6 +3584,10 @@ static int modify_irte_ga(u16 devid, int index, struct irte_ga *irte,
 
 	raw_spin_unlock_irqrestore(&table->lock, flags);
 
+#ifdef CONFIG_AMD_IOMMU_DEBUGFS
+	trace_update_intremap(data, entry, true);
+#endif
+
 	iommu_flush_irt(iommu, devid);
 	iommu_completion_wait(iommu);
 
@@ -3468,6 +3611,10 @@ static int modify_irte(u16 devid, int index, union irte *irte, struct amd_ir_dat
 	raw_spin_lock_irqsave(&table->lock, flags);
 	table->table[index] = irte->val;
 	raw_spin_unlock_irqrestore(&table->lock, flags);
+
+#ifdef CONFIG_AMD_IOMMU_DEBUGFS
+	trace_update_intremap(data, irte, false);
+#endif
 
 	iommu_flush_irt(iommu, devid);
 	iommu_completion_wait(iommu);
@@ -3819,6 +3966,14 @@ static int irq_remapping_alloc(struct irq_domain *domain, unsigned int virq,
 		irq_set_status_flags(virq + i, IRQ_MOVE_PCNTXT);
 	}
 
+#ifdef CONFIG_AMD_IOMMU_DEBUGFS
+	{
+		struct amd_iommu *iommu = amd_iommu_rlookup_table[devid];
+
+		if (iommu)
+			data->dbg = &iommu->dbg;
+	}
+#endif
 	return 0;
 
 out_free_data:
