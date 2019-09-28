@@ -133,10 +133,11 @@ static inline int get_device_id(struct device *dev)
 	return devid;
 }
 
-static struct protection_domain *to_pdomain(struct iommu_domain *dom)
+struct protection_domain *to_pdomain(struct iommu_domain *dom)
 {
 	return container_of(dom, struct protection_domain, domain);
 }
+EXPORT_SYMBOL(to_pdomain);
 
 static struct iommu_dev_data *alloc_dev_data(u16 devid)
 {
@@ -2778,6 +2779,95 @@ out:
 	return index;
 }
 
+#ifdef CONFIG_AMD_IOMMU_DEBUGFS
+static void trace_update_intremap(struct amd_ir_data *data, void *entry, bool ga_mode)
+{
+	u16 devid;
+
+	if (!data->dbg)
+		return;
+
+	devid = data->dbg->devid;
+	if (!devid)
+		return;
+
+	if ((data->dbg->intremap_trace_enabled & IOMMU_TRACE_MAP) &&
+	    (data->dbg->devid == data->irq_2_irte.devid)) {
+		if (ga_mode) {
+			struct irte_ga *irte = (struct irte_ga *) entry;
+
+			printk("DEBUG: %s: ga=1,  devid=%#x, index=%#04x, hi:lo=%#016llx:%016llx\n",
+				__func__, data->irq_2_irte.devid, data->irq_2_irte.index,
+				irte->hi.val, irte->lo.val);
+		} else {
+			union irte *irte = (union irte *) entry;
+
+			printk("DEBUG: %s: ga=0, devid=%#x, index=%#04x, entry=%#04x\n",
+				__func__, data->irq_2_irte.devid, data->irq_2_irte.index,
+				irte->val);
+		}
+	}
+}
+
+static void trace_map_intremap(struct amd_ir_data *data, bool ga_mode)
+{
+	u16 devid;
+
+	if (!data->dbg)
+		return;
+
+	devid = data->dbg->devid;
+	if (!devid)
+		return;
+
+	if ((data->dbg->intremap_trace_enabled & IOMMU_TRACE_MAP) &&
+	    (data->dbg->devid == data->irq_2_irte.devid)) {
+		if (ga_mode) {
+			struct irte_ga *irte = (struct irte_ga *) data->entry;
+
+			printk("DEBUG: %s: ga=1,  devid=%#x, index=%#04x, hi:lo=%#016llx:%016llx\n",
+				__func__, data->irq_2_irte.devid, data->irq_2_irte.index,
+				irte->hi.val, irte->lo.val);
+		} else {
+			union irte *irte = (union irte *) data->entry;
+
+			printk("DEBUG: %s: ga=0, devid=%#x, index=%#04x, entry=%#04x\n",
+				__func__, data->irq_2_irte.devid, data->irq_2_irte.index,
+				irte->val);
+		}
+	}
+}
+
+static void trace_unmap_intremap(struct amd_ir_data *data, bool ga_mode)
+{
+	u16 devid;
+
+	if (!data->dbg)
+		return;
+
+	devid = data->dbg->devid;
+	if (!devid)
+		return;
+
+	if ((data->dbg->intremap_trace_enabled & IOMMU_TRACE_UNMAP) &&
+	    (data->dbg->devid == data->irq_2_irte.devid)) {
+		if (ga_mode) {
+			struct irte_ga *irte = (struct irte_ga *) data->entry;
+
+			printk("DEBUG: %s: devid=%#x, index=%#04x, hi:lo=%#016llx:%016llx\n",
+				__func__, data->irq_2_irte.devid, data->irq_2_irte.index,
+				irte->hi.val, irte->lo.val);
+		} else {
+			union irte *irte = (union irte *) data->entry;
+
+			printk("DEBUG: %s: devid=%#x, index=%#04x, entry=%#04x\n",
+				__func__, data->irq_2_irte.devid, data->irq_2_irte.index,
+				irte->val);
+		}
+	}
+}
+#endif
+
 static int modify_irte_ga(u16 devid, int index, struct irte_ga *irte,
 			  struct amd_ir_data *data)
 {
@@ -2815,6 +2905,10 @@ static int modify_irte_ga(u16 devid, int index, struct irte_ga *irte,
 
 	raw_spin_unlock_irqrestore(&table->lock, flags);
 
+#ifdef CONFIG_AMD_IOMMU_DEBUGFS
+	trace_update_intremap(data, entry, true);
+#endif
+
 	iommu_flush_irt(iommu, devid);
 	iommu_completion_wait(iommu);
 
@@ -2838,6 +2932,10 @@ static int modify_irte(u16 devid, int index, union irte *irte, struct amd_ir_dat
 	raw_spin_lock_irqsave(&table->lock, flags);
 	table->table[index] = irte->val;
 	raw_spin_unlock_irqrestore(&table->lock, flags);
+
+#ifdef CONFIG_AMD_IOMMU_DEBUGFS
+	trace_update_intremap(data, irte, false);
+#endif
 
 	iommu_flush_irt(iommu, devid);
 	iommu_completion_wait(iommu);
@@ -3189,6 +3287,14 @@ static int irq_remapping_alloc(struct irq_domain *domain, unsigned int virq,
 		irq_set_status_flags(virq + i, IRQ_MOVE_PCNTXT);
 	}
 
+#ifdef CONFIG_AMD_IOMMU_DEBUGFS
+	{
+		struct amd_iommu *iommu = amd_iommu_rlookup_table[devid];
+
+		if (iommu)
+			data->dbg = &iommu->dbg;
+	}
+#endif
 	return 0;
 
 out_free_data:

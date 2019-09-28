@@ -21,6 +21,9 @@ extern void amd_iommu_init_notifier(void);
 extern int amd_iommu_init_api(void);
 
 #ifdef CONFIG_AMD_IOMMU_DEBUGFS
+#define IOMMU_TRACE_MAP	0x1
+#define IOMMU_TRACE_UNMAP	0x2
+
 void amd_iommu_debugfs_setup(struct amd_iommu *iommu);
 #else
 static inline void amd_iommu_debugfs_setup(struct amd_iommu *iommu) {}

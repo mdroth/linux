@@ -381,6 +381,46 @@ static struct page *free_clear_pte(u64 *pte, u64 pteval, struct page *freelist)
 	return free_sub_pt(pt, mode, freelist);
 }
 
+#ifdef CONFIG_AMD_IOMMU_DEBUGFS
+
+static void trace_map_page(struct protection_domain *pdom,
+			unsigned long start,
+			unsigned long paddr,
+			unsigned int page_size)
+{
+	u16 devid;
+	struct amd_iommu *iommu;
+
+	if (!pdom->dbg)
+		return;
+
+	devid = pdom->dbg->devid;
+	if (!devid)
+		return;
+
+	iommu = amd_iommu_rlookup_table[devid];
+	if ((iommu->dbg.mapping_trace_enabled & IOMMU_TRACE_MAP) &&
+	    (iommu->dbg.devid == devid)) {
+		printk("DEBUG: %s: domid=%#x, iova=%#lx, paddr=%#lx, pagesize=%u\n",
+			__func__, pdom->id, start, paddr, page_size);
+	}
+}
+
+static void trace_unmap_page(struct protection_domain *pdom,
+				unsigned long start,
+				unsigned long page_size)
+{
+	if (!pdom->dbg)
+		return;
+
+	if ((pdom->dbg->mapping_trace_enabled & IOMMU_TRACE_UNMAP) &&
+	    (pdom->dbg->domid == pdom->id)) {
+		printk("DEBUG: %s: domid=%#x, iova=%#lx, page_size=%lu\n", __func__,
+			pdom->id, start, page_size);
+	}
+}
+#endif
+
 /*
  * Generic mapping functions. It maps a physical address into a DMA
  * address space. It allocates the page table pages if necessary.
@@ -433,6 +473,10 @@ static int iommu_v1_map_page(struct io_pgtable_ops *ops, unsigned long iova,
 
 	ret = 0;
 
+#ifdef CONFIG_AMD_IOMMU_DEBUGFS
+	trace_map_page(dom, iova, paddr, size);
+#endif
+
 out:
 	if (updated) {
 		unsigned long flags;
@@ -459,6 +503,9 @@ static unsigned long iommu_v1_unmap_page(struct io_pgtable_ops *ops,
 				      size_t size,
 				      struct iommu_iotlb_gather *gather)
 {
+#ifdef CONFIG_AMD_IOMMU_DEBUGFS
+	struct protection_domain *dom = io_pgtable_ops_to_domain(ops);
+#endif
 	struct amd_io_pgtable *pgtable = io_pgtable_ops_to_data(ops);
 	unsigned long long unmapped;
 	unsigned long unmap_size;
@@ -467,6 +514,10 @@ static unsigned long iommu_v1_unmap_page(struct io_pgtable_ops *ops,
 	BUG_ON(!is_power_of_2(size));
 
 	unmapped = 0;
+
+#ifdef CONFIG_AMD_IOMMU_DEBUGFS
+	trace_unmap_page(dom, iova, size);
+#endif
 
 	while (unmapped < size) {
 		pte = fetch_pte(pgtable, iova, &unmap_size);
