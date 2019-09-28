@@ -545,6 +545,38 @@ static void amd_iommu_report_rmp_fault(volatile u32 *event)
 		pci_dev_put(pdev);
 }
 
+static unsigned long check_pte(struct device *dev, unsigned long iova)
+{
+	struct iommu_domain *domain;
+	unsigned long spa = 0;
+	void *kaddr;
+	unsigned long pfn, offset;
+
+	domain = iommu_get_domain_for_dev(dev);
+	if (!domain || domain->type == IOMMU_DOMAIN_IDENTITY)
+		return 0;
+
+	spa = iommu_iova_to_phys(domain, iova);
+	if (spa == 0) {
+		dev_err(dev, "Failed to get SPA for IOVA %#lx\n", iova);
+		return 0;
+	}
+
+	dev_err(dev, "Found IOVA %#lx --> %#lx\n", iova, spa);
+	pfn = spa >> PAGE_SHIFT;
+	offset = spa & ~PAGE_MASK;
+
+	kaddr = memremap(pfn << PAGE_SHIFT, PAGE_SIZE, MEMREMAP_WB);
+	if (!kaddr) {
+		dev_err(dev, "failed to map PFN 0x%lx\n", pfn);
+		return 0;
+	}
+	print_hex_dump(KERN_DEBUG, "AMD-Vi: ", DUMP_PREFIX_OFFSET,
+			32, 8, kaddr + offset, 128, false);
+	memunmap(kaddr);
+	return spa;
+}
+
 static void amd_iommu_report_page_fault(u16 devid, u16 domain_id,
 					u64 address, int flags)
 {
@@ -559,6 +591,8 @@ static void amd_iommu_report_page_fault(u16 devid, u16 domain_id,
 	if (dev_data && __ratelimit(&dev_data->rs)) {
 		pci_err(pdev, "Event logged [IO_PAGE_FAULT domain=0x%04x address=0x%llx flags=0x%04x]\n",
 			domain_id, address, flags);
+		dump_dte_entry(devid);
+		check_pte(&pdev->dev, address);
 	} else if (printk_ratelimit()) {
 		pr_err("Event logged [IO_PAGE_FAULT device=%02x:%02x.%x domain=0x%04x address=0x%llx flags=0x%04x]\n",
 			PCI_BUS_NUM(devid), PCI_SLOT(devid), PCI_FUNC(devid),
