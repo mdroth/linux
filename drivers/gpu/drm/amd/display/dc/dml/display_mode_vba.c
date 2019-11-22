@@ -343,7 +343,7 @@ static void fetch_socbb_params(struct display_mode_lib *mode_lib)
 	mode_lib->vba.MaxAveragePercentOfIdealDRAMBWDisplayCanUseInNormalSystemOperationSTROBE =
 			soc->max_avg_dram_bw_use_normal_strobe_percent;
 
-	mode_lib->vba.DRAMClockChangeRequirementFinal = 1;
+	mode_lib->vba.DRAMClockChangeRequirementFinal = soc->dram_clock_change_requirement_final;
 	mode_lib->vba.FCLKChangeRequirementFinal = 1;
 	mode_lib->vba.USRRetrainingRequiredFinal = 1;
 	mode_lib->vba.ConfigurableDETSizeEnFinal = 0;
@@ -561,7 +561,8 @@ static void fetch_pipe_params(struct display_mode_lib *mode_lib)
 		mode_lib->vba.GPUVMMinPageSizeKBytes[mode_lib->vba.NumberOfActivePlanes] = src->gpuvm_min_page_size_kbytes;
 		mode_lib->vba.RefreshRate[mode_lib->vba.NumberOfActivePlanes] = dst->refresh_rate; //todo remove this
 		mode_lib->vba.OutputLinkDPRate[mode_lib->vba.NumberOfActivePlanes] = dout->dp_rate;
-		mode_lib->vba.ODMUse[mode_lib->vba.NumberOfActivePlanes] = dst->odm_combine;
+		mode_lib->vba.ODMUse[mode_lib->vba.NumberOfActivePlanes] = dst->odm_combine_policy;
+		mode_lib->vba.DETSizeOverride[mode_lib->vba.NumberOfActivePlanes] = src->det_size_override;
 		//TODO: Need to assign correct values to dp_multistream vars
 		mode_lib->vba.OutputMultistreamEn[mode_lib->vba.NumberOfActiveSurfaces] = dout->dp_multistream_en;
 		mode_lib->vba.OutputMultistreamId[mode_lib->vba.NumberOfActiveSurfaces] = dout->dp_multistream_id;

@@ -155,10 +155,14 @@ static void dcn32_build_wm_range_table(struct clk_mgr_internal *clk_mgr)
 	uint16_t min_uclk_mhz			= clk_mgr->base.bw_params->clk_table.entries[0].memclk_mhz;
 	uint16_t min_dcfclk_mhz			= clk_mgr->base.bw_params->clk_table.entries[0].dcfclk_mhz;
 	uint16_t setb_min_uclk_mhz		= min_uclk_mhz;
-	uint16_t setb_min_dcfclk_mhz	= min_dcfclk_mhz;
+	uint16_t dcfclk_mhz_for_the_second_state = clk_mgr->base.ctx->dc->dml.soc.clock_limits[2].dcfclk_mhz;
+
 	/* For Set B ranges use min clocks state 2 when available, and report those to PM FW */
-	if (clk_mgr->base.ctx->dc->dml.soc.clock_limits[2].dcfclk_mhz)
-		setb_min_dcfclk_mhz = clk_mgr->base.ctx->dc->dml.soc.clock_limits[2].dcfclk_mhz;
+	if (dcfclk_mhz_for_the_second_state)
+		clk_mgr->base.bw_params->wm_table.nv_entries[WM_B].pmfw_breakdown.min_dcfclk = dcfclk_mhz_for_the_second_state;
+	else
+		clk_mgr->base.bw_params->wm_table.nv_entries[WM_B].pmfw_breakdown.min_dcfclk = clk_mgr->base.bw_params->clk_table.entries[0].dcfclk_mhz;
+
 	if (clk_mgr->base.bw_params->clk_table.entries[2].memclk_mhz)
 		setb_min_uclk_mhz = clk_mgr->base.bw_params->clk_table.entries[2].memclk_mhz;
 
@@ -181,7 +185,6 @@ static void dcn32_build_wm_range_table(struct clk_mgr_internal *clk_mgr)
 	clk_mgr->base.bw_params->wm_table.nv_entries[WM_B].dml_input.sr_exit_time_us = sr_exit_time_us;
 	clk_mgr->base.bw_params->wm_table.nv_entries[WM_B].dml_input.sr_enter_plus_exit_time_us = sr_enter_plus_exit_time_us;
 	clk_mgr->base.bw_params->wm_table.nv_entries[WM_B].pmfw_breakdown.wm_type = WATERMARKS_CLOCK_RANGE;
-	clk_mgr->base.bw_params->wm_table.nv_entries[WM_B].pmfw_breakdown.min_dcfclk = setb_min_dcfclk_mhz;
 	clk_mgr->base.bw_params->wm_table.nv_entries[WM_B].pmfw_breakdown.max_dcfclk = 0xFFFF;
 	clk_mgr->base.bw_params->wm_table.nv_entries[WM_B].pmfw_breakdown.min_uclk = setb_min_uclk_mhz;
 	clk_mgr->base.bw_params->wm_table.nv_entries[WM_B].pmfw_breakdown.max_uclk = 0xFFFF;
@@ -213,8 +216,8 @@ static void dcn32_build_wm_range_table(struct clk_mgr_internal *clk_mgr)
 	clk_mgr->base.bw_params->wm_table.nv_entries[WM_D].valid = true;
 	clk_mgr->base.bw_params->wm_table.nv_entries[WM_D].dml_input.pstate_latency_us = clk_mgr->base.bw_params->dummy_pstate_table[3].dummy_pstate_latency_us;
 	clk_mgr->base.bw_params->wm_table.nv_entries[WM_D].dml_input.fclk_change_latency_us = fclk_change_latency_us;
-	clk_mgr->base.bw_params->wm_table.nv_entries[WM_D].dml_input.sr_exit_time_us = sr_exit_time_us / 2; // TBD
-	clk_mgr->base.bw_params->wm_table.nv_entries[WM_D].dml_input.sr_enter_plus_exit_time_us = sr_enter_plus_exit_time_us / 2; // TBD
+	clk_mgr->base.bw_params->wm_table.nv_entries[WM_D].dml_input.sr_exit_time_us = sr_exit_time_us; // TBD
+	clk_mgr->base.bw_params->wm_table.nv_entries[WM_D].dml_input.sr_enter_plus_exit_time_us = sr_enter_plus_exit_time_us; // TBD
 	clk_mgr->base.bw_params->wm_table.nv_entries[WM_D].pmfw_breakdown.wm_type = WATERMARKS_MALL;
 	clk_mgr->base.bw_params->wm_table.nv_entries[WM_D].pmfw_breakdown.min_dcfclk = min_dcfclk_mhz;
 	clk_mgr->base.bw_params->wm_table.nv_entries[WM_D].pmfw_breakdown.max_dcfclk = 0xFFFF;
@@ -288,8 +291,10 @@ void dcn32_init_clocks(struct clk_mgr *clk_mgr_base)
 	/* Get UCLK, update bounding box */
 	clk_mgr_base->funcs->get_memclk_states_from_smu(clk_mgr_base);
 
+	DC_FP_START();
 	/* WM range table */
 	dcn32_build_wm_range_table(clk_mgr);
+	DC_FP_END();
 }
 
 static void dcn32_update_clocks_update_dtb_dto(struct clk_mgr_internal *clk_mgr,
@@ -318,6 +323,8 @@ static void dcn32_update_clocks_update_dtb_dto(struct clk_mgr_internal *clk_mgr,
 				if (pipe_ctx->stream_res.audio != NULL)
 					dto_params.req_audio_dtbclk_khz = 24000;
 			}
+			if (dc_is_hdmi_signal(pipe_ctx->stream->signal))
+				dto_params.is_hdmi = true;
 
 			dccg->funcs->set_dtbclk_dto(clk_mgr->dccg, &dto_params);
 			//dccg->funcs->set_audio_dtbclk_dto(clk_mgr->dccg, &dto_params);
@@ -724,9 +731,11 @@ static void dcn32_get_memclk_states_from_smu(struct clk_mgr *clk_mgr_base)
 			&num_levels);
 	clk_mgr_base->bw_params->clk_table.num_entries = num_levels ? num_levels : 1;
 
+	DC_FP_START();
 	/* Refresh bounding box */
 	clk_mgr_base->ctx->dc->res_pool->funcs->update_bw_bounding_box(
 			clk_mgr->base.ctx->dc, clk_mgr_base->bw_params);
+	DC_FP_END();
 }
 
 static bool dcn32_are_clock_states_equal(struct dc_clocks *a,

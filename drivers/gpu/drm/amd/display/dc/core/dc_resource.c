@@ -23,8 +23,6 @@
  *
  */
 
-#include <linux/slab.h>
-
 #include "dm_services.h"
 
 #include "resource.h"
@@ -1702,6 +1700,9 @@ bool dc_is_stream_unchanged(
 	if (memcmp(&old_stream->audio_info, &stream->audio_info, sizeof(stream->audio_info)) != 0)
 		return false;
 
+	if (old_stream->odm_2to1_policy_applied != stream->odm_2to1_policy_applied)
+		return false;
+
 	return true;
 }
 
@@ -1882,6 +1883,12 @@ static int acquire_first_free_pipe(
 				pipe_ctx->plane_res.mpcc_inst = pool->dpps[i]->inst;
 			pipe_ctx->pipe_idx = i;
 
+			if (i >= pool->timing_generator_count) {
+				int tg_inst = pool->timing_generator_count - 1;
+
+				pipe_ctx->stream_res.tg = pool->timing_generators[tg_inst];
+				pipe_ctx->stream_res.opp = pool->opps[tg_inst];
+			}
 
 			pipe_ctx->stream = stream;
 			return i;
@@ -1994,9 +2001,6 @@ enum dc_status dc_remove_stream_from_ctx(
 				dc->res_pool,
 			del_pipe->stream_res.stream_enc,
 			false);
-	/* Release link encoder from stream in new dc_state. */
-	if (dc->res_pool->funcs->link_enc_unassign)
-		dc->res_pool->funcs->link_enc_unassign(new_ctx, del_pipe->stream);
 
 	if (is_dp_128b_132b_signal(del_pipe)) {
 		update_hpo_dp_stream_engine_usage(
@@ -3018,12 +3022,11 @@ bool pipe_need_reprogram(
 	if (pipe_ctx_old->stream->ctx->dc->res_pool->funcs->link_encs_assign) {
 		bool need_reprogram = false;
 		struct dc *dc = pipe_ctx_old->stream->ctx->dc;
-		enum link_enc_cfg_mode mode = dc->current_state->res_ctx.link_enc_cfg_ctx.mode;
+		struct link_encoder *link_enc_prev =
+			link_enc_cfg_get_link_enc_used_by_stream_current(dc, pipe_ctx_old->stream);
 
-		dc->current_state->res_ctx.link_enc_cfg_ctx.mode = LINK_ENC_CFG_STEADY;
-		if (link_enc_cfg_get_link_enc_used_by_stream(dc, pipe_ctx_old->stream) != pipe_ctx->stream->link_enc)
+		if (link_enc_prev != pipe_ctx->stream->link_enc)
 			need_reprogram = true;
-		dc->current_state->res_ctx.link_enc_cfg_ctx.mode = mode;
 
 		return need_reprogram;
 	}
