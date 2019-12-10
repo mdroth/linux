@@ -491,6 +491,7 @@ static inline void __flush_tlb_all(void)
 	}
 }
 
+int flush_tlbi_kernel(unsigned long start, unsigned long end, bool global);
 /*
  * flush one page in the kernel mapping
  */

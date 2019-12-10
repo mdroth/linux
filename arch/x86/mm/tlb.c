@@ -18,6 +18,24 @@
 
 #include "mm_internal.h"
 
+unsigned int tlbi = 0;
+static int __init setup_tlbi(char *arg)
+{
+	if (!arg)
+		return -EINVAL;
+	if (!strncmp(arg, "enable", 6)) {
+		printk("TLBi Enabled\n");
+		tlbi = 1;
+	}
+	if (!strncmp(arg, "disable", 7)) {
+		printk("TLBi Disabled\n");
+		tlbi = 0;
+	}
+	return 0;
+}
+early_param("tlbi", setup_tlbi);
+
+static int flush_tlbi(void);
 /*
  *	TLB flushing, formerly SMP-only
  *		c/o Linus Torvalds.
@@ -693,6 +711,15 @@ void native_flush_tlb_others(const struct cpumask *cpumask,
 		return;
 	}
 
+	/* Use TLBi if available */
+	if (info->end == TLB_FLUSH_ALL) {
+		if (flush_tlbi() == 0)
+			return;
+	} else {
+		if (flush_tlbi_kernel(info->start, info->end, false) == 0)
+			return;
+	}
+
 	/*
 	 * If no page tables were freed, we can skip sending IPIs to
 	 * CPUs in lazy TLB mode. They will flush the CPU themselves
@@ -801,6 +828,13 @@ void flush_tlb_mm_range(struct mm_struct *mm, unsigned long start,
 	put_cpu();
 }
 
+#define TLBI ".byte 0x0f, 0x01, 0xfe"
+#define TLBSYNC ".byte 0x0f, 0x01, 0xff"
+#define TLBI_ALL_INC_GLOBAL 0x08
+#define TLBI_VA_INC_GLOBAL 0x09
+#define TLBI_VA_NON_GLOBAL 0x01
+#define TLB_ECX_ZERO 0x0
+#define TLB_EDX_ZERO 0x0
 
 static void do_flush_tlb_all(void *info)
 {
@@ -808,10 +842,32 @@ static void do_flush_tlb_all(void *info)
 	__flush_tlb_all();
 }
 
+static int flush_tlbi(void)
+{
+	unsigned long flags;
+
+	if (!tlbi)
+		return 1;
+
+	preempt_disable();
+	local_irq_save(flags);
+
+	asm volatile (TLBI
+		     : : "a" (TLBI_ALL_INC_GLOBAL), "c" (TLB_ECX_ZERO), "d" (TLB_EDX_ZERO) : "memory");
+	asm volatile (TLBSYNC);
+
+	local_irq_restore(flags);
+	preempt_enable();
+
+	return 0;
+}
+
 void flush_tlb_all(void)
 {
 	count_vm_tlb_event(NR_TLB_REMOTE_FLUSH);
-	on_each_cpu(do_flush_tlb_all, NULL, 1);
+
+	if(flush_tlbi())
+		on_each_cpu(do_flush_tlb_all, NULL, 1);
 }
 
 static void do_kernel_range_flush(void *info)
@@ -824,19 +880,57 @@ static void do_kernel_range_flush(void *info)
 		__flush_tlb_one_kernel(addr);
 }
 
+int flush_tlbi_kernel(unsigned long start, unsigned long end, bool global)
+{
+	unsigned int TLBI_EAX = global ? TLBI_VA_INC_GLOBAL : TLBI_VA_NON_GLOBAL;
+	//unsigned long max_count = cpuid_edx(0x80000008) & 0xFFFF;
+	unsigned long addr, flags, count = 0, total_count = 0;
+	unsigned long align_start = ALIGN_DOWN(start, PAGE_SIZE);
+	unsigned long align_end = ALIGN(end, PAGE_SIZE);
+	unsigned long max_count = 256;
+
+	if (!tlbi)
+		return 1;
+
+	if ((align_start + PAGE_SIZE) == align_end)
+		total_count = 1;
+	else
+		total_count = DIV_ROUND_UP(align_end - align_start, PAGE_SIZE);
+
+	preempt_disable();
+	local_irq_save(flags);
+
+	for (addr = align_start; addr < align_end; addr += (count * PAGE_SIZE), total_count -= count) {
+		count = total_count > max_count ? max_count : total_count;
+		asm volatile (TLBI
+			      : : "a" ((addr & PAGE_MASK) | (TLBI_EAX)),
+			          "c" (count ? count - 1 : count), "d" (TLB_EDX_ZERO)
+			        : "memory");
+		asm volatile (TLBSYNC);
+	}
+
+	local_irq_restore(flags);
+	preempt_enable();
+
+	return 0;
+}
+
 void flush_tlb_kernel_range(unsigned long start, unsigned long end)
 {
 	/* Balance as user space task's flush, a bit conservative */
 	if (end == TLB_FLUSH_ALL ||
 	    (end - start) > tlb_single_page_flush_ceiling << PAGE_SHIFT) {
-		on_each_cpu(do_flush_tlb_all, NULL, 1);
+		if (flush_tlbi())
+			on_each_cpu(do_flush_tlb_all, NULL, 1);
 	} else {
 		struct flush_tlb_info *info;
 
 		preempt_disable();
+
 		info = get_flush_tlb_info(NULL, start, end, 0, false, 0);
 
-		on_each_cpu(do_kernel_range_flush, info, 1);
+		if(flush_tlbi_kernel(start, end, true))
+			on_each_cpu(do_kernel_range_flush, info, 1);
 
 		put_flush_tlb_info();
 		preempt_enable();
