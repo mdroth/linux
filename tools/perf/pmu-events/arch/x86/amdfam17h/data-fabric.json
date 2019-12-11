@@ -52,7 +52,7 @@
     "EventName": "df_event_6",
     "PublicDescription": "DfEvent[0x0000000000403847]",
     "EventCode": "0x807",
-    "UMask": "0x02",
+    "UMask": "0x38",
     "PerPkg": "1",
     "Unit": "DFPMC"
   },
@@ -60,7 +60,7 @@
     "EventName": "df_event_7",
     "PublicDescription": "DfEvent[0x0000000000403887]",
     "EventCode": "0x847",
-    "UMask": "0x02",
+    "UMask": "0x38",
     "PerPkg": "1",
     "Unit": "DFPMC"
   },
@@ -68,7 +68,7 @@
     "EventName": "df_event_8",
     "PublicDescription": "DfEvent[0x00000000004038C7]",
     "EventCode": "0x847",
-    "UMask": "0x02",
+    "UMask": "0x38",
     "PerPkg": "1",
     "Unit": "DFPMC"
   },
@@ -110,7 +110,7 @@
     "PerPkg": "1",
     "MetricExpr": "df_event_5 + df_event_6 + df_event_7 + df_event_8",
     "ScaleUnit": "6.1e-05MiB",
-    "MetricName": "combined-dram-1",
+    "MetricName": "combined_dram_1",
     "MetricGroup": "data_fabric"
   },
   {
@@ -119,7 +119,7 @@
     "PerPkg": "1",
     "MetricExpr": "df_event_9 + df_event_10 + df_event_11 + df_event_12",
     "ScaleUnit": "6.1e-05MiB",
-    "MetricName": "combined-dram-2",
+    "MetricName": "combined_dram_2",
     "MetricGroup": "data_fabric"
   },
   {
