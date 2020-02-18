@@ -684,18 +684,25 @@ void mce_amd_feature_init(struct cpuinfo_x86 *c)
 int umc_normaddr_to_sysaddr(u64 norm_addr, u16 nid, u8 umc, u64 *sys_addr)
 {
 	u64 dram_base_addr, dram_limit_addr, dram_hole_base;
+
 	/* We start from the normalized address */
 	u64 ret_addr = norm_addr;
 
 	u32 tmp;
 
-	u8 die_id_shift, die_id_mask, socket_id_shift, socket_id_mask;
+	bool hash_enabled = false, split_normalized = false, legacy_df = false;
+
 	u8 intlv_num_dies, intlv_num_chan, intlv_num_sockets;
-	u8 intlv_addr_sel, intlv_addr_bit;
-	u8 num_intlv_bits, hashed_bit;
+	u8 intlv_addr_sel, intlv_addr_bit, num_intlv_bits;
+	u8 cs_mask, cs_id = 0, dst_fabric_id = 0;
 	u8 lgcy_mmio_hole_en, base = 0;
-	u8 cs_mask, cs_id = 0;
-	bool hash_enabled = false;
+
+	/* Read D18F1x208 (System Fabric ID Mask 0). */
+	if (amd_df_indirect_read(nid, 1, 0x208, umc, &tmp))
+		goto out_err;
+
+	/* Determine if system is a legacy Data Fabric type */
+	legacy_df = !(tmp & 0xFF);
 
 	/* Read D18F0x1B4 (DramOffset), check if base 1 is used. */
 	if (amd_df_indirect_read(nid, 0, 0x1B4, umc, &tmp))
@@ -703,7 +710,12 @@ int umc_normaddr_to_sysaddr(u64 norm_addr, u16 nid, u8 umc, u64 *sys_addr)
 
 	/* Remove HiAddrOffset from normalized address, if enabled: */
 	if (tmp & BIT(0)) {
-		u64 hi_addr_offset = (tmp & GENMASK_ULL(31, 20)) << 8;
+		u8 hi_addr_offset_lsb = legacy_df ? 20 : 12;
+		u64 hi_addr_offset = tmp & GENMASK_ULL(31, hi_addr_offset_lsb);
+
+		/* Align to bit 28 regardless of the LSB used. */
+		hi_addr_offset >>= hi_addr_offset_lsb;
+		hi_addr_offset <<= 28;
 
 		if (norm_addr >= hi_addr_offset) {
 			ret_addr -= hi_addr_offset;
@@ -723,23 +735,31 @@ int umc_normaddr_to_sysaddr(u64 norm_addr, u16 nid, u8 umc, u64 *sys_addr)
 	}
 
 	lgcy_mmio_hole_en = tmp & BIT(1);
-	intlv_num_chan	  = (tmp >> 4) & 0xF;
-	intlv_addr_sel	  = (tmp >> 8) & 0x7;
-	dram_base_addr	  = (tmp & GENMASK_ULL(31, 12)) << 16;
 
-	/* {0, 1, 2, 3} map to address bits {8, 9, 10, 11} respectively */
-	if (intlv_addr_sel > 3) {
-		pr_err("%s: Invalid interleave address select %d.\n",
-			__func__, intlv_addr_sel);
-		goto out_err;
+	if (legacy_df) {
+		intlv_num_chan	  = (tmp >> 4) & 0xF;
+		intlv_addr_sel	  = (tmp >> 8) & 0x7;
+	} else {
+		intlv_num_chan    = (tmp >> 2) & 0xF;
+		intlv_num_dies	  = (tmp >> 6) & 0x3;
+		intlv_num_sockets = (tmp >> 8) & 0x1;
+		intlv_addr_sel	  = (tmp >> 9) & 0x7;
 	}
+
+	dram_base_addr	  = (tmp & GENMASK_ULL(31, 12)) << 16;
 
 	/* Read D18F0x114 (DramLimitAddress). */
 	if (amd_df_indirect_read(nid, 0, 0x114 + (8 * base), umc, &tmp))
 		goto out_err;
 
-	intlv_num_sockets = (tmp >> 8) & 0x1;
-	intlv_num_dies	  = (tmp >> 10) & 0x3;
+	if (legacy_df) {
+		intlv_num_sockets = (tmp >> 8) & 0x1;
+		intlv_num_dies	  = (tmp >> 10) & 0x3;
+		dst_fabric_id	  = tmp & 0xFF;
+	} else {
+		dst_fabric_id	  = tmp & 0x3FF;
+	}
+
 	dram_limit_addr	  = ((tmp & GENMASK_ULL(31, 12)) << 16) | GENMASK_ULL(27, 0);
 
 	intlv_addr_bit = intlv_addr_sel + 8;
@@ -752,8 +772,27 @@ int umc_normaddr_to_sysaddr(u64 norm_addr, u16 nid, u8 umc, u64 *sys_addr)
 	case 5:	intlv_num_chan = 3; break;
 	case 7:	intlv_num_chan = 4; break;
 
-	case 8: intlv_num_chan = 1;
+	case 8:
+		if (legacy_df) {
+			intlv_num_chan = 1;
+			hash_enabled = true;
+		} else {
+			intlv_num_chan = 5;
+		}
+		break;
+	case 12:
+		intlv_num_chan = 1;
 		hash_enabled = true;
+		break;
+	case 13:
+		intlv_num_chan = 2;
+		hash_enabled = true;
+		split_normalized = true;
+		break;
+	case 14:
+		intlv_num_chan = 3;
+		hash_enabled = true;
+		split_normalized = true;
 		break;
 	default:
 		pr_err("%s: Invalid number of interleaved channels %d.\n",
@@ -761,18 +800,14 @@ int umc_normaddr_to_sysaddr(u64 norm_addr, u16 nid, u8 umc, u64 *sys_addr)
 		goto out_err;
 	}
 
-	num_intlv_bits = intlv_num_chan;
-
-	if (intlv_num_dies > 2) {
-		pr_err("%s: Invalid number of interleaved nodes/dies %d.\n",
-			__func__, intlv_num_dies);
+	/* Assert interleave address bit is 8 or 9 for hashing cases. */
+	if (hash_enabled && intlv_addr_bit != 8 && intlv_addr_bit != 9) {
+		pr_err("%s: Invalid interleave address bit for hashing %d.\n",
+			__func__, intlv_addr_bit);
 		goto out_err;
 	}
 
-	num_intlv_bits += intlv_num_dies;
-
-	/* Add a bit if sockets are interleaved. */
-	num_intlv_bits += intlv_num_sockets;
+	num_intlv_bits = intlv_num_chan + intlv_num_dies + intlv_num_sockets;
 
 	/* Assert num_intlv_bits <= 4 */
 	if (num_intlv_bits > 4) {
@@ -782,8 +817,10 @@ int umc_normaddr_to_sysaddr(u64 norm_addr, u16 nid, u8 umc, u64 *sys_addr)
 	}
 
 	if (num_intlv_bits > 0) {
-		u64 temp_addr_x, temp_addr_i, temp_addr_y;
+		u8 cs_fabric_id_mask = legacy_df ? 0xFF : 0x3F;
 		u8 die_id_bit, sock_id_bit, cs_fabric_id;
+		u64 addr_x, addr_y, addr_z;
+		u8 node_id_shift = 0;
 
 		/*
 		 * Read FabricBlockInstanceInformation3_CS[BlockFabricID].
@@ -794,7 +831,7 @@ int umc_normaddr_to_sysaddr(u64 norm_addr, u16 nid, u8 umc, u64 *sys_addr)
 		if (amd_df_indirect_read(nid, 0, 0x50, umc, &tmp))
 			goto out_err;
 
-		cs_fabric_id = (tmp >> 8) & 0xFF;
+		cs_fabric_id = (tmp >> 8) & cs_fabric_id_mask;
 		die_id_bit   = 0;
 
 		/* If interleaved over more than 1 channel: */
@@ -802,44 +839,94 @@ int umc_normaddr_to_sysaddr(u64 norm_addr, u16 nid, u8 umc, u64 *sys_addr)
 			die_id_bit = intlv_num_chan;
 			cs_mask	   = (1 << die_id_bit) - 1;
 			cs_id	   = cs_fabric_id & cs_mask;
+			cs_id	  -= dst_fabric_id & cs_mask;
 		}
 
 		sock_id_bit = die_id_bit;
 
-		/* Read D18F1x208 (SystemFabricIdMask). */
-		if (intlv_num_dies || intlv_num_sockets)
-			if (amd_df_indirect_read(nid, 1, 0x208, umc, &tmp))
+		if (intlv_num_dies || intlv_num_sockets) {
+			u16 offset = 0;
+
+			if (legacy_df) {
+				/* Read D18F1x208 (SystemFabricIdMask). */
+				offset = 0x208;
+			} else {
+				/* Read D18F1x20C (SystemFabricIdMask1). */
+				offset = 0x20C;
+			}
+
+			if (amd_df_indirect_read(nid, 1, offset, umc, &tmp))
 				goto out_err;
+
+			if (!legacy_df)
+				node_id_shift = tmp & 0xF;
+		}
 
 		/* If interleaved over more than 1 die. */
 		if (intlv_num_dies) {
+			u8 die_id_shift, die_id_mask;
+
 			sock_id_bit  = die_id_bit + intlv_num_dies;
-			die_id_shift = (tmp >> 24) & 0xF;
-			die_id_mask  = (tmp >> 8) & 0xFF;
+
+			if (legacy_df) {
+				die_id_shift = (tmp >> 24) & 0xF;
+				die_id_mask  = (tmp >> 8) & 0xFF;
+			} else {
+				die_id_shift = (tmp & 0xF) + node_id_shift;
+
+				die_id_mask  = (tmp >> 16) & 0x7;
+				die_id_mask <<= node_id_shift;
+			}
 
 			cs_id |= ((cs_fabric_id & die_id_mask) >> die_id_shift) << die_id_bit;
 		}
 
 		/* If interleaved over more than 1 socket. */
 		if (intlv_num_sockets) {
-			socket_id_shift	= (tmp >> 28) & 0xF;
-			socket_id_mask	= (tmp >> 16) & 0xFF;
+			u8 socket_id_shift, socket_id_mask;
+
+			if (legacy_df) {
+				socket_id_shift	= (tmp >> 28) & 0xF;
+				socket_id_mask	= (tmp >> 16) & 0xFF;
+			} else {
+				socket_id_shift	= (tmp >> 8) & 0x3;
+				socket_id_shift += node_id_shift;
+
+				socket_id_mask	= (tmp >> 24) & 0x7;
+				socket_id_mask <<= node_id_shift;
+			}
 
 			cs_id |= ((cs_fabric_id & socket_id_mask) >> socket_id_shift) << sock_id_bit;
 		}
 
 		/*
 		 * The pre-interleaved address consists of XXXXXXIIIYYYYY
-		 * where III is the ID for this CS, and XXXXXXYYYYY are the
-		 * address bits from the post-interleaved address.
-		 * "num_intlv_bits" has been calculated to tell us how many "I"
-		 * bits there are. "intlv_addr_bit" tells us how many "Y" bits
-		 * there are (where "I" starts).
+		 * or XXXXXXIIZZZIYYY where III is the ID for this CS, and
+		 * XXXXXXZZZYYYYY are the address bits from the post-interleaved
+		 * address. "num_intlv_bits" has been calculated to tell us how
+		 * many "I" bits there are. "intlv_addr_bit" tells us how many
+		 * "Y" bits there are (where "I" starts).
+		 *
+		 * The "split" III is only used in the COD modes, where there
+		 * is one bit I at "intlv_addr_bit", and the remaining CS bits
+		 * are higher up starting at bit 12.
 		 */
-		temp_addr_y = ret_addr & GENMASK_ULL(intlv_addr_bit-1, 0);
-		temp_addr_i = (cs_id << intlv_addr_bit);
-		temp_addr_x = (ret_addr & GENMASK_ULL(63, intlv_addr_bit)) << num_intlv_bits;
-		ret_addr    = temp_addr_x | temp_addr_i | temp_addr_y;
+		addr_y = ret_addr & GENMASK_ULL(intlv_addr_bit - 1, 0);
+
+		if (split_normalized) {
+			addr_x = ret_addr & GENMASK_ULL(63, 11);
+			addr_x <<= num_intlv_bits;
+
+			addr_z = ret_addr & GENMASK_ULL(10, intlv_addr_bit);
+			addr_z <<= 1;
+		} else {
+			addr_x = ret_addr & GENMASK_ULL(63, intlv_addr_bit);
+			addr_x <<= num_intlv_bits;
+
+			addr_z = 0;
+		}
+
+		ret_addr = addr_x | addr_z | addr_y;
 	}
 
 	/* Add dram base address */
@@ -855,18 +942,71 @@ int umc_normaddr_to_sysaddr(u64 norm_addr, u16 nid, u8 umc, u64 *sys_addr)
 			ret_addr += (BIT_ULL(32) - dram_hole_base);
 	}
 
-	if (hash_enabled) {
-		/* Save some parentheses and grab ls-bit at the end. */
-		hashed_bit =	(ret_addr >> 12) ^
+	/*
+	 * There are three cases for hashing:
+	 * 1) No Hashing
+	 * 2) Legacy Hashing
+	 * 3) Cluster-on-Die (COD) Hashing
+	 */
+	if (!hash_enabled) {
+		/* Fill in the interleave bit. */
+		if (intlv_num_chan) {
+			ret_addr |= (cs_id << intlv_addr_bit);
+		}
+	} else if (legacy_df) {
+		/* Legacy 2ch hash */
+		u8 hashed_bit =	(ret_addr >> 12) ^
 				(ret_addr >> 18) ^
 				(ret_addr >> 21) ^
 				(ret_addr >> 30) ^
 				cs_id;
 
 		hashed_bit &= BIT(0);
+		ret_addr ^= hashed_bit << intlv_addr_bit;
+	} else {
+		u8 hashed_bit, hash_ctl_64K, hash_ctl_2M, hash_ctl_1G;
 
-		if (hashed_bit != ((ret_addr >> intlv_addr_bit) & BIT(0)))
-			ret_addr ^= BIT(intlv_addr_bit);
+		/* Read D18F0x3F8 (DfGlobalCtrl)). */
+		if (amd_df_indirect_read(nid, 0, 0x3F8, umc, &tmp))
+			goto out_err;
+
+		hash_ctl_64K = !!(tmp & BIT(20));
+		hash_ctl_2M  = !!(tmp & BIT(21));
+		hash_ctl_1G  = !!(tmp & BIT(22));
+
+		/* COD with 2ch, 4ch, or 8ch hash*/
+		hashed_bit =	(ret_addr >> 14) ^
+				((ret_addr >> 18) & hash_ctl_64K) ^
+				((ret_addr >> 23) & hash_ctl_2M) ^
+				((ret_addr >> 32) & hash_ctl_1G) ^
+				cs_id;
+
+		hashed_bit &= BIT(0);
+		ret_addr ^= hashed_bit << intlv_addr_bit;
+
+		/* COD with 4ch or 8ch hash */
+		if ((intlv_num_chan == 2) || (intlv_num_chan == 3)) {
+			hashed_bit =	(ret_addr >> 12) ^
+					((ret_addr >> 16) & hash_ctl_64K) ^
+					((ret_addr >> 21) & hash_ctl_2M) ^
+					((ret_addr >> 30) & hash_ctl_1G) ^
+					(cs_id >> 1);
+
+			hashed_bit &= BIT(0);
+			ret_addr ^= hashed_bit << 12;
+		}
+
+		/* COD with 8ch hash */
+		if (intlv_num_chan == 3) {
+			hashed_bit =	(ret_addr >> 13) ^
+					((ret_addr >> 17) & hash_ctl_64K) ^
+					((ret_addr >> 22) & hash_ctl_2M) ^
+					((ret_addr >> 31) & hash_ctl_1G) ^
+					(cs_id >> 2);
+
+			hashed_bit &= BIT(0);
+			ret_addr ^= hashed_bit << 13;
+		}
 	}
 
 	/* Is calculated system address is above DRAM limit address? */
