@@ -197,6 +197,9 @@ static DEFINE_PER_CPU(unsigned int, bank_map);	/* see which banks are on */
 /* Map of banks that have more than MCA_MISC0 available. */
 static DEFINE_PER_CPU(u32, smca_misc_banks_map);
 
+/* CPUID_Fn8000001E_ECX[NodeId] used to identify a physical node/die. */
+static DEFINE_PER_CPU(u8, node_id);
+
 static void amd_threshold_interrupt(void);
 static void amd_deferred_error_interrupt(void);
 
@@ -227,6 +230,22 @@ static void smca_set_misc_banks_map(unsigned int bank, unsigned int cpu)
 		per_cpu(smca_misc_banks_map, cpu) |= BIT(bank);
 
 }
+
+/*
+ *  This value is read during CPU init, but it may or may not get saved based
+ *  on the family/model of the system. However, we need this value for mcheck
+ *  and EDAC.
+ */
+static inline void get_node_id(unsigned int cpu)
+{
+	per_cpu(node_id, cpu) = cpuid_ecx(0x8000001e) & 0xFF;
+}
+
+u8 amd_cpu_to_node(unsigned int cpu)
+{
+	return per_cpu(node_id, cpu);
+}
+EXPORT_SYMBOL_GPL(amd_cpu_to_node);
 
 static void smca_configure(unsigned int bank, unsigned int cpu)
 {
@@ -631,6 +650,7 @@ void mce_amd_feature_init(struct cpuinfo_x86 *c)
 	u32 low = 0, high = 0, address = 0;
 	int offset = -1;
 
+	get_node_id(cpu);
 
 	for (bank = 0; bank < this_cpu_read(mce_num_banks); ++bank) {
 		if (mce_flags.smca)

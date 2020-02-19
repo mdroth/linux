@@ -330,6 +330,8 @@ extern struct smca_bank smca_banks[MAX_NR_BANKS];
 extern const char *smca_get_long_name(enum smca_bank_types t);
 extern bool amd_mce_is_memory_error(struct mce *m);
 
+extern u8 amd_cpu_to_node(unsigned int cpu);
+
 extern int mce_threshold_create_device(unsigned int cpu);
 extern int mce_threshold_remove_device(unsigned int cpu);
 

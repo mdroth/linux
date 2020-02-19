@@ -1003,7 +1003,7 @@ static void decode_smca_error(struct mce *m)
 	}
 
 	if (bank_type == SMCA_UMC && xec == 0 && decode_dram_ecc)
-		decode_dram_ecc(cpu_to_node(m->extcpu), m);
+		decode_dram_ecc(amd_cpu_to_node(m->extcpu), m);
 }
 
 static inline void amd_decode_err_code(u16 ec)
