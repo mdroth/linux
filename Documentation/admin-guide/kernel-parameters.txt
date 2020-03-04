@@ -1318,6 +1318,11 @@
 			Warning: use of this parameter will taint the kernel
 			and may cause unknown problems.
 
+	fsrm=		[X86_64, AMD F19h only] disable the Fast Short
+			REP MOVSB feature
+			Format: off | on
+			default: on
+
 	ftrace=[tracer]
 			[FTRACE] will set and start the specified tracer
 			as early as possible in order to facilitate early

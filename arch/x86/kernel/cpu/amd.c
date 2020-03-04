@@ -910,6 +910,14 @@ static void init_amd_bd(struct cpuinfo_x86 *c)
 	clear_rdrand_cpuid_bit(c);
 }
 
+static bool fsrm __initdata = true;
+
+static int __init parse_fsrm(char *p)
+{
+	return kstrtobool(p, &fsrm);
+}
+early_param("fsrm", parse_fsrm);
+
 static void init_amd_zn(struct cpuinfo_x86 *c)
 {
 	set_cpu_cap(c, X86_FEATURE_ZEN);
@@ -924,6 +932,16 @@ static void init_amd_zn(struct cpuinfo_x86 *c)
 	 */
 	if (!cpu_has(c, X86_FEATURE_HYPERVISOR) && !cpu_has(c, X86_FEATURE_CPB))
 		set_cpu_cap(c, X86_FEATURE_CPB);
+
+	if (c->x86 < 0x19)
+		return;
+
+	/* AMD INTERNAL: Until this bit gets enabled by the BIOS */
+	if (fsrm) {
+		set_cpu_cap(c, X86_FEATURE_FSRM);
+		pr_info_once("fsrm: Fast Short REP MOVSB enabled\n");
+	} else
+		pr_info_once("fsrm: Fast Short REP MOVSB disabled by kernel command line\n");
 }
 
 static void init_amd(struct cpuinfo_x86 *c)
