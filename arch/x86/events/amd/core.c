@@ -320,7 +320,10 @@ static inline bool amd_is_pair_event_code(struct hw_perf_event *hwc)
 		return false;
 
 	switch (amd_get_event_code(hwc)) {
+	case 0x001:	return true;	/* FP uOps tracking */
 	case 0x003:	return true;	/* Retired SSE/AVX FLOPs */
+	case 0x06b:	return true;	/* L2 Data pick stall */
+	case 0x281:	return true;	/* Allocated MABs */
 	default:	return false;
 	}
 }
