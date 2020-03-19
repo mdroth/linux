@@ -46,6 +46,8 @@ static int acpi_enable_dpc(struct pci_dev *pdev)
 	argv4.package.count = 1;
 	argv4.package.elements = &req;
 
+	pci_err(pdev, "AMD_DEBUG: %s : enter\n", __func__);
+
 	/*
 	 * Per Downstream Port Containment Related Enhancements ECN to PCI
 	 * Firmware Specification r3.2, sec 4.6.12, EDR_PORT_DPC_ENABLE_DSM is
@@ -53,8 +55,11 @@ static int acpi_enable_dpc(struct pci_dev *pdev)
 	 */
 	obj = acpi_evaluate_dsm(adev->handle, &pci_acpi_dsm_guid, 5,
 				EDR_PORT_DPC_ENABLE_DSM, &argv4);
-	if (!obj)
+	if (!obj) {
+		pci_err(pdev, "AMD_DEBUG: %s : _DSM return obj is NULL\n", __func__);
 		return 0;
+	}
+
 
 	if (obj->type != ACPI_TYPE_INTEGER) {
 		pci_err(pdev, FW_BUG "Enable DPC _DSM returned non integer\n");
@@ -68,6 +73,7 @@ static int acpi_enable_dpc(struct pci_dev *pdev)
 
 	ACPI_FREE(obj);
 
+	pci_err(pdev, "AMD_DEBUG: %s : exit return=%d\n", __func__, status);
 	return status;
 }
 
@@ -84,6 +90,7 @@ static struct pci_dev *acpi_dpc_port_get(struct pci_dev *pdev)
 	union acpi_object *obj;
 	u16 port;
 
+	pr_err("AMD_DEBUG: %s : enter\n", __func__);
 	/*
 	 * Behavior when calling unsupported _DSM functions is undefined,
 	 * so check whether EDR_PORT_DPC_ENABLE_DSM is supported.
@@ -94,10 +101,15 @@ static struct pci_dev *acpi_dpc_port_get(struct pci_dev *pdev)
 
 	obj = acpi_evaluate_dsm(adev->handle, &pci_acpi_dsm_guid, 5,
 				EDR_PORT_LOCATE_DSM, NULL);
-	if (!obj)
+	if (!obj) {
+		pr_err("AMD_DEBUG: %s : return object NULL\n", __func__);
 		return pci_dev_get(pdev);
+	}
 
 	if (obj->type != ACPI_TYPE_INTEGER) {
+		pr_err("AMD_DEBUG: %s : return object invalid\n", __func__);
+		pr_err("AMD_DEBUG: %s : type=0x%x\n", __func__, obj->type);
+
 		ACPI_FREE(obj);
 		pci_err(pdev, FW_BUG "Locate Port _DSM returned non integer\n");
 		return NULL;
@@ -113,6 +125,7 @@ static struct pci_dev *acpi_dpc_port_get(struct pci_dev *pdev)
 
 	ACPI_FREE(obj);
 
+	pr_err("AMD_DEBUG: %s : exit\n", __func__);
 	return pci_get_domain_bus_and_slot(pci_domain_nr(pdev->bus),
 					   PCI_BUS_NUM(port), port & 0xff);
 }
@@ -134,11 +147,13 @@ static int acpi_send_edr_status(struct pci_dev *pdev, struct pci_dev *edev,
 	ost_status = PCI_DEVID(edev->bus->number, edev->devfn) << 16;
 	ost_status |= status;
 
+	pr_err("AMD_DEBUG: %s : enter ost_status=0x%x\n", __func__, ost_status);
 	status = acpi_evaluate_ost(adev->handle, ACPI_NOTIFY_DISCONNECT_RECOVER,
 				   ost_status, NULL);
 	if (ACPI_FAILURE(status))
 		return -EINVAL;
 
+	pr_err("AMD_DEBUG: %s : exit\n", __func__);
 	return 0;
 }
 
