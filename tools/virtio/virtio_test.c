@@ -49,6 +49,7 @@ struct vdev_info {
 
 static const struct vhost_vring_file no_backend = { .fd = -1 },
 				     backend = { .fd = 1 };
+static const struct vhost_vring_state null_state = {};
 
 bool vq_notify(struct virtqueue *vq)
 {
@@ -218,10 +219,33 @@ static void run_test(struct vdev_info *dev, struct vq_info *vq,
 			}
 
 			if (reset) {
+				struct vhost_vring_state s = { .index = 0 };
+				int i;
+				vq->vring.avail->idx = 0;
+				vq->vq->num_free = vq->vring.num;
+
+				// Put everything in free lists.
+				for (i = 0; i < vq->vring.num-1; i++)
+					vq->vring.desc[i].next =
+						cpu_to_virtio16(&dev->vdev,
+								i + 1);
+				vq->vring.desc[vq->vring.num-1].next = 0;
+				virtqueue_reset_free_head(vq->vq);
+
+				r = ioctl(dev->control, VHOST_GET_VRING_BASE,
+					  &s);
+				assert(!r);
+
+				s.num = 0;
+				r = ioctl(dev->control, VHOST_SET_VRING_BASE,
+					  &null_state);
+				assert(!r);
+
 				r = ioctl(dev->control, VHOST_TEST_SET_BACKEND,
 					  &backend);
 				assert(!r);
 
+				started = completed;
                                 while (completed > next_reset)
 					next_reset += completed;
 			}
@@ -243,7 +267,9 @@ static void run_test(struct vdev_info *dev, struct vq_info *vq,
 	test = 0;
 	r = ioctl(dev->control, VHOST_TEST_RUN, &test);
 	assert(r >= 0);
-	fprintf(stderr, "spurious wakeups: 0x%llx\n", spurious);
+	fprintf(stderr,
+		"spurious wakeups: 0x%llx started=0x%lx completed=0x%lx\n",
+		spurious, started, completed);
 }
 
 const char optstring[] = "h";
