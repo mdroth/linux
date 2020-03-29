@@ -98,7 +98,6 @@ struct vhost_virtqueue {
 	int ndescs;
 	int first_desc;
 	int max_descs;
-	int batch_descs;
 
 	const struct vhost_iotlb_map *meta_iotlb[VHOST_NUM_ADDRS];
 	struct file *kick;
