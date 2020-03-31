@@ -238,6 +238,7 @@ struct vcpu_svm {
 	u64 *avic_physical_id_cache;
 	bool avic_is_running;
 
+	u32 host_pkru;
 	/*
 	 * Per-vcpu list of struct amd_svm_iommu_ir:
 	 * This is used mainly to store interrupt remapping information used
@@ -2343,6 +2344,8 @@ static void svm_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 		indirect_branch_prediction_barrier();
 	}
 	avic_vcpu_load(vcpu, cpu);
+
+	svm->host_pkru = read_pkru();
 }
 
 static void svm_vcpu_put(struct kvm_vcpu *vcpu)
@@ -5762,6 +5765,12 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 	clgi();
 	kvm_load_guest_xsave_state(vcpu);
 
+	/* Load the guest pkru state */
+	if (static_cpu_has(X86_FEATURE_PKU) &&
+	    kvm_read_cr4_bits(vcpu, X86_CR4_PKE) &&
+	    vcpu->arch.pkru != svm->host_pkru)
+		__write_pkru(vcpu->arch.pkru);
+
 	if (lapic_in_kernel(vcpu) &&
 		vcpu->arch.apic->lapic_timer.timer_advance_ns)
 		kvm_wait_lapic_expire(vcpu);
@@ -5909,6 +5918,14 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 
 	if (unlikely(svm->vmcb->control.exit_code == SVM_EXIT_NMI))
 		kvm_before_interrupt(&svm->vcpu);
+
+	/* Save the guest pkru state and restore the host pkru state back */
+	if (static_cpu_has(X86_FEATURE_PKU) &&
+	    kvm_read_cr4_bits(vcpu, X86_CR4_PKE)) {
+		vcpu->arch.pkru = rdpkru();
+		if (vcpu->arch.pkru != svm->host_pkru)
+			__write_pkru(svm->host_pkru);
+	}
 
 	kvm_load_host_xsave_state(vcpu);
 	stgi();
@@ -6119,7 +6136,7 @@ static bool svm_has_wbinvd_exit(void)
 
 static bool svm_pku_supported(void)
 {
-	return false;
+	return boot_cpu_has(X86_FEATURE_PKU);
 }
 
 #define PRE_EX(exit)  { .exit_code = (exit), \
