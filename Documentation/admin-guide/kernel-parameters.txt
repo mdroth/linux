@@ -1318,6 +1318,11 @@
 			Warning: use of this parameter will taint the kernel
 			and may cause unknown problems.
 
+	erms=		[X86_64, AMD F17h+ only] disable the Enhanced
+			REP MOVSB/STOSB feature
+			Format: off | on
+			default: on
+
 	fsrm=		[X86_64, AMD F19h only] disable the Fast Short
 			REP MOVSB feature
 			Format: off | on

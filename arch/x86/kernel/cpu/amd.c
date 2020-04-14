@@ -910,7 +910,15 @@ static void init_amd_bd(struct cpuinfo_x86 *c)
 	clear_rdrand_cpuid_bit(c);
 }
 
-static bool fsrm __initdata = true;
+static bool erms = true;
+
+static int __init parse_erms(char *p)
+{
+	return kstrtobool(p, &erms);
+}
+early_param("erms", parse_erms);
+
+static bool fsrm = true;
 
 static int __init parse_fsrm(char *p)
 {
@@ -932,6 +940,13 @@ static void init_amd_zn(struct cpuinfo_x86 *c)
 	 */
 	if (!cpu_has(c, X86_FEATURE_HYPERVISOR) && !cpu_has(c, X86_FEATURE_CPB))
 		set_cpu_cap(c, X86_FEATURE_CPB);
+
+	/* AMD INTERNAL for now: rep movsb is fast on....Zen and higher? */
+	if (erms) {
+		set_cpu_cap(c, X86_FEATURE_ERMS);
+		pr_info_once("erms: Enhanced REP MOVSB/STOSB enabled\n");
+	} else
+		pr_info_once("erms: Enhanced REP MOVSB/STOSB disabled by kernel command line\n");
 
 	if (c->x86 < 0x19)
 		return;
