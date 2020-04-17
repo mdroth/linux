@@ -532,14 +532,16 @@ TRACE_EVENT(kvm_nested_vmrun,
 );
 
 TRACE_EVENT(kvm_nested_intercepts,
-	    TP_PROTO(__u16 cr_read, __u16 cr_write, __u32 exceptions, __u64 intercept),
-	    TP_ARGS(cr_read, cr_write, exceptions, intercept),
+	    TP_PROTO(__u16 cr_read, __u16 cr_write, __u32 exceptions, __u64 intercept,
+		     __u32 extended),
+	    TP_ARGS(cr_read, cr_write, exceptions, intercept, extended),
 
 	TP_STRUCT__entry(
 		__field(	__u16,		cr_read		)
 		__field(	__u16,		cr_write	)
 		__field(	__u32,		exceptions	)
 		__field(	__u64,		intercept	)
+		__field(	__u32,		extended	)
 	),
 
 	TP_fast_assign(
@@ -547,11 +549,12 @@ TRACE_EVENT(kvm_nested_intercepts,
 		__entry->cr_write	= cr_write;
 		__entry->exceptions	= exceptions;
 		__entry->intercept	= intercept;
+		__entry->extended	= extended;
 	),
 
-	TP_printk("cr_read: %04x cr_write: %04x excp: %08x intercept: %016llx",
+	TP_printk("cr_read: %04x cr_write: %04x excp: %08x intercept: %016llx extended: %08x",
 		__entry->cr_read, __entry->cr_write, __entry->exceptions,
-		__entry->intercept)
+		__entry->intercept, __entry->extended)
 );
 /*
  * Tracepoint for #VMEXIT while nested

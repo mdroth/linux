@@ -173,6 +173,7 @@ struct nested_state {
 	u32 intercept_dr;
 	u32 intercept_exceptions;
 	u64 intercept;
+	u32 intercept_extended;
 
 	/* Nested Paging related state */
 	u64 nested_cr3;
@@ -526,6 +527,7 @@ static void recalc_intercepts(struct vcpu_svm *svm)
 	c->intercept_dr = h->intercept_dr | g->intercept_dr;
 	c->intercept_exceptions = h->intercept_exceptions | g->intercept_exceptions;
 	c->intercept = h->intercept | g->intercept;
+	c->intercept_extended = h->intercept_extended | g->intercept_extended;
 }
 
 static inline struct vmcb *get_host_vmcb(struct vcpu_svm *svm)
@@ -626,6 +628,24 @@ static inline void clr_intercept(struct vcpu_svm *svm, int bit)
 	struct vmcb *vmcb = get_host_vmcb(svm);
 
 	vmcb->control.intercept &= ~(1ULL << bit);
+
+	recalc_intercepts(svm);
+}
+
+static inline void set_extended_intercept(struct vcpu_svm *svm, int bit)
+{
+	struct vmcb *vmcb = get_host_vmcb(svm);
+
+	vmcb->control.intercept_extended |= (1U << bit);
+
+	recalc_intercepts(svm);
+}
+
+static inline void clr_extended_intercept(struct vcpu_svm *svm, int bit)
+{
+	struct vmcb *vmcb = get_host_vmcb(svm);
+
+	vmcb->control.intercept_extended &= ~(1U << bit);
 
 	recalc_intercepts(svm);
 }
@@ -3322,6 +3342,7 @@ static inline void copy_vmcb_control_area(struct vmcb *dst_vmcb, struct vmcb *fr
 	dst->intercept_dr         = from->intercept_dr;
 	dst->intercept_exceptions = from->intercept_exceptions;
 	dst->intercept            = from->intercept;
+	dst->intercept_extended   = from->intercept_extended;
 	dst->iopm_base_pa         = from->iopm_base_pa;
 	dst->msrpm_base_pa        = from->msrpm_base_pa;
 	dst->tsc_offset           = from->tsc_offset;
@@ -3590,6 +3611,7 @@ static void enter_svm_guest_mode(struct vcpu_svm *svm, u64 vmcb_gpa,
 	svm->nested.intercept_dr         = nested_vmcb->control.intercept_dr;
 	svm->nested.intercept_exceptions = nested_vmcb->control.intercept_exceptions;
 	svm->nested.intercept            = nested_vmcb->control.intercept;
+	svm->nested.intercept_extended   = nested_vmcb->control.intercept_extended;
 
 	svm_flush_tlb(&svm->vcpu, true);
 	svm->vmcb->control.int_ctl = nested_vmcb->control.int_ctl | V_INTR_MASKING_MASK;
@@ -3682,7 +3704,8 @@ static int nested_svm_vmrun(struct vcpu_svm *svm)
 	trace_kvm_nested_intercepts(nested_vmcb->control.intercept_cr & 0xffff,
 				    nested_vmcb->control.intercept_cr >> 16,
 				    nested_vmcb->control.intercept_exceptions,
-				    nested_vmcb->control.intercept);
+				    nested_vmcb->control.intercept,
+				    nested_vmcb->control.intercept_extended);
 
 	/* Clear internal status */
 	kvm_clear_exception_queue(&svm->vcpu);
@@ -4874,6 +4897,7 @@ static void dump_vmcb(struct kvm_vcpu *vcpu)
 	pr_err("%-20s%04x\n", "dr_write:", control->intercept_dr >> 16);
 	pr_err("%-20s%08x\n", "exceptions:", control->intercept_exceptions);
 	pr_err("%-20s%016llx\n", "intercepts:", control->intercept);
+	pr_err("%-20s%08x\n", "extended:", control->intercept_extended);
 	pr_err("%-20s%d\n", "pause filter count:", control->pause_filter_count);
 	pr_err("%-20s%d\n", "pause filter threshold:",
 	       control->pause_filter_thresh);
