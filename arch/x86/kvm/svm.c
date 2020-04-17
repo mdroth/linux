@@ -1703,6 +1703,17 @@ static void init_vmcb(struct vcpu_svm *svm)
 		clr_intercept(svm, INTERCEPT_PAUSE);
 	}
 
+	/*
+	 * Intercept INVPCID instruction only if shadow page table is
+	 * enabled. Interception is not required with nested page table.
+	 */
+	if (boot_cpu_has(X86_FEATURE_INVPCID)) {
+		if (!npt_enabled)
+			set_extended_intercept(svm, INTERCEPT_INVPCID);
+		else
+			clr_extended_intercept(svm, INTERCEPT_INVPCID);
+	}
+
 	if (kvm_vcpu_apicv_active(&svm->vcpu))
 		avic_init_vmcb(svm);
 
@@ -4811,6 +4822,28 @@ static int avic_unaccelerated_access_interception(struct vcpu_svm *svm)
 	return ret;
 }
 
+static int invpcid_interception(struct vcpu_svm *svm)
+{
+	struct kvm_vcpu *vcpu = &svm->vcpu;
+	unsigned long type;
+	gva_t gva;
+
+	if (!guest_cpuid_has(vcpu, X86_FEATURE_INVPCID)) {
+		kvm_queue_exception(vcpu, UD_VECTOR);
+		return 1;
+	}
+
+	/*
+	 * For an INVPCID intercept:
+	 * EXITINFO1 provides the linear address of the memory operand.
+	 * EXITINFO2 provides the contents of the register operand.
+	 */
+	type = svm->vmcb->control.exit_info_2;
+	gva = svm->vmcb->control.exit_info_1;
+
+	return kvm_handle_invpcid_types(vcpu,  gva, type);
+}
+
 static int (*const svm_exit_handlers[])(struct vcpu_svm *svm) = {
 	[SVM_EXIT_READ_CR0]			= cr_interception,
 	[SVM_EXIT_READ_CR3]			= cr_interception,
@@ -4873,6 +4906,7 @@ static int (*const svm_exit_handlers[])(struct vcpu_svm *svm) = {
 	[SVM_EXIT_MWAIT]			= mwait_interception,
 	[SVM_EXIT_XSETBV]			= xsetbv_interception,
 	[SVM_EXIT_RDPRU]			= rdpru_interception,
+	[SVM_EXIT_INVPCID]                      = invpcid_interception,
 	[SVM_EXIT_NPF]				= npf_interception,
 	[SVM_EXIT_RSM]                          = rsm_interception,
 	[SVM_EXIT_AVIC_INCOMPLETE_IPI]		= avic_incomplete_ipi_interception,
@@ -6067,6 +6101,14 @@ static void svm_cpuid_update(struct kvm_vcpu *vcpu)
 	/* Update nrips enabled cache */
 	svm->nrips_enabled = !!guest_cpuid_has(&svm->vcpu, X86_FEATURE_NRIPS);
 
+	/*
+	 * Intercept INVPCID instruction if the baremetal has the support
+	 * but the guest doesn't claim the feature.
+	 */
+	if (boot_cpu_has(X86_FEATURE_INVPCID) &&
+	    !guest_cpuid_has(vcpu, X86_FEATURE_INVPCID))
+		set_extended_intercept(svm, INTERCEPT_INVPCID);
+
 	if (!kvm_vcpu_apicv_active(vcpu))
 		return;
 
@@ -6130,7 +6172,7 @@ static bool svm_rdtscp_supported(void)
 
 static bool svm_invpcid_supported(void)
 {
-	return false;
+	return boot_cpu_has(X86_FEATURE_INVPCID);
 }
 
 static bool svm_mpx_supported(void)
