@@ -363,7 +363,14 @@ perf_ibs_event_update(struct perf_ibs *perf_ibs, struct perf_event *event,
 static inline void perf_ibs_enable_event(struct perf_ibs *perf_ibs,
 					 struct hw_perf_event *hwc, u64 config)
 {
-	wrmsrl(hwc->config_base, hwc->config | config | perf_ibs->enable_mask);
+	u64 _config = (hwc->config | config) & ~perf_ibs->enable_mask;
+
+	/* The periodic fetch counter is set when IbsFetchEn is changed from 0 to 1 */
+	if (perf_ibs == &perf_ibs_fetch)
+		wrmsrl(hwc->config_base, _config);
+
+ 	_config |= perf_ibs->enable_mask;
+	wrmsrl(hwc->config_base, _config);
 }
 
 /*
