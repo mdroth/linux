@@ -61,7 +61,8 @@ struct __attribute__ ((__packed__)) vmcb_control_area {
 	u32 intercept_dr;
 	u32 intercept_exceptions;
 	u64 intercept;
-	u8 reserved_1[40];
+	u8 int_invlpgb;
+	u8 reserved_1[39];
 	u16 pause_filter_thresh;
 	u16 pause_filter_count;
 	u64 iopm_base_pa;

@@ -18,6 +18,8 @@
 
 #include "mm_internal.h"
 
+static int flush_tlb_all_hw(void);
+
 /*
  *	TLB flushing, formerly SMP-only
  *		c/o Linus Torvalds.
@@ -31,6 +33,42 @@
  *
  *	Implement flush IPI by CALL_FUNCTION_VECTOR, Alex Shi
  */
+
+unsigned int tlb_hw = 0;
+static int __init setup_tlb_hw(char *arg)
+{
+       if (!arg)
+               return -EINVAL;
+
+       if (!strncmp(arg, "enable", 6)) {
+               printk("TLBi Enabled\n");
+               tlb_hw = 1;
+       }
+       if (!strncmp(arg, "disable", 7)) {
+               printk("TLBi Disabled\n");
+               tlb_hw = 0;
+       }
+       return 0;
+}
+early_param("tlbi", setup_tlb_hw);
+
+unsigned int tlb_hw_insn = 0;
+static int __init tlb_hw_insn_debug(char *arg)
+{
+       if (!arg)
+               return -EINVAL;
+
+       if (!strncmp(arg, "enable", 6)) {
+               printk("TLBi Instruction print Enabled\n");
+               tlb_hw_insn = 1;
+       }
+       if (!strncmp(arg, "disable", 7)) {
+               printk("TLBi Instruction print Disabled\n");
+               tlb_hw_insn = 0;
+       }
+       return 0;
+}
+early_param("tlbi-insn", tlb_hw_insn_debug);
 
 /*
  * Use bit 0 to mangle the TIF_SPEC_IB state into the mm pointer which is
@@ -660,6 +698,47 @@ static bool tlb_is_not_lazy(int cpu, void *data)
 	return !per_cpu(cpu_tlbstate.is_lazy, cpu);
 }
 
+void smp_flush_tlb_hw(const struct cpumask *cpumask,
+		      const struct flush_tlb_info *info)
+{
+	int stride;
+
+	/* Use INVLPGB. Much quicker than sending a TLB invalidate using IPIs. */
+
+	if (info->end == TLB_FLUSH_ALL) {
+		flush_tlb_all_hw();
+	} else {
+		if (info->stride_shift == 0 || info->stride_shift == PAGE_SHIFT)
+			stride = 0;
+		else
+			stride = 1;
+
+		flush_tlb_kernel_range_hw(info->start, info->end, false, stride);
+	}
+}
+
+void smp_flush_tlb_ipi(const struct cpumask *cpumask,
+		       const struct flush_tlb_info *info)
+{
+	/*
+	 * If no page tables were freed, we can skip sending IPIs to
+	 * CPUs in lazy TLB mode. They will flush the CPU themselves
+	 * at the next context switch.
+	 *
+	 * However, if page tables are getting freed, we need to send the
+	 * IPI everywhere, to prevent CPUs in lazy TLB mode from tripping
+	 * up on the new contents of what used to be page tables, while
+	 * doing a speculative memory access.
+	 */
+
+	if (info->freed_tables)
+		smp_call_function_many(cpumask, flush_tlb_func_remote,
+			       (void *)info, 1);
+	else
+		on_each_cpu_cond_mask(tlb_is_not_lazy, flush_tlb_func_remote,
+				(void *)info, 1, cpumask);
+}
+
 void native_flush_tlb_others(const struct cpumask *cpumask,
 			     const struct flush_tlb_info *info)
 {
@@ -693,22 +772,11 @@ void native_flush_tlb_others(const struct cpumask *cpumask,
 		return;
 	}
 
-	/*
-	 * If no page tables were freed, we can skip sending IPIs to
-	 * CPUs in lazy TLB mode. They will flush the CPU themselves
-	 * at the next context switch.
-	 *
-	 * However, if page tables are getting freed, we need to send the
-	 * IPI everywhere, to prevent CPUs in lazy TLB mode from tripping
-	 * up on the new contents of what used to be page tables, while
-	 * doing a speculative memory access.
-	 */
-	if (info->freed_tables)
-		smp_call_function_many(cpumask, flush_tlb_func_remote,
-			       (void *)info, 1);
+	if (static_cpu_has(X86_FEATURE_INVLPGB))
+		smp_flush_tlb_hw(cpumask, info);
 	else
-		on_each_cpu_cond_mask(tlb_is_not_lazy, flush_tlb_func_remote,
-				(void *)info, 1, cpumask);
+		smp_flush_tlb_ipi(cpumask, info);
+
 }
 
 /*
@@ -787,6 +855,11 @@ void flush_tlb_mm_range(struct mm_struct *mm, unsigned long start,
 	info = get_flush_tlb_info(mm, start, end, stride_shift, freed_tables,
 				  new_tlb_gen);
 
+	if (cpumask_any_but(mm_cpumask(mm), cpu) < nr_cpu_ids) {
+		smp_flush_tlb_hw(mm_cpumask(mm), info);
+		goto end;
+	}
+
 	if (mm == this_cpu_read(cpu_tlbstate.loaded_mm)) {
 		lockdep_assert_irqs_enabled();
 		local_irq_disable();
@@ -797,10 +870,10 @@ void flush_tlb_mm_range(struct mm_struct *mm, unsigned long start,
 	if (cpumask_any_but(mm_cpumask(mm), cpu) < nr_cpu_ids)
 		flush_tlb_others(mm_cpumask(mm), info);
 
+end:
 	put_flush_tlb_info();
 	put_cpu();
 }
-
 
 static void do_flush_tlb_all(void *info)
 {
@@ -808,10 +881,39 @@ static void do_flush_tlb_all(void *info)
 	__flush_tlb_all();
 }
 
+#define TLBI_ALL_INC_GLOBAL 0x08
+
+static int flush_tlb_all_hw(void)
+{
+	unsigned long flags;
+
+	if (!tlb_hw)
+		return 1;
+
+	local_irq_save(flags);
+
+	if (tlb_hw_insn)
+		printk("INVLPGB\n");
+
+	invlpgb(TLBI_ALL_INC_GLOBAL, 0, 0);
+
+	if (tlb_hw_insn)
+		printk("TLBSYNC\n");
+	tlbsync();
+
+	local_irq_restore(flags);
+
+	return 0;
+}
+
 void flush_tlb_all(void)
 {
 	count_vm_tlb_event(NR_TLB_REMOTE_FLUSH);
-	on_each_cpu(do_flush_tlb_all, NULL, 1);
+
+	if(static_cpu_has(X86_FEATURE_INVLPGB))
+		flush_tlb_all_hw();
+	else
+		on_each_cpu(do_flush_tlb_all, NULL, 1);
 }
 
 static void do_kernel_range_flush(void *info)
@@ -824,19 +926,64 @@ static void do_kernel_range_flush(void *info)
 		__flush_tlb_one_kernel(addr);
 }
 
+#define TLB_HW_VA_INC_GLOBAL 0x09
+#define TLB_HW_VA_NON_GLOBAL 0x01
+#define TLB_HW_ECX_PAGE_BIT 31
+
+int flush_tlb_kernel_range_hw(unsigned long start, unsigned long end,
+                              bool global, bool stride)
+{
+	unsigned int g_bit = global ? TLB_HW_VA_INC_GLOBAL : TLB_HW_VA_NON_GLOBAL;
+	unsigned int p_bit = stride ? (1 << TLB_HW_ECX_PAGE_BIT) : 0;
+	unsigned long max_count = cpuid_edx(0x80000008) & 0xFFFF;
+	unsigned long addr, flags, count, total_count;
+
+	if (!tlb_hw)
+		return 1;
+
+	total_count = ((end & PAGE_MASK) - (start & PAGE_MASK)) + 1;
+	addr = start & PAGE_MASK;
+
+	local_irq_save(flags);
+	while (total_count) {
+		count = total_count > max_count ? max_count : total_count;
+
+		if(tlb_hw_insn)
+			printk("INVLPGB\n");
+
+		invlpgb(addr | g_bit, count | p_bit, 0);
+
+		addr += (count * PAGE_SIZE);
+		total_count -= count;
+	}
+	if (tlb_hw_insn)
+		printk("TLBSYNC\n");
+	tlbsync();
+	local_irq_restore(flags);
+
+	return 0;
+}
+
 void flush_tlb_kernel_range(unsigned long start, unsigned long end)
 {
 	/* Balance as user space task's flush, a bit conservative */
 	if (end == TLB_FLUSH_ALL ||
 	    (end - start) > tlb_single_page_flush_ceiling << PAGE_SHIFT) {
-		on_each_cpu(do_flush_tlb_all, NULL, 1);
+		if (static_cpu_has(X86_FEATURE_INVLPGB))
+			flush_tlb_all_hw();
+		else
+			on_each_cpu(do_flush_tlb_all, NULL, 1);
 	} else {
 		struct flush_tlb_info *info;
 
 		preempt_disable();
+
 		info = get_flush_tlb_info(NULL, start, end, 0, false, 0);
 
-		on_each_cpu(do_kernel_range_flush, info, 1);
+		if(static_cpu_has(X86_FEATURE_INVLPGB))
+			flush_tlb_kernel_range_hw(start, end, true, 0);
+		else
+			on_each_cpu(do_kernel_range_flush, info, 1);
 
 		put_flush_tlb_info();
 		preempt_enable();
@@ -859,6 +1006,13 @@ void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch)
 {
 	int cpu = get_cpu();
 
+	if (cpumask_any_but(&batch->cpumask , cpu) < nr_cpu_ids) {
+		if (static_cpu_has(X86_FEATURE_INVLPGB)) {
+			flush_tlb_all_hw();
+			goto end;
+		}
+	}
+
 	if (cpumask_test_cpu(cpu, &batch->cpumask)) {
 		lockdep_assert_irqs_enabled();
 		local_irq_disable();
@@ -869,6 +1023,7 @@ void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch)
 	if (cpumask_any_but(&batch->cpumask, cpu) < nr_cpu_ids)
 		flush_tlb_others(&batch->cpumask, &full_flush_tlb_info);
 
+end:
 	cpumask_clear(&batch->cpumask);
 
 	put_cpu();

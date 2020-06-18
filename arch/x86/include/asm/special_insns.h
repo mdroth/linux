@@ -227,8 +227,20 @@ static inline void clwb(volatile void *__p)
 		: [pax] "a" (p));
 }
 
-#define nop() asm volatile ("nop")
+static inline void invlpgb(unsigned long eax, unsigned long ecx,
+                           unsigned long edx)
+{
+	asm volatile(".byte 0x0f, 0x01, 0xfe"
+		     : : "a" (eax), "c" (ecx), "d" (edx)
+		     : "memory");
+}
 
+static inline void tlbsync(void)
+{
+	asm volatile(".byte 0x0f, 0x01, 0xff");
+}
+
+#define nop() asm volatile ("nop")
 
 #endif /* __KERNEL__ */
 

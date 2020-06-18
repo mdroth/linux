@@ -491,6 +491,7 @@ static inline void __flush_tlb_all(void)
 	}
 }
 
+int flush_tlb_kernel_range_hw(unsigned long start, unsigned long end, bool global, bool stride);
 /*
  * flush one page in the kernel mapping
  */

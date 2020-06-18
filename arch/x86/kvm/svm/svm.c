@@ -253,6 +253,39 @@ static inline void invlpga(unsigned long addr, u32 asid)
 	asm volatile (__ex("invlpga %1, %0") : : "c"(asid), "a"(addr));
 }
 
+#define INVLPGB ".byte 0x0f, 0x01, 0xfe"
+#define TLBSYNC ".byte 0x0f, 0x01, 0xff"
+#define TLBI_ASID_BIT 2
+#define TLBI_GLOBAL_BIT 3
+#define TLBI_FINAL_TLN_BIT 4
+#define TLBI_NESTED_TLN_BIT 5
+
+static inline void svm_invlpgb(struct vcpu_svm *svm)
+{
+	unsigned long rax = kvm_rax_read(&svm->vcpu);
+	unsigned long rcx = kvm_rcx_read(&svm->vcpu);
+	struct kvm_vcpu *vcpu;
+	unsigned long flags;
+	u32 asid, i;
+
+	local_irq_save(flags);
+
+	set_bit(TLBI_ASID_BIT, &rax);
+	set_bit(TLBI_FINAL_TLN_BIT, &rax);
+
+	kvm_for_each_vcpu(i, vcpu, svm->vcpu.kvm) {
+		asid = to_svm(vcpu)->vmcb->control.asid;
+		asm volatile (__ex(INVLPGB)
+			      : : "a" (rax),
+				  "c" (rcx),
+				  "d" (asid)
+				: "memory");
+	}
+	asm volatile (__ex(TLBSYNC));
+
+	local_irq_restore(flags);
+}
+
 static int get_npt_level(struct kvm_vcpu *vcpu)
 {
 #ifdef CONFIG_X86_64
@@ -1041,6 +1074,9 @@ static void init_vmcb(struct vcpu_svm *svm)
 	set_intercept(svm, INTERCEPT_XSETBV);
 	set_intercept(svm, INTERCEPT_RDPRU);
 	set_intercept(svm, INTERCEPT_RSM);
+
+	/* Intercept INVLPGB instruction */
+	control->int_invlpgb |= (1ULL << 0);
 
 	if (!kvm_mwait_in_guest(svm->vcpu.kvm)) {
 		set_intercept(svm, INTERCEPT_MONITOR);
@@ -2046,6 +2082,12 @@ static int invlpga_interception(struct vcpu_svm *svm)
 	return kvm_skip_emulated_instruction(&svm->vcpu);
 }
 
+static int invlpgb_interception(struct vcpu_svm *svm)
+{
+	svm_invlpgb(svm);
+	return kvm_skip_emulated_instruction(&svm->vcpu);
+}
+
 static int skinit_interception(struct vcpu_svm *svm)
 {
 	trace_kvm_skinit(svm->vmcb->save.rip, kvm_rax_read(&svm->vcpu));
@@ -2770,6 +2812,7 @@ static int (*const svm_exit_handlers[])(struct vcpu_svm *svm) = {
 	[SVM_EXIT_RDPRU]			= rdpru_interception,
 	[SVM_EXIT_NPF]				= npf_interception,
 	[SVM_EXIT_RSM]                          = rsm_interception,
+	[SVM_EXIT_INVLPGB]			= invlpgb_interception,
 	[SVM_EXIT_AVIC_INCOMPLETE_IPI]		= avic_incomplete_ipi_interception,
 	[SVM_EXIT_AVIC_UNACCELERATED_ACCESS]	= avic_unaccelerated_access_interception,
 };

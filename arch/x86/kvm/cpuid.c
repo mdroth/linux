@@ -383,7 +383,7 @@ void kvm_set_cpu_caps(void)
 		kvm_cpu_cap_set(X86_FEATURE_GBPAGES);
 
 	kvm_cpu_cap_mask(CPUID_8000_0008_EBX,
-		F(CLZERO) | F(XSAVEERPTR) |
+		F(CLZERO) | F(XSAVEERPTR) | 0 /* RDPRU */ | F(INVLPGB) |
 		F(WBNOINVD) | F(AMD_IBPB) | F(AMD_IBRS) | F(AMD_SSBD) | F(VIRT_SSBD) |
 		F(AMD_SSB_NO) | F(AMD_STIBP) | F(AMD_STIBP_ALWAYS_ON)
 	);
@@ -745,6 +745,8 @@ static inline int __do_cpuid_func(struct kvm_cpuid_array *array, u32 function)
 		entry->eax = g_phys_as | (virt_as << 8);
 		entry->edx = 0;
 		cpuid_entry_override(entry, CPUID_8000_0008_EBX);
+		if (boot_cpu_has(X86_FEATURE_INVLPGB))
+			entry->ebx |= F(INVLPGB);
 		break;
 	}
 	case 0x8000000A:
