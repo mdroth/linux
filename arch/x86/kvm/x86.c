@@ -10160,6 +10160,11 @@ void kvm_arch_commit_memory_region(struct kvm *kvm,
 		!(new->flags & KVM_MEM_LOG_DIRTY_PAGES))
 		kvm_mmu_zap_collapsible_sptes(kvm, new);
 
+	if (change == KVM_MR_CREATE || change == KVM_MR_DELETE) {
+		if (kvm_x86_ops.commit_memory_region)
+			kvm_x86_ops.commit_memory_region(kvm, change);
+	}
+
 	/*
 	 * Set up write protection and/or dirty logging for the new slot.
 	 *

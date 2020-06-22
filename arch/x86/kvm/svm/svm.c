@@ -4068,6 +4068,7 @@ static struct kvm_x86_ops svm_x86_ops __initdata = {
 
 	.check_nested_events = svm_check_nested_events,
 
+	.commit_memory_region = svm_commit_memory_region,
 	.page_enc_status_hc = svm_page_enc_status_hc,
 	.get_page_enc_bitmap = svm_get_page_enc_bitmap,
 	.set_page_enc_bitmap = svm_set_page_enc_bitmap,
