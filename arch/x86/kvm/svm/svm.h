@@ -572,6 +572,7 @@ void __init sev_hardware_setup(void);
 void sev_hardware_teardown(void);
 void sev_update_migration_flags(struct kvm *kvm, u64 data);
 int sev_handle_vmgexit(struct vcpu_svm *svm);
+int sev_es_string_io(struct vcpu_svm *svm, int size, unsigned int port, int in);
 
 /* VMSA Accessor functions */
 
