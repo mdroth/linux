@@ -882,6 +882,19 @@ static enum es_result vc_handle_trap_ac(struct ghcb *ghcb,
 	return ES_EXCEPTION;
 }
 
+static enum es_result vc_handle_trap_db(struct ghcb *ghcb,
+					struct es_em_ctxt *ctxt)
+{
+	/*
+	 * Calling do_debug() directly does not work, because it might enable
+	 * IRQs and the GHCB is active. Forward the exception and call it later
+	 * from vc_forward_exception().
+	 */
+	ctxt->fi.vector = X86_TRAP_DB;
+	ctxt->fi.error_code = 0;
+	return ES_EXCEPTION;
+}
+
 static enum es_result vc_handle_exitcode(struct es_em_ctxt *ctxt,
 					 struct ghcb *ghcb,
 					 unsigned long exit_code)
@@ -894,6 +907,9 @@ static enum es_result vc_handle_exitcode(struct es_em_ctxt *ctxt,
 		break;
 	case SVM_EXIT_WRITE_DR7:
 		result = vc_handle_dr7_write(ghcb, ctxt);
+		break;
+	case SVM_EXIT_EXCP_BASE + X86_TRAP_DB:
+		result = vc_handle_trap_db(ghcb, ctxt);
 		break;
 	case SVM_EXIT_EXCP_BASE + X86_TRAP_AC:
 		result = vc_handle_trap_ac(ghcb, ctxt);
@@ -959,6 +975,9 @@ static void vc_forward_exception(struct es_em_ctxt *ctxt)
 		break;
 	case X86_TRAP_AC:
 		do_alignment_check(ctxt->regs, error_code);
+		break;
+	case X86_TRAP_DB:
+		do_debug(ctxt->regs, error_code);
 		break;
 	default:
 		pr_emerg("Unsupported exception in #VC instruction emulation - can't continue\n");
