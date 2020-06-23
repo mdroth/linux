@@ -17,6 +17,7 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 
+#include <generated/asm-offsets.h>
 #include <asm/cpu_entry_area.h>
 #include <asm/stacktrace.h>
 #include <asm/trap_defs.h>
@@ -48,6 +49,26 @@ struct sev_es_runtime_data {
 };
 
 static DEFINE_PER_CPU(struct sev_es_runtime_data*, runtime_data);
+
+/*
+ * Shift/Unshift the IST entry for the #VC handler during
+ * nmi_enter()/nmi_exit().  This is needed when an NMI hits in the #VC handlers
+ * entry code before it has shifted its IST entry. This way #VC exceptions
+ * caused by the NMI handler are guaranteed to use a new stack.
+ */
+void sev_es_nmi_enter(void)
+{
+	struct tss_struct *tss = this_cpu_ptr(&cpu_tss_rw);
+
+	tss->x86_tss.ist[IST_INDEX_VC] -= VC_STACK_OFFSET;
+}
+
+void sev_es_nmi_exit(void)
+{
+	struct tss_struct *tss = this_cpu_ptr(&cpu_tss_rw);
+
+	tss->x86_tss.ist[IST_INDEX_VC] += VC_STACK_OFFSET;
+}
 
 /* Needed in vc_early_vc_forward_exception */
 void do_early_exception(struct pt_regs *regs, int trapnr);

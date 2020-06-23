@@ -80,4 +80,18 @@ static inline bool kvm_get_cpu_l1tf_flush_l1d(void)
 static inline void kvm_set_cpu_l1tf_flush_l1d(void) { }
 #endif /* IS_ENABLED(CONFIG_KVM_INTEL) */
 
+#ifdef CONFIG_AMD_MEM_ENCRYPT
+
+#define arch_nmi_enter()		\
+	do {				\
+		sev_es_nmi_enter();	\
+	} while (0)
+
+#define arch_nmi_exit()			\
+	do {				\
+		sev_es_nmi_exit();	\
+	} while (0)
+
+#endif
+
 #endif /* _ASM_X86_HARDIRQ_H */

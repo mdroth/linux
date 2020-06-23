@@ -60,6 +60,7 @@ int main(void)
 	OFFSET(TSS_ist, tss_struct, x86_tss.ist);
 	DEFINE(DB_STACK_OFFSET, offsetof(struct cea_exception_stacks, DB_stack) -
 	       offsetof(struct cea_exception_stacks, DB1_stack));
+	DEFINE(VC_STACK_OFFSET, sizeof(((struct cea_vmm_exception_stacks *)0)->stacks[0]));
 	BLANK();
 
 #ifdef CONFIG_STACKPROTECTOR
