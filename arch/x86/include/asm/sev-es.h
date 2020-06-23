@@ -9,6 +9,8 @@
 #define __ASM_ENCRYPTED_STATE_H
 
 #include <linux/types.h>
+
+#include <asm/stacktrace.h>
 #include <asm/insn.h>
 
 #define GHCB_SEV_INFO		0x001UL
@@ -75,5 +77,16 @@ static inline u64 lower_bits(u64 val, unsigned int bits)
 
 extern void vc_no_ghcb(void);
 extern bool vc_boot_ghcb(struct pt_regs *regs);
+
+enum stack_type;
+
+#ifdef CONFIG_AMD_MEM_ENCRYPT
+const char *vc_stack_name(enum stack_type type);
+#else /* CONFIG_AMD_MEM_ENCRYPT */
+static inline const char *vc_stack_name(enum stack_type type)
+{
+	return NULL;
+}
+#endif /* CONFIG_AMD_MEM_ENCRYPT*/
 
 #endif

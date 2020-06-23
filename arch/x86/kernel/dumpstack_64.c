@@ -18,6 +18,7 @@
 
 #include <asm/cpu_entry_area.h>
 #include <asm/stacktrace.h>
+#include <asm/sev-es.h>
 
 static const char * const exception_stack_names[] = {
 		[ ESTACK_DF	]	= "#DF",
@@ -46,6 +47,9 @@ const char *stack_type_name(enum stack_type type)
 
 	if (type >= STACK_TYPE_EXCEPTION && type <= STACK_TYPE_EXCEPTION_LAST)
 		return exception_stack_names[type - STACK_TYPE_EXCEPTION];
+
+	if (type >= STACK_TYPE_VC && type <= STACK_TYPE_VC_LAST)
+		return vc_stack_name(type);
 
 	return NULL;
 }
@@ -83,6 +87,46 @@ struct estack_pages estack_pages[CEA_ESTACK_PAGES] ____cacheline_aligned = {
 	EPAGERANGE(DB),
 	EPAGERANGE(MCE),
 };
+
+static bool in_vc_exception_stack(unsigned long *stack, struct stack_info *info)
+{
+#ifdef CONFIG_AMD_MEM_ENCRYPT
+	unsigned long begin, end, stk = (unsigned long)stack;
+	struct cea_vmm_exception_stacks *vc_stacks;
+	struct pt_regs *regs;
+	enum stack_type type;
+	int i;
+
+	vc_stacks = __this_cpu_read(cea_vmm_exception_stacks);
+
+	/* Already initialized? */
+	if (!vc_stacks)
+		return false;
+
+	for (i = 0; i < N_VC_STACKS; i++) {
+		type  = STACK_TYPE_VC_LAST - i;
+		begin = (unsigned long)vc_stacks->stacks[i].stack;
+		end   = begin + sizeof(vc_stacks->stacks[i].stack);
+
+		if (stk >= begin && stk < end)
+			goto found;
+	}
+
+	return false;
+
+found:
+
+	regs		= (struct pt_regs *)end - 1;
+	info->type	= type;
+	info->begin	= (unsigned long *)begin;
+	info->end	= (unsigned long *)end;
+	info->next_sp	= (unsigned long *)regs->sp;
+
+	return true;
+#else
+	return false;
+#endif
+}
 
 static bool in_exception_stack(unsigned long *stack, struct stack_info *info)
 {
@@ -171,6 +215,9 @@ int get_stack_info(unsigned long *stack, struct task_struct *task,
 		goto recursion_check;
 
 	if (in_entry_stack(stack, info))
+		goto recursion_check;
+
+	if (in_vc_exception_stack(stack, info))
 		goto recursion_check;
 
 	goto unknown;

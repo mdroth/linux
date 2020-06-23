@@ -192,6 +192,7 @@ struct cpu_entry_area {
 
 DECLARE_PER_CPU(struct cpu_entry_area *, cpu_entry_area);
 DECLARE_PER_CPU(struct cea_exception_stacks *, cea_exception_stacks);
+DECLARE_PER_CPU(struct cea_vmm_exception_stacks *, cea_vmm_exception_stacks);
 
 extern void setup_cpu_entry_areas(void);
 extern void cea_set_pte(void *cea_vaddr, phys_addr_t pa, pgprot_t flags);

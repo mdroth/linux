@@ -18,6 +18,7 @@
 #include <linux/mm.h>
 
 #include <asm/cpu_entry_area.h>
+#include <asm/stacktrace.h>
 #include <asm/trap_defs.h>
 #include <asm/sev-es.h>
 #include <asm/insn-eval.h>
@@ -34,6 +35,9 @@ static struct ghcb boot_ghcb_page __bss_decrypted __aligned(PAGE_SIZE);
  * cleared
  */
 static struct ghcb __initdata *boot_ghcb;
+DEFINE_PER_CPU(struct cea_vmm_exception_stacks *, cea_vmm_exception_stacks);
+
+static char vc_stack_names[N_VC_STACKS][8];
 
 /* #VC handler runtime per-cpu data */
 struct sev_es_runtime_data {
@@ -240,6 +244,16 @@ static void __init sev_es_init_ghcb(int cpu)
 	memset(&data->ghcb_page, 0, sizeof(data->ghcb_page));
 }
 
+static void __init init_vc_stack_names(void)
+{
+	int i;
+
+	for (i = 0; i < N_VC_STACKS; i++) {
+		snprintf(vc_stack_names[i], sizeof(vc_stack_names[i]),
+			 "#VC%d", i);
+	}
+}
+
 static void __init sev_es_setup_vc_stack(int cpu)
 {
 	struct vmm_exception_stacks *stack;
@@ -272,6 +286,8 @@ static void __init sev_es_setup_vc_stack(int cpu)
 	tss         = per_cpu_ptr(&cpu_tss_rw, cpu);
 
 	tss->x86_tss.ist[IST_INDEX_VC] = (unsigned long)first_stack + size;
+
+	per_cpu(cea_vmm_exception_stacks, cpu) = &cea->vc_stacks;
 }
 
 void __init sev_es_init_vc_handling(void)
@@ -290,6 +306,16 @@ void __init sev_es_init_vc_handling(void)
 		sev_es_init_ghcb(cpu);
 		sev_es_setup_vc_stack(cpu);
 	}
+
+	init_vc_stack_names();
+}
+
+const char *vc_stack_name(enum stack_type type)
+{
+	if (type < STACK_TYPE_VC || type > STACK_TYPE_VC_LAST)
+		return NULL;
+
+	return vc_stack_names[type - STACK_TYPE_VC];
 }
 
 static void __init vc_early_vc_forward_exception(struct es_em_ctxt *ctxt)
