@@ -24,6 +24,7 @@ enum {
 	X86_TRAP_AC,		/* 17, Alignment Check */
 	X86_TRAP_MC,		/* 18, Machine Check */
 	X86_TRAP_XF,		/* 19, SIMD Floating-Point Exception */
+	X86_TRAP_VC = 29,	/* 29, VMM Communication Exception */
 	X86_TRAP_IRET = 32,	/* 32, IRET Exception */
 };
 
