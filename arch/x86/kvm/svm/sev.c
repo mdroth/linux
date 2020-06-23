@@ -17,6 +17,7 @@
 #include <linux/trace_events.h>
 
 #include <asm/trap_defs.h>
+#include <asm/fpu/internal.h>
 
 #include "x86.h"
 #include "svm.h"
@@ -2313,4 +2314,52 @@ void sev_es_create_vcpu(struct vcpu_svm *svm)
 	set_ghcb_msr(svm, GHCB_MSR_SEV_INFO(GHCB_VERSION_MAX,
 					    GHCB_VERSION_MIN,
 					    sev_enc_bit));
+}
+
+void sev_es_vcpu_load(struct vcpu_svm *svm, int cpu)
+{
+	struct svm_cpu_data *sd = per_cpu(svm_data, cpu);
+	struct vmcb_save_area *hostsa;
+	unsigned int i;
+
+	/*
+	 * As an SEV-ES guest, hardware will restore the host state on VMEXIT,
+	 * of which one step is to perform a VMLOAD. Since hardware does not
+	 * perform a VMSAVE on VMRUN, the host savearea must be updated.
+	 */
+	asm volatile("vmsave"
+		:
+		: "a" (__sme_page_pa(sd->save_area))
+		: "memory");
+
+	/*
+	 * Certain MSRs are restored on VMEXIT, only save ones that aren't
+	 * saved via the vmsave above.
+	 */
+	for (i = 0; i < NR_HOST_SAVE_USER_MSRS; i++) {
+		if (host_save_user_msrs[i].sev_es_restored)
+			continue;
+
+		rdmsrl(host_save_user_msrs[i].index, svm->host_user_msrs[i]);
+	}
+
+	/* XCR0 is restored on VMEXIT, save the current host value */
+	hostsa = (struct vmcb_save_area *)(page_address(sd->save_area) + 0x400);
+	hostsa->xcr0 = xgetbv(XCR_XFEATURE_ENABLED_MASK);
+}
+
+void sev_es_vcpu_put(struct vcpu_svm *svm)
+{
+	unsigned int i;
+
+	/*
+	 * Certain MSRs are restored on VMEXIT and were saved with vmsave in
+	 * sev_es_vcpu_load() above. Only restore ones that weren't.
+	 */
+	for (i = 0; i < NR_HOST_SAVE_USER_MSRS; i++) {
+		if (host_save_user_msrs[i].sev_es_restored)
+			continue;
+
+		wrmsrl(host_save_user_msrs[i].index, svm->host_user_msrs[i]);
+	}
 }
