@@ -74,5 +74,6 @@ static inline u64 lower_bits(u64 val, unsigned int bits)
 }
 
 extern void vc_no_ghcb(void);
+extern bool vc_boot_ghcb(struct pt_regs *regs);
 
 #endif

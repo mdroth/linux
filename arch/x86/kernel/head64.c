@@ -386,6 +386,12 @@ void __init do_early_exception(struct pt_regs *regs, int trapnr)
 	    early_make_pgtable(native_read_cr2()))
 		return;
 
+#ifdef CONFIG_AMD_MEM_ENCRYPT
+	if (trapnr == X86_TRAP_VC &&
+	    vc_boot_ghcb(regs))
+		return;
+#endif
+
 	early_fixup_exception(regs, trapnr);
 }
 
