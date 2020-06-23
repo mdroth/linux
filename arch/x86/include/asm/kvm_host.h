@@ -1270,6 +1270,8 @@ struct kvm_x86_ops {
 				   unsigned long val);
 	void (*reg_write)(struct kvm_vcpu *vcpu, enum kvm_reg reg,
 			  unsigned long val);
+
+	bool (*allow_debug)(struct kvm *kvm);
 };
 
 struct kvm_x86_init_ops {

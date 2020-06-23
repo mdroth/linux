@@ -7683,6 +7683,11 @@ static bool vmx_reg_write_override(struct kvm_vcpu *vcpu, enum kvm_reg reg,
 	return false;
 }
 
+static bool vmx_allow_debug(struct kvm *kvm)
+{
+	return true;
+}
+
 static struct kvm_x86_ops vmx_x86_ops __initdata = {
 	.hardware_unsetup = hardware_unsetup,
 
@@ -7820,6 +7825,8 @@ static struct kvm_x86_ops vmx_x86_ops __initdata = {
 
 	.reg_read_override = vmx_reg_read_override,
 	.reg_write_override = vmx_reg_write_override,
+
+	.allow_debug = vmx_allow_debug,
 };
 
 static __init int hardware_setup(void)
