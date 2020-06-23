@@ -131,6 +131,7 @@ int kvm_update_cpuid(struct kvm_vcpu *vcpu)
 	kvm_pmu_refresh(vcpu);
 	return 0;
 }
+EXPORT_SYMBOL_GPL(kvm_update_cpuid);
 
 static int is_efer_nx(void)
 {
