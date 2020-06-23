@@ -5481,6 +5481,13 @@ int kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa, u64 error_code,
 		emulation_type |= EMULTYPE_ALLOW_RETRY_PF;
 emulate:
 	/*
+	 * When the guest is an SEV-ES guest, emulation is not possible.  Allow
+	 * the guest to handle the MMIO emulation.
+	 */
+	if (vcpu->arch.vmsa_encrypted)
+		return 1;
+
+	/*
 	 * On AMD platforms, under certain conditions insn_len may be zero on #NPF.
 	 * This can happen if a guest gets a page-fault on data access but the HW
 	 * table walker is not able to read the instruction page (e.g instruction
