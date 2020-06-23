@@ -87,6 +87,7 @@ void sev_es_nmi_enter(void);
 void sev_es_nmi_exit(void);
 int sev_es_setup_ap_jump_table(struct real_mode_header *rmh);
 void sev_es_nmi_complete(void);
+int __init sev_es_efi_map_ghcbs(pgd_t *pgd);
 #else /* CONFIG_AMD_MEM_ENCRYPT */
 static inline const char *vc_stack_name(enum stack_type type)
 {
@@ -97,6 +98,10 @@ static inline int sev_es_setup_ap_jump_table(struct real_mode_header *rmh)
 	return 0;
 }
 static inline void sev_es_nmi_complete(void) { }
+static inline int sev_es_efi_map_ghcbs(pgd_t *pgd)
+{
+	return 0;
+}
 #endif /* CONFIG_AMD_MEM_ENCRYPT*/
 
 #endif
