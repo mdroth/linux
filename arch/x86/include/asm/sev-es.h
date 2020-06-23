@@ -78,16 +78,22 @@ static inline u64 lower_bits(u64 val, unsigned int bits)
 extern void vc_no_ghcb(void);
 extern bool vc_boot_ghcb(struct pt_regs *regs);
 
+struct real_mode_header;
 enum stack_type;
 
 #ifdef CONFIG_AMD_MEM_ENCRYPT
 const char *vc_stack_name(enum stack_type type);
 void sev_es_nmi_enter(void);
 void sev_es_nmi_exit(void);
+int sev_es_setup_ap_jump_table(struct real_mode_header *rmh);
 #else /* CONFIG_AMD_MEM_ENCRYPT */
 static inline const char *vc_stack_name(enum stack_type type)
 {
 	return NULL;
+}
+static inline int sev_es_setup_ap_jump_table(struct real_mode_header *rmh)
+{
+	return 0;
 }
 #endif /* CONFIG_AMD_MEM_ENCRYPT*/
 
