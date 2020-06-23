@@ -41,6 +41,9 @@ KBUILD_CFLAGS += -Wno-pointer-sign
 KBUILD_CFLAGS += $(call cc-option,-fmacro-prefix-map=$(srctree)/=)
 KBUILD_CFLAGS += -fno-asynchronous-unwind-tables
 
+# sev-es.c inludes generated $(objtree)/arch/x86/lib/inat-tables.c
+CFLAGS_sev-es.o += -I$(objtree)/arch/x86/lib/
+
 KBUILD_AFLAGS  := $(KBUILD_CFLAGS) -D__ASSEMBLY__
 GCOV_PROFILE := n
 UBSAN_SANITIZE :=n
