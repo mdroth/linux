@@ -39,5 +39,7 @@ void load_stage2_idt(void)
 {
 	boot_idt_desc.address = (unsigned long)boot_idt;
 
+	set_idt_entry(X86_TRAP_PF, boot_page_fault);
+
 	load_boot_idt(&boot_idt_desc);
 }
