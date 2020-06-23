@@ -173,6 +173,10 @@ struct vcpu_svm {
 
 	/* which host CPU was used for running this vcpu */
 	unsigned int last_cpu;
+
+	/* SEV-ES support */
+	struct vmcb_save_area *vmsa;
+	struct ghcb *ghcb;
 };
 
 struct svm_cpu_data {
@@ -517,7 +521,28 @@ void sev_update_migration_flags(struct kvm *kvm, u64 data);
 
 static inline struct vmcb_save_area *get_vmsa(struct vcpu_svm *svm)
 {
-	return &svm->vmcb->save;
+	struct vmcb_save_area *vmsa;
+
+	if (sev_es_guest(svm->vcpu.kvm)) {
+		/*
+		 * Before LAUNCH_UPDATE_VMSA, use the actual SEV-ES save area
+		 * to construct the initial state.  Afterwards, use the mapped
+		 * GHCB in a VMGEXIT or the traditional save area as a scratch
+		 * area when outside of a VMGEXIT.
+		 */
+		if (svm->vcpu.arch.vmsa_encrypted) {
+			if (svm->ghcb)
+				vmsa = &svm->ghcb->save;
+			else
+				vmsa = &svm->vmcb->save;
+		} else {
+			vmsa = svm->vmsa;
+		}
+	} else {
+		vmsa = &svm->vmcb->save;
+	}
+
+	return vmsa;
 }
 
 #define DEFINE_VMSA_SEGMENT_ENTRY(_field, _entry, _size)		\
@@ -536,6 +561,9 @@ static inline struct vmcb_save_area *get_vmsa(struct vcpu_svm *svm)
 		struct vmcb_save_area *vmsa = get_vmsa(svm);		\
 									\
 		vmsa->_field._entry = value;				\
+		if (svm->vcpu.arch.vmsa_encrypted) {			\
+			SEV_ES_SET_VALID(vmsa, _field)			\
+		}							\
 	}								\
 
 #define DEFINE_VMSA_SEGMENT_ACCESSOR(_field)				\
@@ -559,6 +587,9 @@ static inline struct vmcb_save_area *get_vmsa(struct vcpu_svm *svm)
 		struct vmcb_save_area *vmsa = get_vmsa(svm);		\
 									\
 		vmsa->_field = *seg;					\
+		if (svm->vcpu.arch.vmsa_encrypted) {			\
+			SEV_ES_SET_VALID(vmsa, _field)			\
+		}							\
 	}
 
 DEFINE_VMSA_SEGMENT_ACCESSOR(cs)
@@ -587,6 +618,9 @@ DEFINE_VMSA_SEGMENT_ACCESSOR(tr)
 		struct vmcb_save_area *vmsa = get_vmsa(svm);		\
 									\
 		vmsa->_field = value;					\
+		if (svm->vcpu.arch.vmsa_encrypted) {			\
+			SEV_ES_SET_VALID(vmsa, _field)			\
+		}							\
 	}								\
 									\
 	static inline void						\
@@ -595,6 +629,9 @@ DEFINE_VMSA_SEGMENT_ACCESSOR(tr)
 		struct vmcb_save_area *vmsa = get_vmsa(svm);		\
 									\
 		vmsa->_field &= value;					\
+		if (svm->vcpu.arch.vmsa_encrypted) {			\
+			SEV_ES_SET_VALID(vmsa, _field)			\
+		}							\
 	}								\
 									\
 	static inline void						\
@@ -603,6 +640,9 @@ DEFINE_VMSA_SEGMENT_ACCESSOR(tr)
 		struct vmcb_save_area *vmsa = get_vmsa(svm);		\
 									\
 		vmsa->_field |= value;					\
+		if (svm->vcpu.arch.vmsa_encrypted) {			\
+			SEV_ES_SET_VALID(vmsa, _field)			\
+		}							\
 	}
 
 #define DEFINE_VMSA_ACCESSOR(_field)					\
@@ -637,6 +677,25 @@ DEFINE_VMSA_ACCESSOR(last_excp_to)
 DEFINE_VMSA_U8_ACCESSOR(cpl)
 DEFINE_VMSA_ACCESSOR(rip)
 DEFINE_VMSA_ACCESSOR(rax)
+DEFINE_VMSA_ACCESSOR(rbx)
+DEFINE_VMSA_ACCESSOR(rcx)
+DEFINE_VMSA_ACCESSOR(rdx)
 DEFINE_VMSA_ACCESSOR(rsp)
+DEFINE_VMSA_ACCESSOR(rbp)
+DEFINE_VMSA_ACCESSOR(rsi)
+DEFINE_VMSA_ACCESSOR(rdi)
+DEFINE_VMSA_ACCESSOR(r8)
+DEFINE_VMSA_ACCESSOR(r9)
+DEFINE_VMSA_ACCESSOR(r10)
+DEFINE_VMSA_ACCESSOR(r11)
+DEFINE_VMSA_ACCESSOR(r12)
+DEFINE_VMSA_ACCESSOR(r13)
+DEFINE_VMSA_ACCESSOR(r14)
+DEFINE_VMSA_ACCESSOR(r15)
+DEFINE_VMSA_ACCESSOR(sw_exit_code)
+DEFINE_VMSA_ACCESSOR(sw_exit_info_1)
+DEFINE_VMSA_ACCESSOR(sw_exit_info_2)
+DEFINE_VMSA_ACCESSOR(sw_scratch)
+DEFINE_VMSA_ACCESSOR(xcr0)
 
 #endif

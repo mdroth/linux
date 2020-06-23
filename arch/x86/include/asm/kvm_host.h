@@ -821,6 +821,9 @@ struct kvm_vcpu_arch {
 
 	/* AMD MSRC001_0015 Hardware Configuration */
 	u64 msr_hwcr;
+
+	/* SEV-ES support */
+	bool vmsa_encrypted;
 };
 
 struct kvm_lpage_info {
@@ -1260,6 +1263,13 @@ struct kvm_x86_ops {
 				struct kvm_page_enc_bitmap *bmap);
 	int (*set_page_enc_bitmap)(struct kvm *kvm,
 				struct kvm_page_enc_bitmap *bmap);
+
+	bool (*reg_read_override)(struct kvm_vcpu *vcpu, enum kvm_reg reg);
+	unsigned long (*reg_read)(struct kvm_vcpu *vcpu, enum kvm_reg reg);
+	bool (*reg_write_override)(struct kvm_vcpu *vcpu, enum kvm_reg reg,
+				   unsigned long val);
+	void (*reg_write)(struct kvm_vcpu *vcpu, enum kvm_reg reg,
+			  unsigned long val);
 };
 
 struct kvm_x86_init_ops {

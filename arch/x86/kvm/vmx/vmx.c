@@ -7672,6 +7672,17 @@ static bool vmx_check_apicv_inhibit_reasons(ulong bit)
 	return supported & BIT(bit);
 }
 
+static bool vmx_reg_read_override(struct kvm_vcpu *vcpu, enum kvm_reg reg)
+{
+	return false;
+}
+
+static bool vmx_reg_write_override(struct kvm_vcpu *vcpu, enum kvm_reg reg,
+				   unsigned long val)
+{
+	return false;
+}
+
 static struct kvm_x86_ops vmx_x86_ops __initdata = {
 	.hardware_unsetup = hardware_unsetup,
 
@@ -7806,6 +7817,9 @@ static struct kvm_x86_ops vmx_x86_ops __initdata = {
 	.need_emulation_on_page_fault = vmx_need_emulation_on_page_fault,
 	.apic_init_signal_blocked = vmx_apic_init_signal_blocked,
 	.page_enc_status_hc = NULL,
+
+	.reg_read_override = vmx_reg_read_override,
+	.reg_write_override = vmx_reg_write_override,
 };
 
 static __init int hardware_setup(void)
