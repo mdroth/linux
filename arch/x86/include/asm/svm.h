@@ -97,7 +97,9 @@ struct __attribute__ ((__packed__)) vmcb_control_area {
 	u8 reserved_6[8];	/* Offset 0xe8 */
 	u64 avic_logical_id;	/* Offset 0xf0 */
 	u64 avic_physical_id;	/* Offset 0xf8 */
-	u8 reserved_7[768];
+	u8 reserved_7[8];
+	u64 vmsa_pa;		/* Used for an SEV-ES guest */
+	u8 reserved_8[752];
 };
 
 
@@ -152,6 +154,7 @@ struct __attribute__ ((__packed__)) vmcb_control_area {
 
 #define SVM_NESTED_CTL_NP_ENABLE	BIT(0)
 #define SVM_NESTED_CTL_SEV_ENABLE	BIT(1)
+#define SVM_NESTED_CTL_SEV_ES_ENABLE	BIT(2)
 
 struct vmcb_seg {
 	u16 selector;
