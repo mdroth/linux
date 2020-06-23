@@ -936,6 +936,14 @@ static unsigned long sev_es_get_cpuid_cache_index(struct es_em_ctxt *ctxt)
 	lo = lower_32_bits(ctxt->regs->ax);
 
 	/*
+	 * CPUID 0x00000001 returns the local APIC id in the ebx register,
+	 * so it is CPU specific. The cache is not a per-CPU cache, so don't
+	 * cache this request.
+	 */
+	if (lo == 0x00000001)
+		return ULONG_MAX;
+
+	/*
 	 * CPUID 0x0000000d requires both RCX and XCR0, so it can't be
 	 * cached.
 	 */
