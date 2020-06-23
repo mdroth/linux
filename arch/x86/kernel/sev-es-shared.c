@@ -427,8 +427,8 @@ static enum es_result vc_handle_cpuid(struct ghcb *ghcb,
 	u32 cr4 = native_read_cr4();
 	enum es_result ret;
 
-	ghcb_set_rax(ghcb, regs->ax);
-	ghcb_set_rcx(ghcb, regs->cx);
+	ghcb_set_rax(ghcb, lower_32_bits(regs->ax));
+	ghcb_set_rcx(ghcb, lower_32_bits(regs->cx));
 
 	if (cr4 & X86_CR4_OSXSAVE)
 		/* Safe to read xcr0 */
@@ -447,10 +447,10 @@ static enum es_result vc_handle_cpuid(struct ghcb *ghcb,
 	      ghcb_is_valid_rdx(ghcb)))
 		return ES_VMM_ERROR;
 
-	regs->ax = ghcb->save.rax;
-	regs->bx = ghcb->save.rbx;
-	regs->cx = ghcb->save.rcx;
-	regs->dx = ghcb->save.rdx;
+	regs->ax = lower_32_bits(ghcb->save.rax);
+	regs->bx = lower_32_bits(ghcb->save.rbx);
+	regs->cx = lower_32_bits(ghcb->save.rcx);
+	regs->dx = lower_32_bits(ghcb->save.rdx);
 
 	return ES_OK;
 }
