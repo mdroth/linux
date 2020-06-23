@@ -2426,6 +2426,9 @@ static int cr_trap(struct vcpu_svm *svm)
 	case 4:
 		kvm_track_cr4(&svm->vcpu, svm->vmcb->control.exit_info_1);
 		break;
+	case 8:
+		kvm_track_cr8(&svm->vcpu, svm->vmcb->control.exit_info_1);
+		break;
 	default:
 		WARN(1, "unhandled CR%d write trap", cr);
 		kvm_queue_exception(&svm->vcpu, UD_VECTOR);
@@ -2967,6 +2970,7 @@ static int (*const svm_exit_handlers[])(struct vcpu_svm *svm) = {
 	[SVM_EXIT_RDPRU]			= rdpru_interception,
 	[SVM_EXIT_CR0_WRITE_TRAP]		= cr_trap,
 	[SVM_EXIT_CR4_WRITE_TRAP]		= cr_trap,
+	[SVM_EXIT_CR8_WRITE_TRAP]		= cr_trap,
 	[SVM_EXIT_NPF]				= npf_interception,
 	[SVM_EXIT_RSM]                          = rsm_interception,
 	[SVM_EXIT_INVLPGB]			= invlpgb_interception,

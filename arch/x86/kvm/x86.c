@@ -1087,6 +1087,12 @@ unsigned long kvm_get_cr8(struct kvm_vcpu *vcpu)
 }
 EXPORT_SYMBOL_GPL(kvm_get_cr8);
 
+int kvm_track_cr8(struct kvm_vcpu *vcpu, unsigned long cr8)
+{
+	return kvm_set_cr8(vcpu, cr8);
+}
+EXPORT_SYMBOL_GPL(kvm_track_cr8);
+
 static void kvm_update_dr0123(struct kvm_vcpu *vcpu)
 {
 	int i;

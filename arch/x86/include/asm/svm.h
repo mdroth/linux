@@ -288,6 +288,7 @@ struct vmcb {
 
 #define TRAP_CR0_WRITE		(48 + 0)
 #define TRAP_CR4_WRITE		(48 + 4)
+#define TRAP_CR8_WRITE		(48 + 8)
 
 #define INTERCEPT_DR0_READ	0
 #define INTERCEPT_DR1_READ	1
