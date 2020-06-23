@@ -104,6 +104,20 @@ SYM_CODE_START_NOALIGN(startup_64)
 	leaq	_text(%rip), %rdi
 	pushq	%rsi
 	call	__startup_64
+	/* Save return value */
+	pushq	%rax
+
+	/*
+	 * Load IDT with early handlers - needed for SEV-ES
+	 * Do this here because this must only happen on the boot CPU
+	 * and the code below is shared with secondary CPU bringup.
+	 */
+	leaq	_text(%rip), %rdi
+	call	early_idt_setup_early_handler
+
+	/* Restore __startup_64 return value*/
+	popq	%rax
+	/* Restore pointer to real_mode_data */
 	popq	%rsi
 
 	/* Form the CR3 value being sure to include the CR3 modifier */
@@ -199,6 +213,9 @@ SYM_CODE_START(secondary_startup_64)
 	 * by now because the cr3-switch above unmaps the real-mode stack
 	 */
 	movq initial_stack(%rip), %rsp
+
+	/* Load IDT */
+	lidt	idt_descr(%rip)
 
 	/* Check if nx is implemented */
 	movl	$0x80000001, %eax
