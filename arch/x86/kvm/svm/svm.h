@@ -70,6 +70,7 @@ struct kvm_sev_info {
 	bool live_migration_enabled;
 	unsigned long *page_enc_bmap;
 	unsigned long page_enc_bmap_size;
+	u64 ap_jump_table;	/* SEV-ES AP Jump Table address */
 };
 
 struct kvm_svm {
@@ -179,6 +180,7 @@ struct vcpu_svm {
 	struct vmcb_save_area *vmsa;
 	struct ghcb *ghcb;
 	struct kvm_host_map ghcb_map;
+	bool ap_hlt_loop;
 
 	/* SEV-ES scratch area support */
 	void *ghcb_sa;
@@ -573,6 +575,7 @@ void sev_hardware_teardown(void);
 void sev_update_migration_flags(struct kvm *kvm, u64 data);
 int sev_handle_vmgexit(struct vcpu_svm *svm);
 int sev_es_string_io(struct vcpu_svm *svm, int size, unsigned int port, int in);
+void sev_vcpu_deliver_sipi_vector(struct kvm_vcpu *vcpu, u8 vector);
 
 /* VMSA Accessor functions */
 
