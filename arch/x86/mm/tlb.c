@@ -772,7 +772,7 @@ void native_flush_tlb_others(const struct cpumask *cpumask,
 		return;
 	}
 
-	if (static_cpu_has(X86_FEATURE_INVLPGB))
+	if (static_cpu_has(X86_FEATURE_INVLPGB) && tlb_hw)
 		smp_flush_tlb_hw(cpumask, info);
 	else
 		smp_flush_tlb_ipi(cpumask, info);
@@ -855,7 +855,7 @@ void flush_tlb_mm_range(struct mm_struct *mm, unsigned long start,
 	info = get_flush_tlb_info(mm, start, end, stride_shift, freed_tables,
 				  new_tlb_gen);
 
-	if (cpumask_any_but(mm_cpumask(mm), cpu) < nr_cpu_ids) {
+	if (static_cpu_has(X86_FEATURE_INVLPGB) && tlb_hw && (cpumask_any_but(mm_cpumask(mm), cpu) < nr_cpu_ids)) {
 		smp_flush_tlb_hw(mm_cpumask(mm), info);
 		goto end;
 	}
@@ -910,7 +910,7 @@ void flush_tlb_all(void)
 {
 	count_vm_tlb_event(NR_TLB_REMOTE_FLUSH);
 
-	if(static_cpu_has(X86_FEATURE_INVLPGB))
+	if(static_cpu_has(X86_FEATURE_INVLPGB) && tlb_hw)
 		flush_tlb_all_hw();
 	else
 		on_each_cpu(do_flush_tlb_all, NULL, 1);
@@ -969,7 +969,7 @@ void flush_tlb_kernel_range(unsigned long start, unsigned long end)
 	/* Balance as user space task's flush, a bit conservative */
 	if (end == TLB_FLUSH_ALL ||
 	    (end - start) > tlb_single_page_flush_ceiling << PAGE_SHIFT) {
-		if (static_cpu_has(X86_FEATURE_INVLPGB))
+		if (static_cpu_has(X86_FEATURE_INVLPGB) && tlb_hw)
 			flush_tlb_all_hw();
 		else
 			on_each_cpu(do_flush_tlb_all, NULL, 1);
@@ -980,7 +980,7 @@ void flush_tlb_kernel_range(unsigned long start, unsigned long end)
 
 		info = get_flush_tlb_info(NULL, start, end, 0, false, 0);
 
-		if(static_cpu_has(X86_FEATURE_INVLPGB))
+		if(static_cpu_has(X86_FEATURE_INVLPGB) && tlb_hw)
 			flush_tlb_kernel_range_hw(start, end, true, 0);
 		else
 			on_each_cpu(do_kernel_range_flush, info, 1);
@@ -1007,7 +1007,7 @@ void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch)
 	int cpu = get_cpu();
 
 	if (cpumask_any_but(&batch->cpumask , cpu) < nr_cpu_ids) {
-		if (static_cpu_has(X86_FEATURE_INVLPGB)) {
+		if (static_cpu_has(X86_FEATURE_INVLPGB) && tlb_hw) {
 			flush_tlb_all_hw();
 			goto end;
 		}

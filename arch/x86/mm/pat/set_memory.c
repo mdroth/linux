@@ -32,6 +32,12 @@
 #include "../mm_internal.h"
 
 /*
+ * If boot line has tlbi=enabled, tlb_hw is 1
+ * else tlb_hw = 0
+ */
+extern unsigned int tlb_hw;
+
+/*
  * The current flushing context - we pass it instead of 5 arguments:
  */
 struct cpa_data {
@@ -360,7 +366,7 @@ static void cpa_flush(struct cpa_data *data, int cache)
 	if (cpa->force_flush_all || cpa->numpages > tlb_single_page_flush_ceiling) {
 		flush_tlb_all();
 	} else {
-		if (static_cpu_has(X86_FEATURE_INVLPGB))
+		if (static_cpu_has(X86_FEATURE_INVLPGB) && tlb_hw)
 			flush_tlb_kernel_range_hw(fix_addr(__cpa_addr(cpa, 0)),
 				                  fix_addr(__cpa_addr(cpa, last_cpa_idx)),
 				                  true, 0);
