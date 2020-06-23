@@ -73,4 +73,6 @@ static inline u64 lower_bits(u64 val, unsigned int bits)
 	return (val & mask);
 }
 
+extern void vc_no_ghcb(void);
+
 #endif
