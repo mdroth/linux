@@ -291,10 +291,21 @@ int set_page_encrypted(unsigned long address)
 	return set_clr_page_flags(&mapping_info, address, _PAGE_ENC, 0);
 }
 
+int set_page_non_present(unsigned long address)
+{
+	return set_clr_page_flags(&mapping_info, address, 0, _PAGE_PRESENT);
+}
+
 void do_boot_page_fault(struct pt_regs *regs, unsigned long error_code)
 {
-	unsigned long address = native_read_cr2() & PMD_MASK;
-	unsigned long end = address + PMD_SIZE;
+	unsigned long address = native_read_cr2();
+	unsigned long end;
+	bool ghcb_fault;
+
+	ghcb_fault = sev_es_check_ghcb_fault(address);
+
+	address   &= PMD_MASK;
+	end        = address + PMD_SIZE;
 
 	/*
 	 * Check for unexpected error codes. Unexpected are:
@@ -302,9 +313,13 @@ void do_boot_page_fault(struct pt_regs *regs, unsigned long error_code)
 	 *	- User faults
 	 *	- Reserved bits set
 	 */
-	if (error_code & (X86_PF_PROT | X86_PF_USER | X86_PF_RSVD)) {
+	if (ghcb_fault ||
+	    error_code & (X86_PF_PROT | X86_PF_USER | X86_PF_RSVD)) {
 		/* Print some information for debugging */
-		error_putstr("Unexpected page-fault:");
+		if (ghcb_fault)
+			error_putstr("Page-fault on GHCB page:");
+		else
+			error_putstr("Unexpected page-fault:");
 		error_putstr("\nError Code: ");
 		error_puthex(error_code);
 		error_putstr("\nCR2: 0x");
