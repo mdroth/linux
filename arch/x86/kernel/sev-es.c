@@ -17,6 +17,7 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 
+#include <asm/cpu_entry_area.h>
 #include <asm/trap_defs.h>
 #include <asm/sev-es.h>
 #include <asm/insn-eval.h>
@@ -37,6 +38,9 @@ static struct ghcb __initdata *boot_ghcb;
 /* #VC handler runtime per-cpu data */
 struct sev_es_runtime_data {
 	struct ghcb ghcb_page;
+
+	/* Physical storage for the per-cpu IST stacks of the #VC handler */
+	struct vmm_exception_stacks vc_stacks __aligned(PAGE_SIZE);
 };
 
 static DEFINE_PER_CPU(struct sev_es_runtime_data*, runtime_data);
@@ -236,11 +240,46 @@ static void __init sev_es_init_ghcb(int cpu)
 	memset(&data->ghcb_page, 0, sizeof(data->ghcb_page));
 }
 
+static void __init sev_es_setup_vc_stack(int cpu)
+{
+	struct vmm_exception_stacks *stack;
+	struct sev_es_runtime_data *data;
+	struct cpu_entry_area *cea;
+	struct tss_struct *tss;
+	unsigned long size;
+	char *first_stack;
+	int i;
+
+	data  = per_cpu(runtime_data, cpu);
+	stack = &data->vc_stacks;
+	cea   = get_cpu_entry_area(cpu);
+
+	/* Map the stacks to the cpu_entry_area */
+	for (i = 0; i < N_VC_STACKS; i++) {
+		void *vaddr = cea->vc_stacks.stacks[i].stack;
+		phys_addr_t pa = __pa(stack->stacks[i].stack);
+
+		cea_set_pte(vaddr, pa, PAGE_KERNEL);
+	}
+
+	/*
+	 * The #VC handler IST stack is needed in secondary CPU bringup before
+	 * cpu_init() had a chance to setup the rest of the TSS. So setup the
+	 * #VC handlers stack pointer up here for all CPUs
+	 */
+	first_stack = cea->vc_stacks.stacks[N_VC_STACKS - 1].stack;
+	size        = sizeof(cea->vc_stacks.stacks[N_VC_STACKS - 1].stack);
+	tss         = per_cpu_ptr(&cpu_tss_rw, cpu);
+
+	tss->x86_tss.ist[IST_INDEX_VC] = (unsigned long)first_stack + size;
+}
+
 void __init sev_es_init_vc_handling(void)
 {
 	int cpu;
 
 	BUILD_BUG_ON((offsetof(struct sev_es_runtime_data, ghcb_page) % PAGE_SIZE) != 0);
+	BUILD_BUG_ON((offsetof(struct sev_es_runtime_data, vc_stacks) % PAGE_SIZE) != 0);
 
 	if (!sev_es_active())
 		return;
@@ -249,6 +288,7 @@ void __init sev_es_init_vc_handling(void)
 	for_each_possible_cpu(cpu) {
 		sev_es_alloc_runtime_data(cpu);
 		sev_es_init_ghcb(cpu);
+		sev_es_setup_vc_stack(cpu);
 	}
 }
 

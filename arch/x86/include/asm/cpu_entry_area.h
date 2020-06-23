@@ -64,6 +64,61 @@ enum exception_stack_ordering {
 #define CEA_ESTACK_PAGES					\
 	(sizeof(struct cea_exception_stacks) / PAGE_SIZE)
 
+/*
+ * VC Handler IST Stacks
+ *
+ * The IST stacks for the #VC handler are only allocated when SEV-ES is active,
+ * so they are not part of 'struct exception_stacks'.
+ *
+ * The VC handler uses shift_ist so that #VC can be nested. Nesting happens for
+ * example when the #VC handler has to call printk in the case of and error or
+ * when emulating 'movs' instructions.
+ *
+ * NMIs are another special case which can cause nesting of #VC handlers. The
+ * do_nmi() code path can cause #VC, e.g. for RDPMC. An NMI can also hit in
+ * the time window when the #VC handler is raised but before it has shifted its
+ * IST entry. To make sure any #VC raised from the NMI code path uses a new
+ * stack, the NMI handler unconditionally shifts the #VC handlers IST entry.
+ * This can cause one IST stack for #VC to be omitted.
+ *
+ * To support sufficient levels of nesting for the #VC handler, make the number
+ * of nesting levels configurable. It is currently set to 5 to support this
+ * scenario:
+ *
+ * #VC - IST stack 4, IST entry already shifted to 3
+ *
+ *     -> NMI - shifts #VC IST entry to 2
+ *
+ *     -> #VC(RDPMC) - shifts #VC IST to 1, something goes wrong, print
+ *                     an error message
+ *
+ *     -> #VC(printk) - shifts #VC IST entry to 0, output driver
+ *                      uses 'movs'
+ *
+ *     -> #VC(movs) - shifts IST to unmapped stack, further #VCs will
+ *                    cause #DF
+ *
+ */
+#define N_VC_STACKS		5
+
+#define VC_STACK_MEMBERS(guardsize, holesize)			\
+	char	hole[holesize];					\
+	struct {						\
+		char guard[guardsize];				\
+		char stack[EXCEPTION_STKSZ];			\
+	} stacks[N_VC_STACKS];					\
+	char top_guard[guardsize];				\
+
+/* Physical storage */
+struct vmm_exception_stacks {
+	VC_STACK_MEMBERS(0, 0)
+};
+
+/* Mapping in cpu_entry_area */
+struct cea_vmm_exception_stacks {
+	VC_STACK_MEMBERS(PAGE_SIZE, EXCEPTION_STKSZ)
+};
+
 #endif
 
 #ifdef CONFIG_X86_32
@@ -110,6 +165,12 @@ struct cpu_entry_area {
 	 * Exception stacks used for IST entries with guard pages.
 	 */
 	struct cea_exception_stacks estacks;
+
+	/*
+	 * IST Exception stacks for VC handler - Only allocated and mapped when
+	 * SEV-ES is active.
+	 */
+	struct cea_vmm_exception_stacks vc_stacks;
 #endif
 	/*
 	 * Per CPU debug store for Intel performance monitoring. Wastes a
