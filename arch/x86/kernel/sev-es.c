@@ -38,14 +38,17 @@
 #define DR7_RESET_VALUE        0x400
 
 struct sev_es_cpuid_cache_entry {
-	unsigned long eax;
-	unsigned long ebx;
-	unsigned long ecx;
-	unsigned long edx;
+	u64 index;
+	u32 eax;
+	u32 ebx;
+	u32 ecx;
+	u32 edx;
 };
 
-static struct xarray sev_es_cpuid_cache;
-static bool __ro_after_init sev_es_cpuid_cache_initialized;
+#define MAX_SEV_ES_CPUID_CACHE_ENTRIES	32
+static struct sev_es_cpuid_cache_entry sev_es_cpuid_cache[MAX_SEV_ES_CPUID_CACHE_ENTRIES];
+static unsigned int sev_es_cpuid_cache_index;
+static DECLARE_RWSEM(sev_es_cpuid_cache_lock);
 
 /* For early boot hypervisor communication in SEV-ES enabled guests */
 static struct ghcb boot_ghcb_page __bss_decrypted __aligned(PAGE_SIZE);
@@ -641,9 +644,6 @@ void __init sev_es_init_vc_handling(void)
 
 	sev_es_setup_play_dead();
 
-	xa_init_flags(&sev_es_cpuid_cache, XA_FLAGS_LOCK_IRQ);
-	sev_es_cpuid_cache_initialized = true;
-
 	init_vc_stack_names();
 }
 
@@ -929,11 +929,8 @@ static unsigned long sev_es_get_cpuid_cache_index(struct es_em_ctxt *ctxt)
 {
 	unsigned long hi, lo;
 
-	/* Don't attempt to cache until the xarray is initialized */
-	if (!sev_es_cpuid_cache_initialized)
-		return ULONG_MAX;
-
 	lo = lower_32_bits(ctxt->regs->ax);
+	hi = 0;
 
 	/*
 	 * CPUID 0x00000001 returns the local APIC id in the ebx register,
@@ -951,26 +948,38 @@ static unsigned long sev_es_get_cpuid_cache_index(struct es_em_ctxt *ctxt)
 		return ULONG_MAX;
 
 	/*
+	 * Check specific ranges so that only well known CPUID values can
+	 * be cached.
+	 *
 	 * Some callers of CPUID don't always set RCX to zero for CPUID
 	 * functions that don't require RCX, which can result in excessive
 	 * cached values, so RCX needs to be manually zeroed for use as part
 	 * of the cache index. Future CPUID values may need RCX, but since
 	 * they can't be known, they must not be cached.
 	 */
-	if (lo > 0x80000020)
-		return ULONG_MAX;
-
 	switch (lo) {
-	case 0x00000007:
-	case 0x0000000b:
-	case 0x0000000f:
-	case 0x00000010:
-	case 0x8000001d:
-	case 0x80000020:
-		hi = ctxt->regs->cx << 32;
+	case 0x00000000 ... 0x00000010:
+		switch (lo) {
+		case 0x00000007:
+		case 0x0000000b:
+		case 0x0000000f:
+		case 0x00000010:
+			hi = ctxt->regs->cx << 32;
+			break;
+		}
+		break;
+	case 0x40000000 ... 0x40000001:
+		break;
+	case 0x80000000 ... 0x80000020:
+		switch (lo) {
+		case 0x8000001d:
+		case 0x80000020:
+			hi = ctxt->regs->cx << 32;
+			break;
+		}
 		break;
 	default:
-		hi = 0;
+		return ULONG_MAX;
 	}
 
 	return hi | lo;
@@ -980,42 +989,60 @@ static bool sev_es_check_cpuid_cache(struct es_em_ctxt *ctxt,
 				     unsigned long cache_index)
 {
 	struct sev_es_cpuid_cache_entry *cache_entry;
+	unsigned int i;
 
 	if (cache_index == ULONG_MAX)
 		return false;
 
-	cache_entry = xa_load(&sev_es_cpuid_cache, cache_index);
-	if (!cache_entry)
-		return false;
+	down_read(&sev_es_cpuid_cache_lock);
 
-	ctxt->regs->ax = cache_entry->eax;
-	ctxt->regs->bx = cache_entry->ebx;
-	ctxt->regs->cx = cache_entry->ecx;
-	ctxt->regs->dx = cache_entry->edx;
+	for (i = 0; i < sev_es_cpuid_cache_index; i++) {
+		cache_entry = sev_es_cpuid_cache + i;
 
-	return true;
+		if (cache_entry->index == cache_index) {
+			ctxt->regs->ax = cache_entry->eax;
+			ctxt->regs->bx = cache_entry->ebx;
+			ctxt->regs->cx = cache_entry->ecx;
+			ctxt->regs->dx = cache_entry->edx;
+
+			up_read(&sev_es_cpuid_cache_lock);
+
+			return true;
+		}
+	}
+
+	up_read(&sev_es_cpuid_cache_lock);
+
+	return false;
 }
 
 static void sev_es_add_cpuid_cache(struct es_em_ctxt *ctxt,
 				   unsigned long cache_index)
 {
 	struct sev_es_cpuid_cache_entry *cache_entry;
-	int ret;
 
 	if (cache_index == ULONG_MAX)
 		return;
 
-	cache_entry = kzalloc(sizeof(*cache_entry), GFP_ATOMIC);
-	if (cache_entry) {
-		cache_entry->eax = ctxt->regs->ax;
-		cache_entry->ebx = ctxt->regs->bx;
-		cache_entry->ecx = ctxt->regs->cx;
-		cache_entry->edx = ctxt->regs->dx;
+	down_write(&sev_es_cpuid_cache_lock);
 
-		/* Ignore insertion errors */
-		ret = xa_insert(&sev_es_cpuid_cache, cache_index,
-				cache_entry, GFP_ATOMIC);
+	if (sev_es_cpuid_cache_index == MAX_SEV_ES_CPUID_CACHE_ENTRIES) {
+		pr_info_once("SEV-ES CPUID cache is full");
+		goto out;
 	}
+
+	cache_entry = sev_es_cpuid_cache + sev_es_cpuid_cache_index;
+
+	cache_entry->index = cache_index;
+	cache_entry->eax = lower_32_bits(ctxt->regs->ax);
+	cache_entry->ebx = lower_32_bits(ctxt->regs->bx);
+	cache_entry->ecx = lower_32_bits(ctxt->regs->cx);
+	cache_entry->edx = lower_32_bits(ctxt->regs->dx);
+
+	sev_es_cpuid_cache_index++;
+
+out:
+	up_write(&sev_es_cpuid_cache_lock);
 }
 
 static enum es_result vc_handle_dr7_write(struct ghcb *ghcb,
