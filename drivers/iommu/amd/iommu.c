@@ -508,6 +508,45 @@ static unsigned long check_pte(struct device *dev, unsigned long iova)
 	return spa;
 }
 
+struct rmpentry {
+	u64 gpa;
+	u8 assigned;
+	u8 pagesize;  /* RMP page size */
+	u8 immutable;
+	u8 pagelevel; /* x86 page level */
+	u32 asid;
+};
+
+static void amd_iommu_report_rmp_fault(volatile u32 *event)
+{
+	struct pci_dev *pdev;
+	struct iommu_dev_data *dev_data = NULL;
+	int devid     = (event[0] >> EVENT_DEVID_SHIFT) & EVENT_DEVID_MASK;
+	int flags_rmp = (event[0] >> EVENT_FLAGS_SHIFT) & 0xFF;
+	int vmg_tag   = (event[1]) & 0xFFFF;
+	int flags     = (event[1] >> EVENT_FLAGS_SHIFT) & EVENT_FLAGS_MASK;
+	u64 gpa       = (u64)(((u64)event[3]) << 32) | event[2];
+
+	pdev = pci_get_domain_bus_and_slot(0, PCI_BUS_NUM(devid),
+					   devid & 0xff);
+	if (pdev)
+		dev_data = get_dev_data(&pdev->dev);
+
+	if (dev_data && __ratelimit(&dev_data->rs)) {
+		pci_err(pdev, "Event logged [RMP_PAGE_FAULT devid=0x%04x, vmg_tag=0x%04x, gpa=0x%llx, flags_rmp=0x%04x, flags=0x%04x]\n",
+			devid, vmg_tag, gpa, flags_rmp, flags);
+		dump_dte_entry(devid);
+		check_pte(&pdev->dev, gpa);
+	} else if (printk_ratelimit()) {
+		pr_err("Event logged [RMP_PAGE_FAULT device=%02x:%02x.%x, vmg_tag=0x%04x, gpa=0x%llx, flags_rmp=0x%04x, flags=0x%04x]\n",
+			PCI_BUS_NUM(devid), PCI_SLOT(devid), PCI_FUNC(devid),
+			vmg_tag, gpa, flags_rmp, flags);
+	}
+
+	if (pdev)
+		pci_dev_put(pdev);
+}
+
 static void amd_iommu_report_page_fault(u16 devid, u16 domain_id,
 					u64 address, int flags)
 {
@@ -562,6 +601,11 @@ retry:
 
 	if (type == EVENT_TYPE_IO_FAULT) {
 		amd_iommu_report_page_fault(devid, pasid, address, flags);
+		return;
+	}
+
+	if (type == EVENT_TYPE_RMP_FAULT) {
+		amd_iommu_report_rmp_fault(event);
 		return;
 	}
 
