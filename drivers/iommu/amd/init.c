@@ -359,6 +359,24 @@ static void iommu_set_exclusion_range(struct amd_iommu *iommu)
 			&entry, sizeof(entry));
 }
 
+static void iommu_set_cwwb_range(struct amd_iommu *iommu)
+{
+	u64 start = iommu_virt_to_phys((void*)iommu->cmd_sem);
+	u64 limit = (start + 4096);
+	u64 entry;
+
+	if (!iommu_feature(iommu, FEATURE_SNP))
+		return;
+
+	entry = start | MMIO_EXCL_ENABLE_MASK;
+	memcpy_toio(iommu->mmio_base + MMIO_EXCL_BASE_OFFSET,
+			&entry, sizeof(entry));
+
+	entry = limit;
+	memcpy_toio(iommu->mmio_base + MMIO_EXCL_LIMIT_OFFSET,
+			&entry, sizeof(entry));
+}
+
 /* Programs the physical address of the device table into the IOMMU hardware */
 static void iommu_set_device_table(struct amd_iommu *iommu)
 {
@@ -1891,6 +1909,9 @@ static int __init amd_iommu_init_pci(void)
 		ret = iommu_init_pci(iommu);
 		if (ret)
 			break;
+
+		/* Need to setup range after PCI init */
+		iommu_set_cwwb_range(iommu);
 	}
 
 	/*
