@@ -3441,8 +3441,7 @@ static int modify_irte_ga(u16 devid, int index, struct irte_ga *irte,
 	 */
 	WARN_ON(!ret);
 
-	if (data)
-		data->ref = entry;
+	data->ref = entry;
 
 	raw_spin_unlock_irqrestore(&table->lock, flags);
 
@@ -3452,7 +3451,7 @@ static int modify_irte_ga(u16 devid, int index, struct irte_ga *irte,
 	return 0;
 }
 
-static int modify_irte(u16 devid, int index, union irte *irte)
+static int modify_irte(u16 devid, int index, union irte *irte, struct amd_ir_data *data)
 {
 	struct irq_remap_table *table;
 	struct amd_iommu *iommu;
@@ -3528,50 +3527,58 @@ static void irte_ga_prepare(void *entry,
 	irte->lo.fields_remap.valid       = 1;
 }
 
-static void irte_activate(void *entry, u16 devid, u16 index)
+static void irte_activate(struct amd_ir_data *data)
 {
-	union irte *irte = (union irte *) entry;
+	union irte *irte = (union irte *)data->entry;
+	u16 devid = data->irq_2_irte.devid;
+	u16 index = data->irq_2_irte.index;
 
 	irte->fields.valid = 1;
-	modify_irte(devid, index, irte);
+	modify_irte(devid, index, irte, data);
 }
 
-static void irte_ga_activate(void *entry, u16 devid, u16 index)
+static void irte_ga_activate(struct amd_ir_data *data)
 {
-	struct irte_ga *irte = (struct irte_ga *) entry;
+	struct irte_ga *irte = (struct irte_ga *)data->entry;
+	u16 devid = data->irq_2_irte.devid;
+	u16 index = data->irq_2_irte.index;
 
 	irte->lo.fields_remap.valid = 1;
-	modify_irte_ga(devid, index, irte, NULL);
+	modify_irte_ga(devid, index, irte, data);
 }
 
-static void irte_deactivate(void *entry, u16 devid, u16 index)
+static void irte_deactivate(struct amd_ir_data *data)
 {
-	union irte *irte = (union irte *) entry;
+	union irte *irte = (union irte *)data->entry;
+	u16 devid = data->irq_2_irte.devid;
+	u16 index = data->irq_2_irte.index;
 
 	irte->fields.valid = 0;
-	modify_irte(devid, index, irte);
+	modify_irte(devid, index, irte, data);
 }
 
-static void irte_ga_deactivate(void *entry, u16 devid, u16 index)
+static void irte_ga_deactivate(struct amd_ir_data *data)
 {
-	struct irte_ga *irte = (struct irte_ga *) entry;
+	struct irte_ga *irte = (struct irte_ga *)data->entry;
+	u16 devid = data->irq_2_irte.devid;
+	u16 index = data->irq_2_irte.index;
 
 	irte->lo.fields_remap.valid = 0;
-	modify_irte_ga(devid, index, irte, NULL);
+	modify_irte_ga(devid, index, irte, data);
 }
 
 static void irte_set_affinity(void *entry, u16 devid, u16 index,
-			      u8 vector, u32 dest_apicid)
+			      u8 vector, u32 dest_apicid, struct amd_ir_data *data)
 {
 	union irte *irte = (union irte *) entry;
 
 	irte->fields.vector = vector;
 	irte->fields.destination = dest_apicid;
-	modify_irte(devid, index, irte);
+	modify_irte(devid, index, irte, data);
 }
 
 static void irte_ga_set_affinity(void *entry, u16 devid, u16 index,
-				 u8 vector, u32 dest_apicid)
+				 u8 vector, u32 dest_apicid, struct amd_ir_data *data)
 {
 	struct irte_ga *irte = (struct irte_ga *) entry;
 
@@ -3581,7 +3588,7 @@ static void irte_ga_set_affinity(void *entry, u16 devid, u16 index,
 					APICID_TO_IRTE_DEST_LO(dest_apicid);
 		irte->hi.fields.destination =
 					APICID_TO_IRTE_DEST_HI(dest_apicid);
-		modify_irte_ga(devid, index, irte, NULL);
+		modify_irte_ga(devid, index, irte, data);
 	}
 }
 
@@ -3864,8 +3871,7 @@ static int irq_remapping_activate(struct irq_domain *domain,
 	if (!iommu)
 		return 0;
 
-	iommu->irte_ops->activate(data->entry, irte_info->devid,
-				  irte_info->index);
+	iommu->irte_ops->activate(data);
 	amd_ir_update_irte(irq_data, iommu, data, irte_info, cfg);
 	return 0;
 }
@@ -3877,9 +3883,9 @@ static void irq_remapping_deactivate(struct irq_domain *domain,
 	struct irq_2_irte *irte_info = &data->irq_2_irte;
 	struct amd_iommu *iommu = amd_iommu_rlookup_table[irte_info->devid];
 
-	if (iommu)
-		iommu->irte_ops->deactivate(data->entry, irte_info->devid,
-					    irte_info->index);
+	if (iommu) {
+		iommu->irte_ops->deactivate(data);
+	}
 }
 
 static int irq_remapping_select(struct irq_domain *d, struct irq_fwspec *fwspec,
@@ -4037,7 +4043,7 @@ static void amd_ir_update_irte(struct irq_data *irqd, struct amd_iommu *iommu,
 	 */
 	iommu->irte_ops->set_affinity(ir_data->entry, irte_info->devid,
 				      irte_info->index, cfg->vector,
-				      cfg->dest_apicid);
+				      cfg->dest_apicid, ir_data);
 }
 
 static int amd_ir_set_affinity(struct irq_data *data,
