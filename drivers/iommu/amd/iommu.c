@@ -508,6 +508,61 @@ static unsigned long check_pte(struct device *dev, unsigned long iova)
 	return spa;
 }
 
+static void amd_iommu_report_rmp_hw_error(volatile u32 *event)
+{
+	struct pci_dev *pdev;
+	struct iommu_dev_data *dev_data = NULL;
+	int devid     = (event[0] >> EVENT_DEVID_SHIFT) & EVENT_DEVID_MASK;
+	int vmg_tag   = (event[1]) & 0xFFFF;
+	int flags     = (event[1] >> EVENT_FLAGS_SHIFT) & EVENT_FLAGS_MASK;
+	u64 spa       = ((u64)event[3] << 32) | (event[2] & 0xFFFFFFF8);
+
+	pdev = pci_get_domain_bus_and_slot(0, PCI_BUS_NUM(devid),
+					   devid & 0xff);
+	if (pdev)
+		dev_data = dev_iommu_priv_get(&pdev->dev);
+
+	if (dev_data && __ratelimit(&dev_data->rs)) {
+		pci_err(pdev, "Event logged [RMP_HW_ERROR devid=0x%04x, vmg_tag=0x%04x, spa=0x%llx, flags=0x%04x]\n",
+			devid, vmg_tag, spa, flags);
+	} else {
+		pr_err_ratelimited("Event logged [RMP_HW_ERROR device=%02x:%02x.%x, vmg_tag=0x%04x, spa=0x%llx, flags=0x%04x]\n",
+			PCI_BUS_NUM(devid), PCI_SLOT(devid), PCI_FUNC(devid),
+			vmg_tag, spa, flags);
+	}
+
+	if (pdev)
+		pci_dev_put(pdev);
+}
+
+static void amd_iommu_report_rmp_fault(volatile u32 *event)
+{
+	struct pci_dev *pdev;
+	struct iommu_dev_data *dev_data = NULL;
+	int devid     = (event[0] >> EVENT_DEVID_SHIFT) & EVENT_DEVID_MASK;
+	int flags_rmp = (event[0] >> EVENT_FLAGS_SHIFT) & 0xFF;
+	int vmg_tag   = (event[1]) & 0xFFFF;
+	int flags     = (event[1] >> EVENT_FLAGS_SHIFT) & EVENT_FLAGS_MASK;
+	u64 gpa       = ((u64)event[3] << 32) | event[2];
+
+	pdev = pci_get_domain_bus_and_slot(0, PCI_BUS_NUM(devid),
+					   devid & 0xff);
+	if (pdev)
+		dev_data = dev_iommu_priv_get(&pdev->dev);
+
+	if (dev_data && __ratelimit(&dev_data->rs)) {
+		pci_err(pdev, "Event logged [RMP_PAGE_FAULT devid=0x%04x, vmg_tag=0x%04x, gpa=0x%llx, flags_rmp=0x%04x, flags=0x%04x]\n",
+			devid, vmg_tag, gpa, flags_rmp, flags);
+	} else {
+		pr_err_ratelimited("Event logged [RMP_PAGE_FAULT device=%02x:%02x.%x, vmg_tag=0x%04x, gpa=0x%llx, flags_rmp=0x%04x, flags=0x%04x]\n",
+			PCI_BUS_NUM(devid), PCI_SLOT(devid), PCI_FUNC(devid),
+			vmg_tag, gpa, flags_rmp, flags);
+	}
+
+	if (pdev)
+		pci_dev_put(pdev);
+}
+
 static void amd_iommu_report_page_fault(u16 devid, u16 domain_id,
 					u64 address, int flags)
 {
@@ -600,6 +655,12 @@ retry:
 		dev_err(dev, "Event logged [INVALID_DEVICE_REQUEST device=%02x:%02x.%x pasid=0x%05x address=0x%llx flags=0x%04x]\n",
 			PCI_BUS_NUM(devid), PCI_SLOT(devid), PCI_FUNC(devid),
 			pasid, address, flags);
+		break;
+	case EVENT_TYPE_RMP_FAULT:
+		amd_iommu_report_rmp_fault(event);
+		break;
+	case EVENT_TYPE_RMP_HW_ERR:
+		amd_iommu_report_rmp_hw_error(event);
 		break;
 	case EVENT_TYPE_INV_PPR_REQ:
 		pasid = PPR_PASID(*((u64 *)__evt));
