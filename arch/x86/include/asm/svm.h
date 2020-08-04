@@ -55,14 +55,20 @@ enum {
 	INTERCEPT_RDPRU,
 };
 
+/* Extended Intercept bits */
+enum {
+       INTERCEPT_INVLPGB = 0,
+       INTERCEPT_INVLPGB_ILLEGAL,
+       INTERCEPT_INVPCID,
+};
 
 struct __attribute__ ((__packed__)) vmcb_control_area {
 	u32 intercept_cr;
 	u32 intercept_dr;
 	u32 intercept_exceptions;
 	u64 intercept;
-	u8 int_invlpgb;
-	u8 reserved_1[39];
+	u32 intercept_extended;
+	u8 reserved_1[36];
 	u16 pause_filter_thresh;
 	u16 pause_filter_count;
 	u64 iopm_base_pa;

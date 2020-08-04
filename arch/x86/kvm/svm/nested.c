@@ -115,6 +115,7 @@ void recalc_intercepts(struct vcpu_svm *svm)
 	c->intercept_dr = h->intercept_dr;
 	c->intercept_exceptions = h->intercept_exceptions;
 	c->intercept = h->intercept;
+	c->intercept_extended = h->intercept_extended;
 
 	if (svm->vcpu.arch.hflags & HF_VINTR_MASK) {
 		/* We only want the cr8 intercept bits of L1 */
@@ -136,6 +137,7 @@ void recalc_intercepts(struct vcpu_svm *svm)
 	c->intercept_dr |= g->intercept_dr;
 	c->intercept_exceptions |= g->intercept_exceptions;
 	c->intercept |= g->intercept;
+	c->intercept_extended |= g->intercept_extended;
 }
 
 static void copy_vmcb_control_area(struct vmcb *dst_vmcb, struct vmcb *from_vmcb)
@@ -147,6 +149,7 @@ static void copy_vmcb_control_area(struct vmcb *dst_vmcb, struct vmcb *from_vmcb
 	dst->intercept_dr         = from->intercept_dr;
 	dst->intercept_exceptions = from->intercept_exceptions;
 	dst->intercept            = from->intercept;
+	dst->intercept_extended   = from->intercept_extended;
 	dst->iopm_base_pa         = from->iopm_base_pa;
 	dst->msrpm_base_pa        = from->msrpm_base_pa;
 	dst->tsc_offset           = from->tsc_offset;
@@ -376,7 +379,8 @@ int nested_svm_vmrun(struct vcpu_svm *svm)
 	trace_kvm_nested_intercepts(nested_vmcb->control.intercept_cr & 0xffff,
 				    nested_vmcb->control.intercept_cr >> 16,
 				    nested_vmcb->control.intercept_exceptions,
-				    nested_vmcb->control.intercept);
+				    nested_vmcb->control.intercept,
+				    nested_vmcb->control.intercept_extended);
 
 	/* Clear internal status */
 	kvm_clear_exception_queue(&svm->vcpu);
