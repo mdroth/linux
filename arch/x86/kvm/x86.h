@@ -366,5 +366,7 @@ int kvm_sev_es_mmio_read(struct kvm_vcpu *vcpu, gpa_t src, unsigned int bytes,
 int kvm_sev_es_string_io(struct kvm_vcpu *vcpu, unsigned int size,
 			 unsigned int port, void *data,  unsigned int count,
 			 int in);
+int kvm_handle_invpcid_types(struct kvm_vcpu *vcpu, gva_t gva,
+			     unsigned long type);
 
 #endif
