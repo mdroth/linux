@@ -55,18 +55,11 @@ static cpumask_var_t of_spin_mask;
 int smp_query_cpu_stopped(unsigned int pcpu)
 {
 	int cpu_status, status;
-	int qcss_tok = rtas_token("query-cpu-stopped-state");
 
-	if (qcss_tok == RTAS_UNKNOWN_SERVICE) {
-		printk_once(KERN_INFO
-			"Firmware doesn't support query-cpu-stopped-state\n");
-		return QCSS_HARDWARE_ERROR;
-	}
-
-	status = rtas_call(qcss_tok, 1, 2, &cpu_status, pcpu);
+	status = rtas_query_cpu_stopped_state(pcpu, &cpu_status);
 	if (status != 0) {
 		printk(KERN_ERR
-		       "RTAS query-cpu-stopped-state failed: %i\n", status);
+		       "rtas_query_cpu_stopped_state failed: %i\n", status);
 		return status;
 	}
 

@@ -1197,3 +1197,39 @@ void rtas_take_timebase(void)
 	timebase = 0;
 	arch_spin_unlock(&timebase_lock);
 }
+
+/**
+ * rtas_query_cpu_stopped_state() - Call RTAS query-cpu-stopped-state.
+ * @hwcpu: Identifies the processor thread to be queried.
+ * @status: Pointer to status, valid only on success.
+ *
+ * Determine whether the given processor thread is in the stopped
+ * state.  If successful and @status is non-NULL, the thread's status
+ * is stored to @status.
+ *
+ * Return:
+ * * 0   - Success
+ * * -1  - Hardware/Firmware error
+ * * -2  - Busy, try again later
+ */
+int rtas_query_cpu_stopped_state(unsigned int hwcpu, unsigned int *status)
+{
+	unsigned int cpu_status;
+	const char *rtas_name = "query-cpu-stopped-state";
+	int fwrc;
+
+	if (!rtas_service_present(rtas_name)) {
+		printk_once(KERN_INFO
+			"Firmware doesn't support %s\n", rtas_name);
+		return -1;
+	}
+
+	fwrc = rtas_call(rtas_token(rtas_name), 1, 2, &cpu_status, hwcpu);
+	if (fwrc != 0)
+		goto out;
+
+	if (status != NULL)
+		*status = cpu_status;
+out:
+	return fwrc;
+}
