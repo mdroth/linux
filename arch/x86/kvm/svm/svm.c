@@ -864,6 +864,11 @@ static __init void svm_set_cpu_caps(void)
 	if (boot_cpu_has(X86_FEATURE_LS_CFG_SSBD) ||
 	    boot_cpu_has(X86_FEATURE_AMD_SSBD))
 		kvm_cpu_cap_set(X86_FEATURE_VIRT_SSBD);
+
+	/* Enable INVPCID if both PCID and INVPCID enabled */
+	if (boot_cpu_has(X86_FEATURE_PCID) &&
+	    boot_cpu_has(X86_FEATURE_INVPCID))
+		kvm_cpu_cap_set(X86_FEATURE_INVPCID);
 }
 
 static __init int svm_hardware_setup(void)
@@ -1157,6 +1162,18 @@ static void init_vmcb(struct vcpu_svm *svm)
 		set_intercept(svm, INTERCEPT_PAUSE);
 	} else {
 		clr_intercept(svm, INTERCEPT_PAUSE);
+	}
+
+	/*
+	 * Intercept INVPCID instruction only if shadow page table is
+	 * enabled. Interception is not required with nested page table
+	 * enabled.
+	 */
+	if (boot_cpu_has(X86_FEATURE_INVPCID)) {
+		if (!npt_enabled)
+			set_extended_intercept(svm, INTERCEPT_INVPCID);
+		else
+			clr_extended_intercept(svm, INTERCEPT_INVPCID);
 	}
 
 	if (kvm_vcpu_apicv_active(&svm->vcpu))
@@ -2931,6 +2948,33 @@ static int mwait_interception(struct vcpu_svm *svm)
 	return nop_interception(svm);
 }
 
+static int invpcid_interception(struct vcpu_svm *svm)
+{
+	struct kvm_vcpu *vcpu = &svm->vcpu;
+	unsigned long type;
+	gva_t gva;
+
+	if (!guest_cpuid_has(vcpu, X86_FEATURE_INVPCID)) {
+		kvm_queue_exception(vcpu, UD_VECTOR);
+		return 1;
+	}
+
+	/*
+	 * For an INVPCID intercept:
+	 * EXITINFO1 provides the linear address of the memory operand.
+	 * EXITINFO2 provides the contents of the register operand.
+	 */
+	type = svm->vmcb->control.exit_info_2;
+	gva = svm->vmcb->control.exit_info_1;
+
+	if (type > 3) {
+		kvm_inject_gp(vcpu, 0);
+		return 1;
+	}
+
+	return kvm_handle_invpcid_types(vcpu,  gva, type);
+}
+
 static int (*const svm_exit_handlers[])(struct vcpu_svm *svm) = {
 	[SVM_EXIT_READ_CR0]			= cr_interception,
 	[SVM_EXIT_READ_CR3]			= cr_interception,
@@ -2993,6 +3037,7 @@ static int (*const svm_exit_handlers[])(struct vcpu_svm *svm) = {
 	[SVM_EXIT_MWAIT]			= mwait_interception,
 	[SVM_EXIT_XSETBV]			= xsetbv_interception,
 	[SVM_EXIT_RDPRU]			= rdpru_interception,
+	[SVM_EXIT_INVPCID]                      = invpcid_interception,
 	[SVM_EXIT_CR0_WRITE_TRAP]		= cr_trap,
 	[SVM_EXIT_CR4_WRITE_TRAP]		= cr_trap,
 	[SVM_EXIT_CR8_WRITE_TRAP]		= cr_trap,
@@ -3798,6 +3843,15 @@ static void svm_cpuid_update(struct kvm_vcpu *vcpu)
 
               best->eax |= (1 << KVM_FEATURE_SEV_LIVE_MIGRATION);
         }
+
+	/* Check again if INVPCID interception if required */
+	if (boot_cpu_has(X86_FEATURE_INVPCID) &&
+	    guest_cpuid_has(vcpu, X86_FEATURE_INVPCID)) {
+		if (!npt_enabled)
+			set_extended_intercept(svm, INTERCEPT_INVPCID);
+		else
+			clr_extended_intercept(svm, INTERCEPT_INVPCID);
+	}
 
 	if (!kvm_vcpu_apicv_active(vcpu))
 		return;

@@ -4,7 +4,6 @@
 
 #include <uapi/asm/svm.h>
 
-
 enum {
 	INTERCEPT_INTR,
 	INTERCEPT_NMI,
