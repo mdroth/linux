@@ -93,6 +93,53 @@ static int pseries_cpu_disable(void)
 	return 0;
 }
 
+static void wait_for_cpu_stopped(unsigned int cpu)
+{
+       unsigned int status;
+       unsigned int hwcpu;
+
+       hwcpu = get_hard_smp_processor_id(cpu);
+
+       while (true) {
+	       int fwrc;
+
+	       do {
+		       fwrc = rtas_query_cpu_stopped_state(hwcpu, &status);
+	       } while (rtas_busy_delay(fwrc));
+
+
+	       if (fwrc != 0) {
+			pr_err_ratelimited("query-cpu-stopped-state for "
+					   "thread 0x%x returned %d\n",
+					   hwcpu, fwrc);
+			goto out;
+	       }
+
+		if (!(status == RTAS_QCSS_STATUS_NOT_STOPPED ||
+		      status == RTAS_QCSS_STATUS_IN_PROGRESS))
+			break;
+
+		/*
+		 * rtas_busy_delay() will yield only if RTAS returns a
+		 * busy status. Since query-cpu-stopped-state can
+		 * yield RTAS_QCSS_STATUS_IN_PROGRESS or
+		 * RTAS_QCSS_STATUS_NOT_STOPPED for an unbounded
+		 * period before the target thread stops, we must take
+		 * care to explicitly reschedule while polling.
+		 */
+		cond_resched();
+       }
+
+       if (status != RTAS_QCSS_STATUS_STOPPED) {
+	       pr_err_ratelimited("query-cpu-stopped-state yielded unknown "
+				  "status %d for thread 0x%x\n",
+				  status, hwcpu);
+       }
+
+out:
+       return;
+}
+
 /*
  * pseries_cpu_die: Wait for the cpu to die.
  * @cpu: logical processor id of the CPU whose death we're awaiting.
@@ -107,23 +154,7 @@ static int pseries_cpu_disable(void)
  */
 static void pseries_cpu_die(unsigned int cpu)
 {
-	int tries;
-	int cpu_status = 1;
-	unsigned int pcpu = get_hard_smp_processor_id(cpu);
-
-	for (tries = 0; tries < 25; tries++) {
-		cpu_status = smp_query_cpu_stopped(pcpu);
-		if (cpu_status == QCSS_STOPPED ||
-		    cpu_status == QCSS_HARDWARE_ERROR)
-			break;
-		cpu_relax();
-
-	}
-
-	if (cpu_status != 0) {
-		printk("Querying DEAD? cpu %i (%i) shows %i\n",
-		       cpu, pcpu, cpu_status);
-	}
+	wait_for_cpu_stopped(cpu);
 
 	/* Isolation and deallocation are definitely done by
 	 * drslot_chrp_cpu.  If they were not they would be

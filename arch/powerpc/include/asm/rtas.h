@@ -371,5 +371,11 @@ void read_24x7_sys_info(void);
 static inline void read_24x7_sys_info(void) { }
 #endif
 
+/* query-cpu-stopped-state CPU_status */
+#define RTAS_QCSS_STATUS_STOPPED     0
+#define RTAS_QCSS_STATUS_IN_PROGRESS 1
+#define RTAS_QCSS_STATUS_NOT_STOPPED 2
+int rtas_query_cpu_stopped_state(unsigned int hwcpu, unsigned int *status);
+
 #endif /* __KERNEL__ */
 #endif /* _POWERPC_RTAS_H */
