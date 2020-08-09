@@ -933,33 +933,32 @@ static void do_kernel_range_flush(void *info)
 int flush_tlb_kernel_range_hw(unsigned long start, unsigned long end,
                               bool global, bool stride)
 {
-	unsigned int g_bit = global ? TLB_HW_VA_INC_GLOBAL : TLB_HW_VA_NON_GLOBAL;
-	unsigned int p_bit = stride ? (1 << TLB_HW_ECX_PAGE_BIT) : 0;
+	unsigned int TLBI_EAX = global ? TLB_HW_VA_INC_GLOBAL : TLB_HW_VA_NON_GLOBAL;
+	//unsigned long max_count = cpuid_edx(0x80000008) & 0xFFFF;
+	unsigned long addr, flags, count = 0, total_count = 0;
+	unsigned long align_start = ALIGN_DOWN(start, PAGE_SIZE);
+	unsigned long align_end = ALIGN(end, PAGE_SIZE);
 	unsigned long max_count = cpuid_edx(0x80000008) & 0xFFFF;
-	unsigned long addr, flags, count, total_count;
 
-	if (!tlb_hw)
-		return 1;
+	printk_once(KERN_INFO "INVLPGB:max_count=%d\n", (int) max_count);
+	if ((align_start + PAGE_SIZE) == align_end)
+		total_count = 1;
+	else
+		total_count = DIV_ROUND_UP(align_end - align_start, PAGE_SIZE);
 
-	total_count = ((end & PAGE_MASK) - (start & PAGE_MASK)) + 1;
-	addr = start & PAGE_MASK;
-
+	preempt_disable();
 	local_irq_save(flags);
-	while (total_count) {
+
+	for (addr = align_start; addr < align_end; addr += (count * PAGE_SIZE), total_count -= count) {
 		count = total_count > max_count ? max_count : total_count;
-
-		if(tlb_hw_insn)
-			printk("INVLPGB\n");
-
-		invlpgb(addr | g_bit, count | p_bit, 0);
-
-		addr += (count * PAGE_SIZE);
-		total_count -= count;
+		invlpgb((addr & PAGE_MASK) | TLBI_EAX, 
+				(count ? count - 1: count) | (stride ? (1 << TLB_HW_ECX_PAGE_BIT) : 0), 
+					0);
+		tlbsync();
 	}
-	if (tlb_hw_insn)
-		printk("TLBSYNC\n");
-	tlbsync();
+
 	local_irq_restore(flags);
+	preempt_enable();
 
 	return 0;
 }
