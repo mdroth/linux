@@ -6817,6 +6817,12 @@
 	vt.underline=	[VT] Default color for underlined text; 0-15.
 			Default: 3 = cyan.
 
+	warn_ud2=	[X86_64 only] Dump stack prior to invoking
+			a UD2 instruction when handling kernel
+			BUG/WARN assertions.
+			Format: off | on
+			default: off
+
 	watchdog timers	[HW,WDT] For information on watchdog timers,
 			see Documentation/watchdog/watchdog-parameters.rst
 			or other driver-specific files in the
