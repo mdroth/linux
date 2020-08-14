@@ -231,3 +231,22 @@ void generic_bug_clear_once(void)
 
 	clear_once_table(__start___bug_table, __stop___bug_table);
 }
+
+
+bool warn_ud2 = false;
+EXPORT_SYMBOL(warn_ud2);
+
+static int __init parse_warn_ud2(char *p)
+{
+	int ret;
+
+        ret = kstrtobool(p, &warn_ud2);
+	if (!ret)
+		printk("amdsos: ud2 warning feature %s\n", warn_ud2 ? "enabled" : "disabled");
+	else
+		printk("amdsos: Error reading warn_ud2 assignment, warn_ud2 disabled");
+
+	return ret;
+}
+early_param("warn_ud2", parse_warn_ud2);
+
