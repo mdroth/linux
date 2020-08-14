@@ -68,10 +68,18 @@ do {									\
 
 #endif /* CONFIG_GENERIC_BUG */
 
+#include <linux/kernel.h>
+
+extern bool warn_ud2;
+
 #define HAVE_ARCH_BUG
 #define BUG()							\
 do {								\
 	instrumentation_begin();				\
+	if (warn_ud2) {						\
+		printk("%s %s %d: in BUG: dumping stack, then UD2\n", __FILE__, __func__, __LINE__);	\
+		dump_stack();					\
+	}							\
 	_BUG_FLAGS(ASM_UD2, 0);					\
 	unreachable();						\
 } while (0)
@@ -85,6 +93,10 @@ do {								\
 #define __WARN_FLAGS(flags)					\
 do {								\
 	instrumentation_begin();				\
+	if (warn_ud2) {						\
+		printk("%s %s %d: in WARN: dumping stack, then UD2\n", __FILE__, __func__, __LINE__);	\
+		dump_stack();					\
+	}							\
 	_BUG_FLAGS(ASM_UD2, BUGFLAG_WARNING|(flags));		\
 	annotate_reachable();					\
 	instrumentation_end();					\
