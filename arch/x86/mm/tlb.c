@@ -930,17 +930,23 @@ static void do_kernel_range_flush(void *info)
 #define TLB_HW_VA_NON_GLOBAL 0x01
 #define TLB_HW_ECX_PAGE_BIT 31
 
+static unsigned long amd_invlpgb_max_count = 0;
+
 int flush_tlb_kernel_range_hw(unsigned long start, unsigned long end,
                               bool global, bool stride)
 {
 	unsigned int TLBI_EAX = global ? TLB_HW_VA_INC_GLOBAL : TLB_HW_VA_NON_GLOBAL;
-	//unsigned long max_count = cpuid_edx(0x80000008) & 0xFFFF;
 	unsigned long addr, flags, count = 0, total_count = 0;
 	unsigned long align_start = ALIGN_DOWN(start, PAGE_SIZE);
 	unsigned long align_end = ALIGN(end, PAGE_SIZE);
-	unsigned long max_count = cpuid_edx(0x80000008) & 0xFFFF;
 
-	printk_once(KERN_INFO "INVLPGB:max_count=%d\n", (int) max_count);
+	if ( 0 == amd_invlpgb_max_count ) {
+		/* compute cpuid_edx only first time this function is executed
+		 */
+		amd_invlpgb_max_count = cpuid_edx(0x80000008) & 0xFFFF;
+	}
+
+	printk_once(KERN_INFO "INVLPGB:max_count=%d\n", (int) amd_invlpgb_max_count);
 	if ((align_start + PAGE_SIZE) == align_end)
 		total_count = 1;
 	else
@@ -950,7 +956,7 @@ int flush_tlb_kernel_range_hw(unsigned long start, unsigned long end,
 	local_irq_save(flags);
 
 	for (addr = align_start; addr < align_end; addr += (count * PAGE_SIZE), total_count -= count) {
-		count = total_count > max_count ? max_count : total_count;
+		count = total_count > amd_invlpgb_max_count ? amd_invlpgb_max_count : total_count;
 		invlpgb((addr & PAGE_MASK) | TLBI_EAX, 
 				(count ? count - 1: count) | (stride ? (1 << TLB_HW_ECX_PAGE_BIT) : 0), 
 					0);

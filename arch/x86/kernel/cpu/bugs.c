@@ -42,6 +42,7 @@ static void __init mds_select_mitigation(void);
 static void __init mds_print_mitigation(void);
 static void __init taa_select_mitigation(void);
 static void __init srbds_select_mitigation(void);
+static void __init psf_select_mitigation(void);
 
 /* The base value of the SPEC_CTRL MSR that always has to be preserved. */
 u64 x86_spec_ctrl_base;
@@ -106,6 +107,7 @@ void __init check_bugs(void)
 	spectre_v1_select_mitigation();
 	spectre_v2_select_mitigation();
 	ssb_select_mitigation();
+	psf_select_mitigation();
 	l1tf_select_mitigation();
 	mds_select_mitigation();
 	taa_select_mitigation();
@@ -1056,6 +1058,7 @@ void cpu_bugs_smt_update(void)
 #define pr_fmt(fmt)	"Speculative Store Bypass: " fmt
 
 static enum ssb_mitigation ssb_mode __ro_after_init = SPEC_STORE_BYPASS_NONE;
+static enum psf_mitigation psf_mode __ro_after_init = PREDICTIVE_STORE_FORWARD_NONE;
 
 /* The kernel command line selection */
 enum ssb_mitigation_cmd {
@@ -1066,11 +1069,22 @@ enum ssb_mitigation_cmd {
 	SPEC_STORE_BYPASS_CMD_SECCOMP,
 };
 
+/* the kernel command line selection for PSF */
+enum psf_mitigation_cmd {
+	PREDICTIVE_STORE_FORWARD_CMD_NONE,
+	PREDICTIVE_STORE_FORWARD_CMD_ON,
+};
+
 static const char * const ssb_strings[] = {
 	[SPEC_STORE_BYPASS_NONE]	= "Vulnerable",
 	[SPEC_STORE_BYPASS_DISABLE]	= "Mitigation: Speculative Store Bypass disabled",
 	[SPEC_STORE_BYPASS_PRCTL]	= "Mitigation: Speculative Store Bypass disabled via prctl",
 	[SPEC_STORE_BYPASS_SECCOMP]	= "Mitigation: Speculative Store Bypass disabled via prctl and seccomp",
+};
+
+static const char* const psf_strings[] = {
+	[PREDICTIVE_STORE_FORWARD_NONE] = "Vulnerable",
+	[PREDICTIVE_STORE_FORWARD_DISABLE] = "Mitigation : Predictive store forwarding disabled",
 };
 
 static const struct {
@@ -1082,6 +1096,14 @@ static const struct {
 	{ "off",	SPEC_STORE_BYPASS_CMD_NONE },    /* Don't touch Speculative Store Bypass */
 	{ "prctl",	SPEC_STORE_BYPASS_CMD_PRCTL },   /* Disable Speculative Store Bypass via prctl */
 	{ "seccomp",	SPEC_STORE_BYPASS_CMD_SECCOMP }, /* Disable Speculative Store Bypass via prctl and seccomp */
+};
+
+static const struct {
+	const char* psf_cmd_option;
+	enum psf_mitigation_cmd psf_cmd;
+} psf_mitigation_options[] __initconst = {
+		{"off",   PREDICTIVE_STORE_FORWARD_CMD_NONE },
+		{"on",    PREDICTIVE_STORE_FORWARD_CMD_ON},
 };
 
 static enum ssb_mitigation_cmd __init ssb_parse_cmdline(void)
@@ -1192,6 +1214,121 @@ static void ssb_select_mitigation(void)
 
 	if (boot_cpu_has_bug(X86_BUG_SPEC_STORE_BYPASS))
 		pr_info("%s\n", ssb_strings[ssb_mode]);
+}
+
+static enum psf_mitigation_cmd __init psf_parse_cmdline(void)
+{
+	enum psf_mitigation_cmd cmd = PREDICTIVE_STORE_FORWARD_CMD_NONE;
+	char arg[20];
+	int ret, i;
+
+	if (cmdline_find_option_bool(boot_command_line, "nopredictive_store_forward_disable") ||
+		cpu_mitigations_off()) {
+		return cmd;
+	}
+	else {
+		ret = cmdline_find_option(boot_command_line, "predictive_store_forward_disable",
+			arg, sizeof(arg));
+		if (ret < 0)
+			return PREDICTIVE_STORE_FORWARD_CMD_NONE;
+
+		for (i = 0; i < ARRAY_SIZE(psf_mitigation_options); i++) {
+			if (!match_option(arg, ret, psf_mitigation_options[i].psf_cmd_option))
+				continue;
+
+			cmd = psf_mitigation_options[i].psf_cmd;
+			break;
+		}
+
+		if (i >= ARRAY_SIZE(psf_mitigation_options)) {
+			pr_err("unknown option (%s). Switching to NONE\n", arg);
+			return PREDICTIVE_STORE_FORWARD_CMD_NONE;
+		}
+	}
+
+	return cmd;
+}
+
+static enum psf_mitigation __init __psf_select_mitigation(void)
+{
+	enum psf_mitigation mode = PREDICTIVE_STORE_FORWARD_NONE;
+	enum psf_mitigation_cmd cmd;
+
+	if (!boot_cpu_has(X86_FEATURE_SSBD)) {
+		pr_info("[RK] __psf_select_mitigation. CPU does not have X86_FEATURE_SSBD returning%d\n", mode);
+		return mode;
+	}
+	else {
+		pr_info("[RK] __psf_select_mitigation. CPU has X86_FEATURE_SSBD\n");
+	}
+
+	pr_info("[RK] parsing psf commandline\n");
+	cmd = psf_parse_cmdline();
+	pr_info("[RK] parsing psf commandline cmd=%d\n", cmd);
+	if (!boot_cpu_has_bug(X86_BUG_SPEC_STORE_BYPASS) &&
+		(cmd == PREDICTIVE_STORE_FORWARD_CMD_NONE) ){
+		pr_info("[RK] Returning mode=%d\n", mode);
+		return mode;
+	}
+
+	switch (cmd) {
+	case PREDICTIVE_STORE_FORWARD_CMD_NONE:
+		mode = PREDICTIVE_STORE_FORWARD_NONE;
+		break;
+	case PREDICTIVE_STORE_FORWARD_CMD_ON:
+		mode = PREDICTIVE_STORE_FORWARD_DISABLE;
+		break;
+	}
+
+	/*
+	 * If SSBD is controlled by the SPEC_CTRL MSR, then set the proper
+	 * bit in the mask to allow guests to use the mitigation even in the
+	 * case where the host does not enable it.
+	 */
+	if (static_cpu_has(X86_FEATURE_AMD_PSFD)) {
+		x86_spec_ctrl_mask |= SPEC_CTRL_PSFD;
+		pr_info("[RK]AMD CPU has PSFD 0x%llx\n", x86_spec_ctrl_mask);
+	}
+
+	/*
+	 * We have three CPU feature flags that are in play here:
+	 *  - X86_BUG_SPEC_STORE_BYPASS - CPU is susceptible.
+	 *  - X86_FEATURE_SSBD - CPU is able to turn off speculative store bypass
+	 *  - X86_FEATURE_SPEC_STORE_BYPASS_DISABLE - engage the mitigation
+	 */
+	if (mode == PREDICTIVE_STORE_FORWARD_DISABLE) {
+		setup_force_cpu_cap(X86_FEATURE_SPEC_STORE_BYPASS_DISABLE);
+		/*
+		 * Intel uses the SPEC CTRL MSR Bit(2) for this, while AMD may
+		 * use a completely different MSR and bit dependent on family.
+		 */
+		if (!static_cpu_has(X86_FEATURE_SPEC_CTRL_SSBD) &&
+			!static_cpu_has(X86_FEATURE_AMD_SSBD)) {
+			pr_info("[RK] calling x86_amd_ssb_disable\n");
+			x86_amd_ssb_disable();
+		}
+		else {
+			x86_spec_ctrl_base |= SPEC_CTRL_PSFD;
+			pr_info("[RK] writing 0x%llx to MSR:0x%x\n",
+					x86_spec_ctrl_base,
+					MSR_IA32_SPEC_CTRL
+			       );
+			wrmsrl(MSR_IA32_SPEC_CTRL, x86_spec_ctrl_base);
+		}
+	}
+
+	pr_info("<====[RK] returning mode=%d\n", mode);
+	return mode;
+}
+
+static void psf_select_mitigation(void)
+{
+	pr_info("[RK] psf_select_mitigation\n");
+	psf_mode = __psf_select_mitigation();
+
+	/* if CPU has SPEC_STORE_BYPASS it also has PSF */
+	if (boot_cpu_has_bug(X86_BUG_SPEC_STORE_BYPASS))
+		pr_info("[RK]%s\n", psf_strings[psf_mode]);
 }
 
 #undef pr_fmt

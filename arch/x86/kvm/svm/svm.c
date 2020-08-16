@@ -1032,6 +1032,35 @@ static u64 svm_write_l1_tsc_offset(struct kvm_vcpu *vcpu, u64 offset)
 	return svm->vmcb->control.tsc_offset;
 }
 
+static
+void
+enable_invlpgb_in_sev_guest(struct vcpu_svm *svm)
+{
+	struct vmcb_control_area *control = &svm->vmcb->control;
+	bool bVMCBBitPresent = false;
+
+        bVMCBBitPresent = boot_cpu_has(	X86_FEATURE_VMCB_TLBI_ENABLE );
+
+	/* if the VMCB control is defined */
+	if ( bVMCBBitPresent )
+	{
+		printk_once(KERN_INFO "enable_invlpgb_in_sev_guest. VMCB control defined\n");
+		/* Set the VMCB bit */
+		control->nested_ctl |= SVM_NESTED_CTL_GUEST_INVLPGB_ENABLE;
+		printk_once(KERN_INFO "enable_invlpgb_in-sev_guest. VMCB control offset 0x90 bit 7 is set\n");
+	}
+	else {
+		printk_once(KERN_INFO "enable_invlpgb_in_sev_guest. VMCB control not defined\n");
+		return;
+	}
+
+	/*
+	 *Since INVLPGB is only enabled in sev, sev-es and SNP guests
+	 * which all enjoy global ASID, we have no need to intercept
+	 * INVLPGB or TLBSYNC
+	 */
+}
+
 static void init_vmcb(struct vcpu_svm *svm)
 {
 	struct vmcb_control_area *control = &svm->vmcb->control;
@@ -1088,9 +1117,6 @@ static void init_vmcb(struct vcpu_svm *svm)
 	set_intercept(svm, INTERCEPT_XSETBV);
 	set_intercept(svm, INTERCEPT_RDPRU);
 	set_intercept(svm, INTERCEPT_RSM);
-
-	/* Intercept INVLPGB instruction */
-	control->intercept_extended |= (1ULL << 0);
 
 	if (!kvm_mwait_in_guest(svm->vcpu.kvm)) {
 		set_intercept(svm, INTERCEPT_MONITOR);
@@ -1203,6 +1229,8 @@ static void init_vmcb(struct vcpu_svm *svm)
 			/* Perform SEV-ES specific VMCB updates */
 			sev_es_init_vmcb(svm);
 		}
+		/* enable invlpgb and tlbsync for guests only if they are sev and higher*/
+		enable_invlpgb_in_sev_guest(svm);
 	}
 
 	mark_all_dirty(svm->vmcb);
