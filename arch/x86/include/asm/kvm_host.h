@@ -1279,6 +1279,8 @@ struct kvm_x86_ops {
 				   unsigned long val);
 
 	bool (*allow_debug)(struct kvm *kvm);
+
+	void (*vcpu_deliver_sipi_vector)(struct kvm_vcpu *vcpu, u8 vector);
 };
 
 struct kvm_x86_nested_ops {

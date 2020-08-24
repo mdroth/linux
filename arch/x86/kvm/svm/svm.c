@@ -4284,6 +4284,11 @@ static bool svm_allow_debug(struct kvm *kvm)
 	return !sev_es_guest(kvm);
 }
 
+static void svm_vcpu_deliver_sipi_vector(struct kvm_vcpu *vcpu, u8 vector)
+{
+	sev_vcpu_deliver_sipi_vector(vcpu, vector);
+}
+
 static void svm_vm_destroy(struct kvm *kvm)
 {
 	avic_vm_destroy(kvm);
@@ -4428,6 +4433,8 @@ static struct kvm_x86_ops svm_x86_ops __initdata = {
 	.reg_write_override = svm_reg_write_override,
 
 	.allow_debug = svm_allow_debug,
+
+	.vcpu_deliver_sipi_vector = svm_vcpu_deliver_sipi_vector,
 };
 
 static struct kvm_x86_init_ops svm_init_ops __initdata = {

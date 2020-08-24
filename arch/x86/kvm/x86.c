@@ -9735,6 +9735,15 @@ void kvm_vcpu_deliver_sipi_vector(struct kvm_vcpu *vcpu, u8 vector)
 {
 	struct kvm_segment cs;
 
+	/*
+	 * For SEV-ES, the register state can't be altered by KVM. If the VMSA
+	 * is encrypted, call the vcpu_deliver_sipi_vector() x86 op.
+	 */
+	if (vcpu->arch.vmsa_encrypted) {
+		kvm_x86_ops.vcpu_deliver_sipi_vector(vcpu, vector);
+		return;
+	}
+
 	kvm_get_segment(vcpu, &cs, VCPU_SREG_CS);
 	cs.selector = vector << 8;
 	cs.base = vector << 12;
