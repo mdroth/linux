@@ -1466,6 +1466,18 @@ static int set_efer(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	return 0;
 }
 
+int kvm_track_efer(struct kvm_vcpu *vcpu, u64 efer)
+{
+	struct msr_data msr_info;
+
+	msr_info.host_initiated = false;
+	msr_info.index = MSR_EFER;
+	msr_info.data = efer;
+
+	return set_efer(vcpu, &msr_info);
+}
+EXPORT_SYMBOL_GPL(kvm_track_efer);
+
 void kvm_enable_efer_bits(u64 mask)
 {
        efer_reserved_bits &= ~mask;
