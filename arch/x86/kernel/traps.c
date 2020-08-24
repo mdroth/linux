@@ -43,6 +43,7 @@
 #include <asm/stacktrace.h>
 #include <asm/processor.h>
 #include <asm/debugreg.h>
+#include <asm/realmode.h>
 #include <asm/text-patching.h>
 #include <asm/ftrace.h>
 #include <asm/traps.h>
@@ -677,6 +678,56 @@ asmlinkage __visible noinstr struct pt_regs *sync_regs(struct pt_regs *eregs)
 		*regs = *eregs;
 	return regs;
 }
+
+#ifdef CONFIG_AMD_MEM_ENCRYPT
+asmlinkage __visible noinstr struct pt_regs *vc_switch_off_ist(struct pt_regs *eregs)
+{
+	unsigned long sp, *stack;
+	struct stack_info info;
+	struct pt_regs *regs;
+
+	/*
+	 * In the SYSCALL entry path the RSP value comes from user-space - don't
+	 * trust it and switch to the current kernel stack
+	 */
+	if (eregs->ip >= (unsigned long)entry_SYSCALL_64 &&
+	    eregs->ip <  (unsigned long)entry_SYSCALL_64_safe_stack) {
+		sp = this_cpu_read(cpu_current_top_of_stack);
+		goto sync;
+	}
+
+	/*
+	 * From here on the the RSP value is trusted - more RSP sanity checks
+	 * need to happen above.
+	 *
+	 * Check whether entry happened from a safe stack.
+	 */
+	sp    = eregs->sp;
+	stack = (unsigned long *)sp;
+	get_stack_info_noinstr(stack, current, &info);
+
+	/*
+	 * Don't sync to entry stack or other unknown stacks - use the fall-back
+	 * stack instead.
+	 */
+	if (info.type == STACK_TYPE_UNKNOWN || info.type == STACK_TYPE_ENTRY ||
+	    info.type >= STACK_TYPE_EXCEPTION_LAST)
+		sp = __this_cpu_ist_top_va(VC2);
+
+sync:
+	/*
+	 * Found a safe stack - switch to it as if the entry didn't happen via
+	 * IST stack. The code below only copies pt_regs, the real switch happens
+	 * in assembly code.
+	 */
+	sp = ALIGN_DOWN(sp, 8) - sizeof(*regs);
+
+	regs = (struct pt_regs *)sp;
+	*regs = *eregs;
+
+	return regs;
+}
+#endif
 
 struct bad_iret_stack {
 	void *error_entry_ret;
