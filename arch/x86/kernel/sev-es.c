@@ -56,11 +56,13 @@ static void __init sev_es_setup_vc_stacks(int cpu)
 {
 	struct sev_es_runtime_data *data;
 	struct cpu_entry_area *cea;
+	struct tss_struct *tss;
 	unsigned long vaddr;
 	phys_addr_t pa;
 
 	data = per_cpu(runtime_data, cpu);
 	cea  = get_cpu_entry_area(cpu);
+	tss  = per_cpu_ptr(&cpu_tss_rw, cpu);
 
 	/* Map #VC IST stack */
 	vaddr = CEA_ESTACK_BOT(&cea->estacks, VC);
@@ -71,6 +73,9 @@ static void __init sev_es_setup_vc_stacks(int cpu)
 	vaddr = CEA_ESTACK_BOT(&cea->estacks, VC2);
 	pa    = __pa(data->fallback_stack);
 	cea_set_pte((void *)vaddr, pa, PAGE_KERNEL);
+
+	/* Set IST entry in TSS */
+	tss->x86_tss.ist[IST_INDEX_VC] = CEA_ESTACK_TOP(&cea->estacks, VC);
 }
 
 /* Needed in vc_early_forward_exception */
