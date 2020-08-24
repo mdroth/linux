@@ -3608,9 +3608,11 @@ static __no_kcsan fastpath_t svm_vcpu_run(struct kvm_vcpu *vcpu)
 	fastpath_t exit_fastpath;
 	struct vcpu_svm *svm = to_svm(vcpu);
 
-	svm_rax_write(svm, vcpu->arch.regs[VCPU_REGS_RAX]);
-	svm_rsp_write(svm, vcpu->arch.regs[VCPU_REGS_RSP]);
-	svm_rip_write(svm, vcpu->arch.regs[VCPU_REGS_RIP]);
+	if (!sev_es_guest(svm->vcpu.kvm)) {
+		svm_rax_write(svm, vcpu->arch.regs[VCPU_REGS_RAX]);
+		svm_rsp_write(svm, vcpu->arch.regs[VCPU_REGS_RSP]);
+		svm_rip_write(svm, vcpu->arch.regs[VCPU_REGS_RIP]);
+	}
 
 	/*
 	 * Disable singlestep if we're injecting an interrupt/exception.
@@ -3632,7 +3634,8 @@ static __no_kcsan fastpath_t svm_vcpu_run(struct kvm_vcpu *vcpu)
 
 	sync_lapic_to_cr8(vcpu);
 
-	svm_cr2_write(svm, vcpu->arch.cr2);
+	if (!sev_es_guest(svm->vcpu.kvm))
+		svm_cr2_write(svm, vcpu->arch.cr2);
 
 	/*
 	 * Run with all-zero DR6 unless needed, so that we can get the exact cause
@@ -3660,16 +3663,20 @@ static __no_kcsan fastpath_t svm_vcpu_run(struct kvm_vcpu *vcpu)
 	 */
 	x86_spec_ctrl_set_guest(svm->spec_ctrl, svm->virt_spec_ctrl);
 
-	__svm_vcpu_run(svm->vmcb_pa, (unsigned long *)&svm->vcpu.arch.regs);
+	if (sev_es_guest(svm->vcpu.kvm)) {
+		__svm_sev_es_vcpu_run(svm->vmcb_pa);
+	} else {
+		__svm_vcpu_run(svm->vmcb_pa, (unsigned long *)&svm->vcpu.arch.regs);
 
 #ifdef CONFIG_X86_64
-	wrmsrl(MSR_GS_BASE, svm->host.gs_base);
+		wrmsrl(MSR_GS_BASE, svm->host.gs_base);
 #else
-	loadsegment(fs, svm->host.fs);
+		loadsegment(fs, svm->host.fs);
 #ifndef CONFIG_X86_32_LAZY_GS
-	loadsegment(gs, svm->host.gs);
+		loadsegment(gs, svm->host.gs);
 #endif
 #endif
+	}
 
 	/*
 	 * We do not use IBRS in the kernel. If this vCPU has used the
@@ -3689,14 +3696,17 @@ static __no_kcsan fastpath_t svm_vcpu_run(struct kvm_vcpu *vcpu)
 	if (unlikely(!msr_write_intercepted(vcpu, MSR_IA32_SPEC_CTRL)))
 		svm->spec_ctrl = native_read_msr(MSR_IA32_SPEC_CTRL);
 
-	reload_tss(vcpu);
+	if (!sev_es_guest(svm->vcpu.kvm))
+		reload_tss(vcpu);
 
 	x86_spec_ctrl_restore_host(svm->spec_ctrl, svm->virt_spec_ctrl);
 
-	vcpu->arch.cr2 = svm_cr2_read(svm);
-	vcpu->arch.regs[VCPU_REGS_RAX] = svm_rax_read(svm);
-	vcpu->arch.regs[VCPU_REGS_RSP] = svm_rsp_read(svm);
-	vcpu->arch.regs[VCPU_REGS_RIP] = svm_rip_read(svm);
+	if (!sev_es_guest(svm->vcpu.kvm)) {
+		vcpu->arch.cr2 = svm_cr2_read(svm);
+		vcpu->arch.regs[VCPU_REGS_RAX] = svm_rax_read(svm);
+		vcpu->arch.regs[VCPU_REGS_RSP] = svm_rsp_read(svm);
+		vcpu->arch.regs[VCPU_REGS_RIP] = svm_rip_read(svm);
+	}
 
 	if (unlikely(svm->vmcb->control.exit_code == SVM_EXIT_NMI))
 		kvm_before_interrupt(&svm->vcpu);
