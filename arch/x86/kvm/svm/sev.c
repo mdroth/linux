@@ -1540,3 +1540,57 @@ void sev_vcpu_deliver_sipi_vector(struct kvm_vcpu *vcpu, u8 vector)
 	ghcb_set_sw_exit_info_2(svm->ghcb, 1);
 	svm->ap_hlt_loop = false;
 }
+
+void sev_es_init_vmcb(struct vcpu_svm *svm)
+{
+	svm->vmcb->control.nested_ctl |= SVM_NESTED_CTL_SEV_ES_ENABLE;
+	svm->vmcb->control.virt_ext |= LBR_CTL_ENABLE_MASK;
+
+	/*
+	 * An SEV-ES guest requires a VMSA area that is a separate from the
+	 * VMCB page. Do not include the encryption mask on the VMSA physical
+	 * address since hardware will access it using the guest key.
+	 */
+	svm->vmcb->control.vmsa_pa = __pa(svm->vmsa);
+
+	/* Can't intercept CR register access, HV can't modify CR registers */
+	clr_cr_intercept(svm, INTERCEPT_CR0_READ);
+	clr_cr_intercept(svm, INTERCEPT_CR4_READ);
+	clr_cr_intercept(svm, INTERCEPT_CR8_READ);
+	clr_cr_intercept(svm, INTERCEPT_CR0_WRITE);
+	clr_cr_intercept(svm, INTERCEPT_CR4_WRITE);
+	clr_cr_intercept(svm, INTERCEPT_CR8_WRITE);
+
+	clr_intercept(svm, INTERCEPT_SELECTIVE_CR0);
+
+	/* Track EFER/CR register changes */
+	set_intercept(svm, TRAP_EFER_WRITE);
+	set_intercept(svm, TRAP_CR0_WRITE);
+	set_intercept(svm, TRAP_CR4_WRITE);
+	set_intercept(svm, TRAP_CR8_WRITE);
+
+	/* No support for enable_vmware_backdoor */
+	clr_exception_intercept(svm, GP_VECTOR);
+
+	/* Can't intercept XSETBV, HV can't modify XCR0 directly */
+	clr_intercept(svm, INTERCEPT_XSETBV);
+
+	/* Clear intercepts on selected MSRs */
+	set_msr_interception(svm->msrpm, MSR_EFER, 1, 1);
+	set_msr_interception(svm->msrpm, MSR_IA32_CR_PAT, 1, 1);
+	set_msr_interception(svm->msrpm, MSR_IA32_LASTBRANCHFROMIP, 1, 1);
+	set_msr_interception(svm->msrpm, MSR_IA32_LASTBRANCHTOIP, 1, 1);
+	set_msr_interception(svm->msrpm, MSR_IA32_LASTINTFROMIP, 1, 1);
+	set_msr_interception(svm->msrpm, MSR_IA32_LASTINTTOIP, 1, 1);
+}
+
+void sev_es_create_vcpu(struct vcpu_svm *svm)
+{
+	/*
+	 * Set the GHCB MSR value as per the GHCB specification when creating
+	 * a vCPU for an SEV-ES guest.
+	 */
+	set_ghcb_msr(svm, GHCB_MSR_SEV_INFO(GHCB_VERSION_MAX,
+					    GHCB_VERSION_MIN,
+					    sev_enc_bit));
+}
