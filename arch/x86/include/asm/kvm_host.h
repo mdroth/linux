@@ -829,6 +829,9 @@ struct kvm_vcpu_arch {
 
 	/* AMD MSRC001_0015 Hardware Configuration */
 	u64 msr_hwcr;
+
+	/* SEV-ES support */
+	bool vmsa_encrypted;
 };
 
 struct kvm_lpage_info {
@@ -1269,6 +1272,10 @@ struct kvm_x86_ops {
 	int (*enable_direct_tlbflush)(struct kvm_vcpu *vcpu);
 
 	void (*migrate_timers)(struct kvm_vcpu *vcpu);
+
+	void (*reg_read_override)(struct kvm_vcpu *vcpu, enum kvm_reg reg);
+	void (*reg_write_override)(struct kvm_vcpu *vcpu, enum kvm_reg reg,
+				   unsigned long val);
 };
 
 struct kvm_x86_nested_ops {

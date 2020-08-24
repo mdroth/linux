@@ -1160,6 +1160,7 @@ static int svm_create_vcpu(struct kvm_vcpu *vcpu)
 	struct page *msrpm_pages;
 	struct page *hsave_page;
 	struct page *nested_msrpm_pages;
+	struct page *vmsa_page = NULL;
 	int err;
 
 	BUILD_BUG_ON(offsetof(struct vcpu_svm, vcpu) != 0);
@@ -1182,9 +1183,19 @@ static int svm_create_vcpu(struct kvm_vcpu *vcpu)
 	if (!hsave_page)
 		goto free_page3;
 
+	if (sev_es_guest(svm->vcpu.kvm)) {
+		/*
+		 * SEV-ES guests require a separate VMSA page used to contain
+		 * the encrypted register state of the guest.
+		 */
+		vmsa_page = alloc_page(GFP_KERNEL);
+		if (!vmsa_page)
+			goto free_page4;
+	}
+
 	err = avic_init_vcpu(svm);
 	if (err)
-		goto free_page4;
+		goto free_page5;
 
 	/* We initialize this flag to true to make sure that the is_running
 	 * bit would be set the first time the vcpu is loaded.
@@ -1204,6 +1215,12 @@ static int svm_create_vcpu(struct kvm_vcpu *vcpu)
 	svm->vmcb = page_address(page);
 	clear_page(svm->vmcb);
 	svm->vmcb_pa = __sme_set(page_to_pfn(page) << PAGE_SHIFT);
+
+	if (vmsa_page) {
+		svm->vmsa = page_address(vmsa_page);
+		clear_page(svm->vmsa);
+	}
+
 	svm->asid_generation = 0;
 	init_vmcb(svm);
 
@@ -1212,6 +1229,9 @@ static int svm_create_vcpu(struct kvm_vcpu *vcpu)
 
 	return 0;
 
+free_page5:
+	if (vmsa_page)
+		__free_page(vmsa_page);
 free_page4:
 	__free_page(hsave_page);
 free_page3:
@@ -1242,6 +1262,26 @@ static void svm_free_vcpu(struct kvm_vcpu *vcpu)
 	 * vmcb page recorded as its current vmcb.
 	 */
 	svm_clear_current_vmcb(svm->vmcb);
+
+	if (sev_es_guest(vcpu->kvm)) {
+		struct kvm_sev_info *sev = &to_kvm_svm(vcpu->kvm)->sev_info;
+
+		if (vcpu->arch.vmsa_encrypted) {
+			u64 page_to_flush;
+
+			/*
+			 * The VMSA page was used by hardware to hold guest
+			 * encrypted state, be sure to flush it before returning
+			 * it to the system. This is done using the VM Page
+			 * Flush MSR (which takes the page virtual address and
+			 * guest ASID).
+			 */
+			page_to_flush = (u64)svm->vmsa | sev->asid;
+			wrmsrl(MSR_AMD64_VM_PAGE_FLUSH, page_to_flush);
+		}
+
+		__free_page(virt_to_page(svm->vmsa));
+	}
 
 	__free_page(pfn_to_page(__sme_clr(svm->vmcb_pa) >> PAGE_SHIFT));
 	__free_pages(virt_to_page(svm->msrpm), MSRPM_ALLOC_ORDER);
@@ -3949,6 +3989,102 @@ static bool svm_apic_init_signal_blocked(struct kvm_vcpu *vcpu)
 		   (svm->vmcb->control.intercept & (1ULL << INTERCEPT_INIT));
 }
 
+/*
+ * These return values represent the offset in quad words within the VM save
+ * area. This allows them to be accessed by casting the save area to a u64
+ * array.
+ */
+#define VMSA_REG_ENTRY(_field)	 offsetof(struct vmcb_save_area, _field) / 8
+#define VMSA_REG_UNDEF		 VMSA_REG_ENTRY(valid_bitmap)
+static inline unsigned int vcpu_to_vmsa_entry(enum kvm_reg reg)
+{
+	switch (reg) {
+	case VCPU_REGS_RAX:	return VMSA_REG_ENTRY(rax);
+	case VCPU_REGS_RBX:	return VMSA_REG_ENTRY(rbx);
+	case VCPU_REGS_RCX:	return VMSA_REG_ENTRY(rcx);
+	case VCPU_REGS_RDX:	return VMSA_REG_ENTRY(rdx);
+	case VCPU_REGS_RSP:	return VMSA_REG_ENTRY(rsp);
+	case VCPU_REGS_RBP:	return VMSA_REG_ENTRY(rbp);
+	case VCPU_REGS_RSI:	return VMSA_REG_ENTRY(rsi);
+	case VCPU_REGS_RDI:	return VMSA_REG_ENTRY(rdi);
+#ifdef CONFIG_X86_64
+	case VCPU_REGS_R8:	return VMSA_REG_ENTRY(r8);
+	case VCPU_REGS_R9:	return VMSA_REG_ENTRY(r9);
+	case VCPU_REGS_R10:	return VMSA_REG_ENTRY(r10);
+	case VCPU_REGS_R11:	return VMSA_REG_ENTRY(r11);
+	case VCPU_REGS_R12:	return VMSA_REG_ENTRY(r12);
+	case VCPU_REGS_R13:	return VMSA_REG_ENTRY(r13);
+	case VCPU_REGS_R14:	return VMSA_REG_ENTRY(r14);
+	case VCPU_REGS_R15:	return VMSA_REG_ENTRY(r15);
+#endif
+	case VCPU_REGS_RIP:	return VMSA_REG_ENTRY(rip);
+	default:
+		WARN_ONCE(1, "unsupported VCPU to VMSA register conversion\n");
+		return VMSA_REG_UNDEF;
+	}
+}
+
+/* For SEV-ES guests, populate the vCPU register from the appropriate VMSA */
+static void svm_reg_read_override(struct kvm_vcpu *vcpu, enum kvm_reg reg)
+{
+	struct vmcb_save_area *vmsa;
+	struct vcpu_svm *svm;
+	unsigned int entry;
+	unsigned long val;
+	u64 *vmsa_reg;
+
+	if (!sev_es_guest(vcpu->kvm))
+		return;
+
+	entry = vcpu_to_vmsa_entry(reg);
+	if (entry == VMSA_REG_UNDEF)
+		return;
+
+	svm = to_svm(vcpu);
+	vmsa = get_vmsa(svm);
+	vmsa_reg = (u64 *)vmsa;
+	val = (unsigned long)vmsa_reg[entry];
+
+	/* If a GHCB is mapped, checked the bitmap of valid entries */
+	if (svm->ghcb) {
+		unsigned int index = entry / 8;
+		unsigned int shift = entry % 8;
+
+		if (!(vmsa->valid_bitmap[index] & BIT(shift)))
+			val = 0;
+	}
+
+	vcpu->arch.regs[reg] = val;
+}
+
+/* For SEV-ES guests, set the vCPU register in the appropriate VMSA */
+static void svm_reg_write_override(struct kvm_vcpu *vcpu, enum kvm_reg reg,
+				   unsigned long val)
+{
+	struct vmcb_save_area *vmsa;
+	struct vcpu_svm *svm;
+	unsigned int entry;
+	u64 *vmsa_reg;
+
+	entry = vcpu_to_vmsa_entry(reg);
+	if (entry == VMSA_REG_UNDEF)
+		return;
+
+	svm = to_svm(vcpu);
+	vmsa = get_vmsa(svm);
+	vmsa_reg = (u64 *)vmsa;
+
+	/* If a GHCB is mapped, set the bit to indicate a valid entry */
+	if (svm->ghcb) {
+		unsigned int index = entry / 8;
+		unsigned int shift = entry % 8;
+
+		vmsa->valid_bitmap[index] |= BIT(shift);
+	}
+
+	vmsa_reg[entry] = val;
+}
+
 static void svm_vm_destroy(struct kvm *kvm)
 {
 	avic_vm_destroy(kvm);
@@ -4088,6 +4224,9 @@ static struct kvm_x86_ops svm_x86_ops __initdata = {
 	.need_emulation_on_page_fault = svm_need_emulation_on_page_fault,
 
 	.apic_init_signal_blocked = svm_apic_init_signal_blocked,
+
+	.reg_read_override = svm_reg_read_override,
+	.reg_write_override = svm_reg_write_override,
 };
 
 static struct kvm_x86_init_ops svm_init_ops __initdata = {

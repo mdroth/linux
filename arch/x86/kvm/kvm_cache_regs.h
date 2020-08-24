@@ -9,15 +9,21 @@
 	(X86_CR4_PVI | X86_CR4_DE | X86_CR4_PCE | X86_CR4_OSFXSR  \
 	 | X86_CR4_OSXMMEXCPT | X86_CR4_LA57 | X86_CR4_PGE | X86_CR4_TSD)
 
-#define BUILD_KVM_GPR_ACCESSORS(lname, uname)				      \
-static __always_inline unsigned long kvm_##lname##_read(struct kvm_vcpu *vcpu)\
-{									      \
-	return vcpu->arch.regs[VCPU_REGS_##uname];			      \
-}									      \
-static __always_inline void kvm_##lname##_write(struct kvm_vcpu *vcpu,	      \
-						unsigned long val)	      \
-{									      \
-	vcpu->arch.regs[VCPU_REGS_##uname] = val;			      \
+#define BUILD_KVM_GPR_ACCESSORS(lname, uname)					\
+static __always_inline unsigned long kvm_##lname##_read(struct kvm_vcpu *vcpu)	\
+{										\
+	if (kvm_x86_ops.reg_read_override)					\
+		kvm_x86_ops.reg_read_override(vcpu, VCPU_REGS_##uname);		\
+										\
+	return vcpu->arch.regs[VCPU_REGS_##uname];				\
+}										\
+static __always_inline void kvm_##lname##_write(struct kvm_vcpu *vcpu,		\
+						unsigned long val)		\
+{										\
+	if (kvm_x86_ops.reg_write_override)					\
+		kvm_x86_ops.reg_write_override(vcpu, VCPU_REGS_##uname, val);	\
+										\
+	vcpu->arch.regs[VCPU_REGS_##uname] = val;				\
 }
 BUILD_KVM_GPR_ACCESSORS(rax, RAX)
 BUILD_KVM_GPR_ACCESSORS(rbx, RBX)
@@ -67,6 +73,9 @@ static inline unsigned long kvm_register_read(struct kvm_vcpu *vcpu, int reg)
 	if (WARN_ON_ONCE((unsigned int)reg >= NR_VCPU_REGS))
 		return 0;
 
+	if (kvm_x86_ops.reg_read_override)
+		kvm_x86_ops.reg_read_override(vcpu, reg);
+
 	if (!kvm_register_is_available(vcpu, reg))
 		kvm_x86_ops.cache_reg(vcpu, reg);
 
@@ -78,6 +87,9 @@ static inline void kvm_register_write(struct kvm_vcpu *vcpu, int reg,
 {
 	if (WARN_ON_ONCE((unsigned int)reg >= NR_VCPU_REGS))
 		return;
+
+	if (kvm_x86_ops.reg_write_override)
+		kvm_x86_ops.reg_write_override(vcpu, reg, val);
 
 	vcpu->arch.regs[reg] = val;
 	kvm_register_mark_dirty(vcpu, reg);
