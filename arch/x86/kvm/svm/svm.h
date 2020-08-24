@@ -395,7 +395,8 @@ void enter_svm_guest_mode(struct vcpu_svm *svm, u64 vmcb_gpa,
 			  struct vmcb *nested_vmcb);
 void svm_leave_nested(struct vcpu_svm *svm);
 int nested_svm_vmrun(struct vcpu_svm *svm);
-void nested_svm_vmloadsave(struct vmcb *from_vmcb, struct vmcb *to_vmcb);
+void nested_svm_vmloadsave(struct vmcb_save_area *from_vmsa,
+			   struct vmcb_save_area *to_vmsa);
 int nested_svm_vmexit(struct vcpu_svm *svm);
 int nested_svm_exit_handled(struct vcpu_svm *svm);
 int nested_svm_check_permissions(struct vcpu_svm *svm);
@@ -503,5 +504,131 @@ int svm_unregister_enc_region(struct kvm *kvm,
 void pre_sev_run(struct vcpu_svm *svm, int cpu);
 void __init sev_hardware_setup(void);
 void sev_hardware_teardown(void);
+
+/* VMSA Accessor functions */
+
+static inline struct vmcb_save_area *get_vmsa(struct vcpu_svm *svm)
+{
+	return &svm->vmcb->save;
+}
+
+#define DEFINE_VMSA_SEGMENT_ENTRY(_field, _entry, _size)		\
+	static inline _size						\
+	svm_##_field##_read_##_entry(struct vcpu_svm *svm)		\
+	{								\
+		struct vmcb_save_area *vmsa = get_vmsa(svm);		\
+									\
+		return vmsa->_field._entry;				\
+	}								\
+									\
+	static inline void						\
+	svm_##_field##_write_##_entry(struct vcpu_svm *svm,		\
+				      _size value)			\
+	{								\
+		struct vmcb_save_area *vmsa = get_vmsa(svm);		\
+									\
+		vmsa->_field._entry = value;				\
+	}								\
+
+#define DEFINE_VMSA_SEGMENT_ACCESSOR(_field)				\
+	DEFINE_VMSA_SEGMENT_ENTRY(_field, selector, u16)		\
+	DEFINE_VMSA_SEGMENT_ENTRY(_field, attrib, u16)			\
+	DEFINE_VMSA_SEGMENT_ENTRY(_field, limit, u32)			\
+	DEFINE_VMSA_SEGMENT_ENTRY(_field, base, u64)			\
+									\
+	static inline struct vmcb_seg *					\
+	svm_##_field##_read(struct vcpu_svm *svm)			\
+	{								\
+		struct vmcb_save_area *vmsa = get_vmsa(svm);		\
+									\
+		return &vmsa->_field;					\
+	}								\
+									\
+	static inline void						\
+	svm_##_field##_write(struct vcpu_svm *svm,			\
+			    struct vmcb_seg *seg)			\
+	{								\
+		struct vmcb_save_area *vmsa = get_vmsa(svm);		\
+									\
+		vmsa->_field = *seg;					\
+	}
+
+DEFINE_VMSA_SEGMENT_ACCESSOR(cs)
+DEFINE_VMSA_SEGMENT_ACCESSOR(ds)
+DEFINE_VMSA_SEGMENT_ACCESSOR(es)
+DEFINE_VMSA_SEGMENT_ACCESSOR(fs)
+DEFINE_VMSA_SEGMENT_ACCESSOR(gs)
+DEFINE_VMSA_SEGMENT_ACCESSOR(ss)
+DEFINE_VMSA_SEGMENT_ACCESSOR(gdtr)
+DEFINE_VMSA_SEGMENT_ACCESSOR(idtr)
+DEFINE_VMSA_SEGMENT_ACCESSOR(ldtr)
+DEFINE_VMSA_SEGMENT_ACCESSOR(tr)
+
+#define DEFINE_VMSA_SIZE_ACCESSOR(_field, _size)			\
+	static inline _size						\
+	svm_##_field##_read(struct vcpu_svm *svm)			\
+	{								\
+		struct vmcb_save_area *vmsa = get_vmsa(svm);		\
+									\
+		return vmsa->_field;					\
+	}								\
+									\
+	static inline void						\
+	svm_##_field##_write(struct vcpu_svm *svm, _size value)		\
+	{								\
+		struct vmcb_save_area *vmsa = get_vmsa(svm);		\
+									\
+		vmsa->_field = value;					\
+	}								\
+									\
+	static inline void						\
+	svm_##_field##_and(struct vcpu_svm *svm, _size value)		\
+	{								\
+		struct vmcb_save_area *vmsa = get_vmsa(svm);		\
+									\
+		vmsa->_field &= value;					\
+	}								\
+									\
+	static inline void						\
+	svm_##_field##_or(struct vcpu_svm *svm, _size value)		\
+	{								\
+		struct vmcb_save_area *vmsa = get_vmsa(svm);		\
+									\
+		vmsa->_field |= value;					\
+	}
+
+#define DEFINE_VMSA_ACCESSOR(_field)					\
+	DEFINE_VMSA_SIZE_ACCESSOR(_field, u64)
+
+#define DEFINE_VMSA_U8_ACCESSOR(_field)					\
+	DEFINE_VMSA_SIZE_ACCESSOR(_field, u8)
+
+DEFINE_VMSA_ACCESSOR(efer)
+DEFINE_VMSA_ACCESSOR(cr0)
+DEFINE_VMSA_ACCESSOR(cr2)
+DEFINE_VMSA_ACCESSOR(cr3)
+DEFINE_VMSA_ACCESSOR(cr4)
+DEFINE_VMSA_ACCESSOR(dr6)
+DEFINE_VMSA_ACCESSOR(dr7)
+DEFINE_VMSA_ACCESSOR(rflags)
+DEFINE_VMSA_ACCESSOR(star)
+DEFINE_VMSA_ACCESSOR(lstar)
+DEFINE_VMSA_ACCESSOR(cstar)
+DEFINE_VMSA_ACCESSOR(sfmask)
+DEFINE_VMSA_ACCESSOR(kernel_gs_base)
+DEFINE_VMSA_ACCESSOR(sysenter_cs)
+DEFINE_VMSA_ACCESSOR(sysenter_esp)
+DEFINE_VMSA_ACCESSOR(sysenter_eip)
+DEFINE_VMSA_ACCESSOR(g_pat)
+DEFINE_VMSA_ACCESSOR(dbgctl)
+DEFINE_VMSA_ACCESSOR(br_from)
+DEFINE_VMSA_ACCESSOR(br_to)
+DEFINE_VMSA_ACCESSOR(last_excp_from)
+DEFINE_VMSA_ACCESSOR(last_excp_to)
+
+DEFINE_VMSA_U8_ACCESSOR(cpl)
+DEFINE_VMSA_ACCESSOR(rip)
+DEFINE_VMSA_ACCESSOR(rax)
+DEFINE_VMSA_ACCESSOR(rsp)
 
 #endif
