@@ -193,6 +193,28 @@ static inline struct kvm_svm *to_kvm_svm(struct kvm *kvm)
 	return container_of(kvm, struct kvm_svm, kvm);
 }
 
+static inline bool sev_guest(struct kvm *kvm)
+{
+#ifdef CONFIG_KVM_AMD_SEV
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+
+	return sev->active;
+#else
+	return false;
+#endif
+}
+
+static inline bool sev_es_guest(struct kvm *kvm)
+{
+#ifdef CONFIG_KVM_AMD_SEV
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+
+	return sev_guest(kvm) && sev->es_active;
+#else
+	return false;
+#endif
+}
+
 static inline void mark_all_dirty(struct vmcb *vmcb)
 {
 	vmcb->control.clean = 0;
@@ -247,26 +269,35 @@ static inline bool is_cr_intercept(struct vcpu_svm *svm, int bit)
 	return vmcb->control.intercept_cr & (1U << bit);
 }
 
+#define SVM_DR_INTERCEPTS		\
+	((1 << INTERCEPT_DR0_READ)	\
+	| (1 << INTERCEPT_DR1_READ)	\
+	| (1 << INTERCEPT_DR2_READ)	\
+	| (1 << INTERCEPT_DR3_READ)	\
+	| (1 << INTERCEPT_DR4_READ)	\
+	| (1 << INTERCEPT_DR5_READ)	\
+	| (1 << INTERCEPT_DR6_READ)	\
+	| (1 << INTERCEPT_DR7_READ)	\
+	| (1 << INTERCEPT_DR0_WRITE)	\
+	| (1 << INTERCEPT_DR1_WRITE)	\
+	| (1 << INTERCEPT_DR2_WRITE)	\
+	| (1 << INTERCEPT_DR3_WRITE)	\
+	| (1 << INTERCEPT_DR4_WRITE)	\
+	| (1 << INTERCEPT_DR5_WRITE)	\
+	| (1 << INTERCEPT_DR6_WRITE)	\
+	| (1 << INTERCEPT_DR7_WRITE))
+
+#define SVM_SEV_ES_DR_INTERCEPTS	\
+	((1 << INTERCEPT_DR7_READ)	\
+	| (1 << INTERCEPT_DR7_WRITE))
+
 static inline void set_dr_intercepts(struct vcpu_svm *svm)
 {
 	struct vmcb *vmcb = get_host_vmcb(svm);
 
-	vmcb->control.intercept_dr = (1 << INTERCEPT_DR0_READ)
-		| (1 << INTERCEPT_DR1_READ)
-		| (1 << INTERCEPT_DR2_READ)
-		| (1 << INTERCEPT_DR3_READ)
-		| (1 << INTERCEPT_DR4_READ)
-		| (1 << INTERCEPT_DR5_READ)
-		| (1 << INTERCEPT_DR6_READ)
-		| (1 << INTERCEPT_DR7_READ)
-		| (1 << INTERCEPT_DR0_WRITE)
-		| (1 << INTERCEPT_DR1_WRITE)
-		| (1 << INTERCEPT_DR2_WRITE)
-		| (1 << INTERCEPT_DR3_WRITE)
-		| (1 << INTERCEPT_DR4_WRITE)
-		| (1 << INTERCEPT_DR5_WRITE)
-		| (1 << INTERCEPT_DR6_WRITE)
-		| (1 << INTERCEPT_DR7_WRITE);
+	vmcb->control.intercept_dr =
+		(sev_es_guest(svm->vcpu.kvm)) ? SVM_SEV_ES_DR_INTERCEPTS
+					      : SVM_DR_INTERCEPTS;
 
 	recalc_intercepts(svm);
 }
@@ -275,7 +306,9 @@ static inline void clr_dr_intercepts(struct vcpu_svm *svm)
 {
 	struct vmcb *vmcb = get_host_vmcb(svm);
 
-	vmcb->control.intercept_dr = 0;
+	vmcb->control.intercept_dr =
+		(sev_es_guest(svm->vcpu.kvm)) ? SVM_SEV_ES_DR_INTERCEPTS
+					      : 0;
 
 	recalc_intercepts(svm);
 }
@@ -471,28 +504,6 @@ void svm_vcpu_unblocking(struct kvm_vcpu *vcpu);
 /* sev.c */
 
 extern unsigned int max_sev_asid;
-
-static inline bool sev_guest(struct kvm *kvm)
-{
-#ifdef CONFIG_KVM_AMD_SEV
-	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
-
-	return sev->active;
-#else
-	return false;
-#endif
-}
-
-static inline bool sev_es_guest(struct kvm *kvm)
-{
-#ifdef CONFIG_KVM_AMD_SEV
-	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
-
-	return sev_guest(kvm) && sev->es_active;
-#else
-	return false;
-#endif
-}
 
 static inline bool svm_sev_enabled(void)
 {
