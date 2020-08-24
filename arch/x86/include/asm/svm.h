@@ -343,39 +343,44 @@ struct vmcb {
 
 /* GHCB Accessor functions */
 
-#define DEFINE_GHCB_INDICES(field)					\
-	u16 idx = offsetof(struct vmcb_save_area, field) / 8;		\
+#define SEV_ES_VALID_BITMAP_INDICES(_vmsa, _field)			\
+	u16 idx = offsetof(struct vmcb_save_area, _field) / 8;		\
 	u16 byte_idx  = idx / 8;					\
 	u16 bit_idx   = idx % 8;					\
-	BUILD_BUG_ON(byte_idx > ARRAY_SIZE(ghcb->save.valid_bitmap));
+	BUILD_BUG_ON(byte_idx > ARRAY_SIZE((_vmsa)->valid_bitmap));
 
-#define GHCB_SET_VALID(ghcb, field)					\
+#define SEV_ES_SET_VALID(_vmsa, _field)					\
 	{								\
-		DEFINE_GHCB_INDICES(field)				\
-		(ghcb)->save.valid_bitmap[byte_idx] |= BIT(bit_idx);	\
+		SEV_ES_VALID_BITMAP_INDICES(_vmsa, _field)		\
+									\
+		(_vmsa)->valid_bitmap[byte_idx] |= BIT(bit_idx);	\
 	}
 
-#define DEFINE_GHCB_SETTER(field)					\
-	static inline void						\
-	ghcb_set_##field(struct ghcb *ghcb, u64 value)			\
+#define DEFINE_GHCB_ACCESSORS(_field)					\
+	static inline bool						\
+	ghcb_is_valid_##_field(const struct ghcb *ghcb)			\
 	{								\
-		GHCB_SET_VALID(ghcb, field)				\
-		(ghcb)->save.field = value;				\
-	}
-
-#define DEFINE_GHCB_ACCESSORS(field)					\
-	static inline bool ghcb_is_valid_##field(const struct ghcb *ghcb)	\
+		const struct vmcb_save_area *vmsa = &((ghcb)->save);	\
+		SEV_ES_VALID_BITMAP_INDICES(vmsa, _field)		\
+									\
+		return !!(vmsa->valid_bitmap[byte_idx] & BIT(bit_idx));	\
+	}								\
+									\
+	static inline u64						\
+	ghcb_get_##_field(struct ghcb *ghcb)				\
 	{								\
-		DEFINE_GHCB_INDICES(field)				\
-		return !!((ghcb)->save.valid_bitmap[byte_idx]		\
-						& BIT(bit_idx));	\
+		struct vmcb_save_area *vmsa = &((ghcb)->save);		\
+									\
+		return vmsa->_field;					\
 	}								\
 									\
 	static inline void						\
-	ghcb_set_##field(struct ghcb *ghcb, u64 value)			\
+	ghcb_set_##_field(struct ghcb *ghcb, u64 value)			\
 	{								\
-		GHCB_SET_VALID(ghcb, field)				\
-		(ghcb)->save.field = value;				\
+		struct vmcb_save_area *vmsa = &((ghcb)->save);		\
+		SEV_ES_SET_VALID(vmsa, _field)				\
+									\
+		vmsa->_field = value;					\
 	}
 
 DEFINE_GHCB_ACCESSORS(cpl)
