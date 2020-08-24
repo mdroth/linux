@@ -1276,6 +1276,8 @@ struct kvm_x86_ops {
 	void (*reg_read_override)(struct kvm_vcpu *vcpu, enum kvm_reg reg);
 	void (*reg_write_override)(struct kvm_vcpu *vcpu, enum kvm_reg reg,
 				   unsigned long val);
+
+	bool (*allow_debug)(struct kvm *kvm);
 };
 
 struct kvm_x86_nested_ops {
