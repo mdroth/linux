@@ -1174,10 +1174,22 @@ void sev_hardware_teardown(void)
 	sev_flush_asids();
 }
 
+static void pre_sev_es_run(struct vcpu_svm *svm)
+{
+	if (!svm->ghcb)
+		return;
+
+	kvm_vcpu_unmap(&svm->vcpu, &svm->ghcb_map, true);
+	svm->ghcb = NULL;
+}
+
 void pre_sev_run(struct vcpu_svm *svm, int cpu)
 {
 	struct svm_cpu_data *sd = per_cpu(svm_data, cpu);
 	int asid = sev_get_asid(svm->vcpu.kvm);
+
+	/* Perform any SEV-ES pre-run actions */
+	pre_sev_es_run(svm);
 
 	/* Assign the asid allocated with this SEV guest */
 	svm->vmcb->control.asid = asid;
@@ -1196,4 +1208,57 @@ void pre_sev_run(struct vcpu_svm *svm, int cpu)
 	sd->sev_vmcbs[asid] = svm->vmcb;
 	svm->vmcb->control.tlb_ctl = TLB_CONTROL_FLUSH_ASID;
 	mark_dirty(svm->vmcb, VMCB_ASID);
+}
+
+static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
+{
+	return -EINVAL;
+}
+
+int sev_handle_vmgexit(struct vcpu_svm *svm)
+{
+	struct vmcb_control_area *control = &svm->vmcb->control;
+	struct ghcb *ghcb;
+	u64 ghcb_gpa;
+	int ret;
+
+	/* Validate the GHCB */
+	ghcb_gpa = control->ghcb_gpa;
+	if (ghcb_gpa & GHCB_MSR_INFO_MASK)
+		return sev_handle_vmgexit_msr_protocol(svm);
+
+	if (!ghcb_gpa) {
+		pr_err("vmgexit: GHCB gpa is not set\n");
+		return -EINVAL;
+	}
+
+	if (kvm_vcpu_map(&svm->vcpu, ghcb_gpa >> PAGE_SHIFT, &svm->ghcb_map)) {
+		/* Unable to map GHCB from guest */
+		pr_err("vmgexit: error mapping GHCB from guest\n");
+		return -EINVAL;
+	}
+
+	svm->ghcb = svm->ghcb_map.hva;
+	ghcb = svm->ghcb_map.hva;
+
+	control->exit_code = lower_32_bits(ghcb_get_sw_exit_code(ghcb));
+	control->exit_code_hi = upper_32_bits(ghcb_get_sw_exit_code(ghcb));
+	control->exit_info_1 = ghcb_get_sw_exit_info_1(ghcb);
+	control->exit_info_2 = ghcb_get_sw_exit_info_2(ghcb);
+
+	ghcb_set_sw_exit_info_1(ghcb, 0);
+	ghcb_set_sw_exit_info_2(ghcb, 0);
+
+	ret = -EINVAL;
+	switch (ghcb_get_sw_exit_code(ghcb)) {
+	case SVM_VMGEXIT_UNSUPPORTED_EVENT:
+		pr_err("vmgexit: unsupported event - exit_info_1=%#llx, exit_info_2=%#llx\n",
+		       control->exit_info_1,
+		       control->exit_info_2);
+		break;
+	default:
+		ret = svm_invoke_exit_handler(svm, ghcb_get_sw_exit_code(ghcb));
+	}
+
+	return ret;
 }
