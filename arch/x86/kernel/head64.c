@@ -38,6 +38,7 @@
 #include <asm/fixmap.h>
 #include <asm/extable.h>
 #include <asm/trapnr.h>
+#include <asm/sev-es.h>
 
 /*
  * Manage page tables very early on.
@@ -536,4 +537,34 @@ void __head early_idt_setup_early_handler(unsigned long descr_addr, unsigned lon
 		idt_init_desc(&desc, &data);
 		native_write_idt_entry(idt, i, &desc);
 	}
+}
+
+#ifdef CONFIG_AMD_MEM_ENCRYPT
+static void __head set_early_idt_handler(gate_desc *idt, int n, void *handler)
+{
+	struct idt_data data;
+	gate_desc desc;
+
+	init_idt_data(&data, n, handler);
+	idt_init_desc(&desc, &data);
+	native_write_idt_entry(idt, n, &desc);
+}
+#endif
+
+void __head early_idt_setup(struct desc_ptr *descr, unsigned long physbase)
+{
+	gate_desc *idt = (gate_desc *)descr->address;
+	void __maybe_unused *handler;
+
+	idt = fixup_pointer(idt, physbase);
+
+#ifdef CONFIG_AMD_MEM_ENCRYPT
+	/* VMM Communication Exception */
+	handler = fixup_pointer(vc_no_ghcb, physbase);
+	set_early_idt_handler(idt, X86_TRAP_VC, handler);
+#endif
+
+	/* Initialize IDT descriptor and load IDT */
+	early_idt_descr.address = (unsigned long)idt;
+	native_load_idt(&early_idt_descr);
 }
