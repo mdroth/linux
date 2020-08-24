@@ -1291,6 +1291,9 @@ static void svm_free_vcpu(struct kvm_vcpu *vcpu)
 		}
 
 		__free_page(virt_to_page(svm->vmsa));
+
+		if (svm->ghcb_sa_free)
+			kfree(svm->ghcb_sa);
 	}
 
 	__free_page(pfn_to_page(__sme_clr(svm->vmcb_pa) >> PAGE_SHIFT));
