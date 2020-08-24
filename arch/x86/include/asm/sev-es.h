@@ -73,6 +73,9 @@ static inline u64 lower_bits(u64 val, unsigned int bits)
 	return (val & mask);
 }
 
+struct real_mode_header;
+enum stack_type;
+
 /* Early IDT entry points for #VC handler */
 extern void vc_no_ghcb(void);
 extern bool handle_vc_boot_ghcb(struct pt_regs *regs);
@@ -80,9 +83,11 @@ extern bool handle_vc_boot_ghcb(struct pt_regs *regs);
 #ifdef CONFIG_AMD_MEM_ENCRYPT
 extern void sev_es_ist_enter(struct pt_regs *regs);
 extern void sev_es_ist_exit(void);
+extern int sev_es_setup_ap_jump_table(struct real_mode_header *rmh);
 #else
 static inline void sev_es_ist_enter(struct pt_regs *regs) { }
 static inline void sev_es_ist_exit(void) { }
+static inline int sev_es_setup_ap_jump_table(struct real_mode_header *rmh) { return 0; }
 #endif
 
 #endif
