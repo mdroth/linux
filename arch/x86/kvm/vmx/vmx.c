@@ -7916,6 +7916,7 @@ static struct kvm_x86_ops vmx_x86_ops __initdata = {
 	.migrate_timers = vmx_migrate_timers,
 
 	.allow_debug = vmx_allow_debug,
+	.page_enc_status_hc = NULL,
 };
 
 static __init int hardware_setup(void)
