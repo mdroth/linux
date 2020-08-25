@@ -374,4 +374,7 @@ int kvm_sev_es_string_io(struct kvm_vcpu *vcpu, unsigned int size,
 			 unsigned int port, void *data,  unsigned int count,
 			 int in);
 
+int kvm_handle_invpcid_types(struct kvm_vcpu *vcpu, unsigned long type,
+			     u64 pcid,  u64 gla);
+
 #endif
