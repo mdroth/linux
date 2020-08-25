@@ -65,6 +65,10 @@ enum {
 	TRAP_CR8_WRITE,
 };
 
+/* Extended Intercept bits */
+enum {
+	INTERCEPT_INVPCID = 2,
+};
 
 struct __attribute__ ((__packed__)) vmcb_control_area {
 	u32 intercept_cr;
