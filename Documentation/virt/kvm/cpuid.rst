@@ -92,6 +92,11 @@ KVM_FEATURE_ASYNC_PF_INT          14          guest checks this feature bit
                                               async pf acknowledgment msr
                                               0x4b564d07.
 
+KVM_FEATURE_SEV_LIVE_MIGRATION    15          guest checks this feature bit before
+                                              using the page encryption state
+                                              hypercall to notify the page state
+                                              change
+
 KVM_FEATURE_CLOCSOURCE_STABLE_BIT 24          host will warn if no guest-side
                                               per-cpu warps are expeced in
                                               kvmclock

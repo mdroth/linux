@@ -1532,6 +1532,17 @@ unlock:
 	return 0;
 }
 
+void sev_update_migration_flags(struct kvm *kvm, u64 data)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+
+	if (!sev_guest(kvm))
+		return;
+
+	if (data & KVM_SEV_LIVE_MIGRATION_ENABLED)
+		sev->live_migration_enabled = true;
+}
+
 int svm_get_page_enc_bitmap(struct kvm *kvm,
 				   struct kvm_page_enc_bitmap *bmap)
 {
@@ -1543,6 +1554,9 @@ int svm_get_page_enc_bitmap(struct kvm *kvm,
 
 	if (!sev_guest(kvm))
 		return -ENOTTY;
+
+	if (!sev->live_migration_enabled)
+		return -EINVAL;
 
 	gfn_start = bmap->start_gfn;
 	gfn_end = gfn_start + bmap->num_pages;
