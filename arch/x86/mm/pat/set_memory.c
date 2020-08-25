@@ -27,6 +27,7 @@
 #include <asm/proto.h>
 #include <asm/memtype.h>
 #include <asm/set_memory.h>
+#include <asm/paravirt.h>
 
 #include "../mm_internal.h"
 
@@ -2011,6 +2012,12 @@ static int __set_memory_enc_dec(unsigned long addr, int numpages, bool enc)
 	 * as above.
 	 */
 	cpa_flush(&cpa, 0);
+
+	/* Notify hypervisor that a given memory range is mapped encrypted
+	 * or decrypted. The hypervisor will use this information during the
+	 * VM migration.
+	 */
+	page_encryption_changed(addr, numpages, enc);
 
 	return ret;
 }
