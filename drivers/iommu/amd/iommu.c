@@ -530,7 +530,7 @@ static void amd_iommu_report_rmp_fault(volatile u32 *event)
 	pdev = pci_get_domain_bus_and_slot(0, PCI_BUS_NUM(devid),
 					   devid & 0xff);
 	if (pdev)
-		dev_data = get_dev_data(&pdev->dev);
+		dev_data = dev_iommu_priv_get(&pdev->dev);
 
 	if (dev_data && __ratelimit(&dev_data->rs)) {
 		pci_err(pdev, "Event logged [RMP_PAGE_FAULT devid=0x%04x, vmg_tag=0x%04x, gpa=0x%llx, flags_rmp=0x%04x, flags=0x%04x]\n",
