@@ -1655,6 +1655,13 @@ int svm_set_page_enc_bitmap(struct kvm *kvm,
 	if (ret)
 		goto unlock;
 
+	/*
+	 * For source VM, live migration feature is enabled
+	 * explicitly when the guest is booting, for the
+	 * incoming VM(s) it is implied.
+	 */
+	sev_update_migration_flags(kvm, KVM_SEV_LIVE_MIGRATION_ENABLED);
+
 	bitmap_copy(sev->page_enc_bmap + BIT_WORD(gfn_start), bitmap,
 		    (gfn_end - gfn_start));
 
