@@ -21,6 +21,8 @@
 #include <linux/cpuidle.h>
 #include <linux/cpu.h>
 #include <acpi/processor.h>
+#include <linux/sched/clock.h>
+#include <linux/sched/idle.h>
 
 /*
  * Include the apic definitions for x86 to have the APIC timer related defines
@@ -44,6 +46,22 @@ module_param(bm_check_disable, uint, 0000);
 
 static unsigned int latency_factor __read_mostly = 2;
 module_param(latency_factor, uint, 0644);
+
+/*
+ * AMD Pseudo Idle Updates
+ */
+static int c1_latency __read_mostly;
+module_param(c1_latency, int, 0444);
+static int c1_residency __read_mostly;
+module_param(c1_residency, int, 0444);
+
+static int c2_latency __read_mostly;
+module_param(c2_latency, int, 0444);
+static int c2_residency __read_mostly;
+module_param(c2_residency, int, 0444);
+
+static int pseudo_idle __read_mostly;
+module_param(pseudo_idle, int, 0444);
 
 static DEFINE_PER_CPU(struct cpuidle_device *, acpi_cpuidle_device);
 
@@ -690,8 +708,27 @@ static int acpi_idle_enter(struct cpuidle_device *dev,
 	return index;
 }
 
-static int acpi_idle_enter_s2idle(struct cpuidle_device *dev,
+static int acpi_pseudo_idle_enter(struct cpuidle_device *dev,
 				  struct cpuidle_driver *drv, int index)
+{
+	u64 time_start;
+
+	local_irq_enable();
+	if (!current_set_polling_and_test()) {
+		while (!need_resched())
+			cpu_relax();
+	}
+
+	time_start = local_clock();
+
+	while (local_clock() - time_start < drv->states[index].exit_latency)
+
+	current_clr_polling();
+	return index;
+}
+
+static int acpi_idle_enter_s2idle(struct cpuidle_device *dev,
+				   struct cpuidle_driver *drv, int index)
 {
 	struct acpi_processor_cx *cx = per_cpu(acpi_cstate[index], dev->cpu);
 
@@ -758,6 +795,38 @@ static int acpi_processor_setup_cpuidle_cx(struct acpi_processor *pr,
 	return 0;
 }
 
+static int get_acpi_latency(struct acpi_processor *pr,
+			    struct acpi_processor_cx *cx)
+{
+	if (cx->type == ACPI_STATE_C1 && c1_latency) {
+		acpi_handle_info(pr->handle, "Setting C1 latency to %x\n", c1_latency);
+		cx->latency = c1_latency;
+	}
+
+	if (cx->type == ACPI_STATE_C2 && c2_latency) {
+		acpi_handle_info(pr->handle, "Setting C2 latency to %x\n", c2_latency);
+		cx->latency = c2_latency;
+	}
+
+	return cx->latency;
+}
+
+static int get_acpi_residency(struct acpi_processor *pr,
+			      struct acpi_processor_cx *cx)
+{
+	if (cx->type == ACPI_STATE_C1 && c1_residency) {
+		acpi_handle_info(pr->handle, "Setting C1 residency to %x\n", c1_residency);
+		return c1_residency * latency_factor;
+	}
+
+	if (cx->type == ACPI_STATE_C2 && c2_residency) {
+		acpi_handle_info(pr->handle, "Setting C2 residency to %x\n", c2_residency);
+		return c2_residency * latency_factor;
+	}
+
+	return cx->latency * latency_factor;
+}
+
 static int acpi_processor_setup_cstates(struct acpi_processor *pr)
 {
 	int i, count;
@@ -783,10 +852,19 @@ static int acpi_processor_setup_cstates(struct acpi_processor *pr)
 
 		state = &drv->states[count];
 		snprintf(state->name, CPUIDLE_NAME_LEN, "C%d", i);
-		strlcpy(state->desc, cx->desc, CPUIDLE_DESC_LEN);
-		state->exit_latency = cx->latency;
-		state->target_residency = cx->latency * latency_factor;
-		state->enter = acpi_idle_enter;
+
+		state->exit_latency = get_acpi_latency(pr, cx);
+		state->target_residency = get_acpi_residency(pr, cx);
+
+		if (pseudo_idle) {
+			pr_info_once("Using pseudo idle loop for CPU idle\n");
+
+			snprintf(state->desc, CPUIDLE_DESC_LEN, "%s", "Pseudo Idle");
+			state->enter = acpi_pseudo_idle_enter;
+		} else {
+			strlcpy(state->desc, cx->desc, CPUIDLE_DESC_LEN);
+			state->enter = acpi_idle_enter;
+		}
 
 		state->flags = 0;
 		if (cx->type == ACPI_STATE_C1 || cx->type == ACPI_STATE_C2) {
