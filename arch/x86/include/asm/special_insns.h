@@ -234,6 +234,26 @@ static inline void clwb(volatile void *__p)
 
 #define nop() asm volatile ("nop")
 
+#define TLBI_VALID_VA			BIT(0)
+#define TLBI_VALID_PCID			BIT(1)
+#define TLBI_VALID_ASID			BIT(2)
+#define TLBI_INCLUDE_GLOBAL		BIT(3)
+#define TLBI_FINAL_TRANSLATION		BIT(4)
+#define TLBI_INCLUDE_NESTED_TRANSLATION	BIT(5)
+#define TLBI_TWO_MB_VA_INCREMENT	BIT(31)
+
+static inline void invlpgb(unsigned long eax, unsigned long ecx,
+			   unsigned long edx)
+{
+	asm volatile(".byte 0x0f, 0x01, 0xfe"
+		     : : "a" (eax), "c" (ecx), "d" (edx)
+		     : "memory");
+}
+
+static inline void tlbsync(void)
+{
+	asm volatile(".byte 0x0f, 0x01, 0xff");
+}
 
 #endif /* __KERNEL__ */
 
