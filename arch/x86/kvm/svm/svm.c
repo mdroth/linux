@@ -1177,6 +1177,11 @@ static inline void init_vmcb_after_set_cpuid(struct kvm_vcpu *vcpu)
 		/* No need to intercept these MSRs */
 		set_msr_interception(vcpu, svm->msrpm, MSR_IA32_SYSENTER_EIP, 1, 1);
 		set_msr_interception(vcpu, svm->msrpm, MSR_IA32_SYSENTER_ESP, 1, 1);
+
+		if (guest_cpuid_has(vcpu, X86_FEATURE_INVLPGB) && sev_guest(vcpu->kvm))
+			svm->vmcb->control.nested_ctl |= SVM_NESTED_CTL_INVLPGB_ENABLE;
+		else
+			guest_cpuid_clear(vcpu, X86_FEATURE_INVLPGB);
 	}
 }
 
