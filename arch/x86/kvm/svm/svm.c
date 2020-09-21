@@ -201,6 +201,9 @@ module_param(sev_es, int, 0444);
 static bool __read_mostly dump_invalid_vmcb = 0;
 module_param(dump_invalid_vmcb, bool, 0644);
 
+static bool tlbi;
+module_param(tlbi, bool, 0444);
+
 static u8 rsm_ins_bytes[] = "\x0f\xaa";
 
 static void svm_complete_interrupts(struct vcpu_svm *svm);
@@ -835,6 +838,10 @@ static __init void svm_set_cpu_caps(void)
 	if (boot_cpu_has(X86_FEATURE_PCID) &&
 	    boot_cpu_has(X86_FEATURE_INVPCID))
 		kvm_cpu_cap_set(X86_FEATURE_INVPCID);
+
+	/* Enable INVLPGB */
+	if (tlbi && boot_cpu_has(X86_FEATURE_INVLPGB))
+		kvm_cpu_cap_set(X86_FEATURE_INVLPGB);
 }
 
 static __init int svm_hardware_setup(void)
@@ -1156,6 +1163,14 @@ static void init_vmcb(struct vcpu_svm *svm)
 			/* Perform SEV-ES specific VMCB updates */
 			sev_es_init_vmcb(svm);
 		}
+		/*
+		 * Enable execution of INVLPGB and TLBSYNC instructions
+		 * in SEV guests
+		 *
+		 */
+		if (tlbi && boot_cpu_has(X86_FEATURE_VINVLPGB) &&
+		    guest_cpuid_has(&svm->vcpu, X86_FEATURE_INVLPGB))
+			svm->vmcb->control.nested_ctl |= SVM_NESTED_CTL_INVLPGB_ENABLE;
 	}
 
 	mark_all_dirty(svm->vmcb);
