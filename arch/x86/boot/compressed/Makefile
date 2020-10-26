@@ -46,6 +46,11 @@ KBUILD_CFLAGS += -D__DISABLE_EXPORTS
 # Disable relocation relaxation in case the link is not PIE.
 KBUILD_CFLAGS += $(call as-option,-Wa$(comma)-mrelax-relocations=no)
 
+# sev-es.c indirectly inludes inat-table.h which is generated during
+# compilation and stored in $(objtree). Add the directory to the includes so
+# that the compiler finds it even with out-of-tree builds (make O=/some/path).
+CFLAGS_sev-es.o += -I$(objtree)/arch/x86/lib/
+
 KBUILD_AFLAGS  := $(KBUILD_CFLAGS) -D__ASSEMBLY__
 GCOV_PROFILE := n
 UBSAN_SANITIZE :=n
