@@ -1313,8 +1313,15 @@ static void init_vmcb(struct kvm_vcpu *vcpu)
 		svm->vmcb->control.int_ctl |= V_GIF_ENABLE_MASK;
 	}
 
-	if (sev_guest(vcpu->kvm))
+	if (sev_guest(vcpu->kvm)) {
 		sev_init_vmcb(svm);
+
+		/*
+		 * Enable execution of INVLPGB and TLBSYNC instructions
+		 * in SEV guests.
+		 */
+		svm->vmcb->control.nested_ctl |= SVM_NESTED_CTL_INVLPGB_ENABLE;
+	}
 
 	svm_hv_init_vmcb(vmcb);
 	init_vmcb_after_set_cpuid(vcpu);
@@ -4949,6 +4956,13 @@ static __init void svm_set_cpu_caps(void)
 	/* AMD PMU PERFCTR_CORE CPUID */
 	if (enable_pmu && boot_cpu_has(X86_FEATURE_PERFCTR_CORE))
 		kvm_cpu_cap_set(X86_FEATURE_PERFCTR_CORE);
+
+	/*
+	 * Enable INVLPGB feature for guest
+	 * if VMCB offset 0x90 bit 7 is supported
+	 */
+	if (boot_cpu_has(X86_FEATURE_VINVLPGB))
+		kvm_cpu_cap_check_and_set(X86_FEATURE_INVLPGB);
 
 	/* CPUID 0x8000001F (SME/SEV features) */
 	sev_set_cpu_caps();
