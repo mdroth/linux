@@ -816,6 +816,12 @@ static __init void svm_set_cpu_caps(void)
 
 	/* Enable INVPCID feature */
 	kvm_cpu_cap_check_and_set(X86_FEATURE_INVPCID);
+
+	/* Enable INVLPGB feature for guest
+	 * if VMCB offset 0x90 bit 7 is supported
+	 */
+	if (boot_cpu_has(X86_FEATURE_VINVLPGB))
+		kvm_cpu_cap_check_and_set(X86_FEATURE_INVLPGB);
 }
 
 static __init int svm_hardware_setup(void)
@@ -1156,6 +1162,12 @@ static void init_vmcb(struct vcpu_svm *svm)
 	if (sev_guest(svm->vcpu.kvm)) {
 		svm->vmcb->control.nested_ctl |= SVM_NESTED_CTL_SEV_ENABLE;
 		clr_exception_intercept(svm, UD_VECTOR);
+
+		/*
+		 * Enable execution of INVLPGB and TLBSYNC instructions
+		 * in SEV guests.
+		 */
+		svm->vmcb->control.nested_ctl |= SVM_NESTED_CTL_INVLPGB_ENABLE;
 	}
 
 	vmcb_mark_all_dirty(svm->vmcb);
