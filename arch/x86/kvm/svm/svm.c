@@ -1207,6 +1207,7 @@ static int svm_create_vcpu(struct kvm_vcpu *vcpu)
 	struct page *msrpm_pages;
 	struct page *hsave_page;
 	struct page *nested_msrpm_pages;
+	struct page *vmsa_page = NULL;
 	int err;
 
 	BUILD_BUG_ON(offsetof(struct vcpu_svm, vcpu) != 0);
@@ -1229,9 +1230,19 @@ static int svm_create_vcpu(struct kvm_vcpu *vcpu)
 	if (!hsave_page)
 		goto free_page3;
 
+	if (sev_es_guest(svm->vcpu.kvm)) {
+		/*
+		 * SEV-ES guests require a separate VMSA page used to contain
+		 * the encrypted register state of the guest.
+		 */
+		vmsa_page = alloc_page(GFP_KERNEL_ACCOUNT | __GFP_ZERO);
+		if (!vmsa_page)
+			goto free_page4;
+	}
+
 	err = avic_init_vcpu(svm);
 	if (err)
-		goto free_page4;
+		goto free_page5;
 
 	/* We initialize this flag to true to make sure that the is_running
 	 * bit would be set the first time the vcpu is loaded.
@@ -1251,6 +1262,10 @@ static int svm_create_vcpu(struct kvm_vcpu *vcpu)
 	svm->vmcb = page_address(page);
 	clear_page(svm->vmcb);
 	svm->vmcb_pa = __sme_set(page_to_pfn(page) << PAGE_SHIFT);
+
+	if (vmsa_page)
+		svm->vmsa = page_address(vmsa_page);
+
 	svm->asid_generation = 0;
 	init_vmcb(svm);
 
@@ -1259,6 +1274,9 @@ static int svm_create_vcpu(struct kvm_vcpu *vcpu)
 
 	return 0;
 
+free_page5:
+	if (vmsa_page)
+		__free_page(vmsa_page);
 free_page4:
 	__free_page(hsave_page);
 free_page3:
@@ -1289,6 +1307,8 @@ static void svm_free_vcpu(struct kvm_vcpu *vcpu)
 	 * vmcb page recorded as its current vmcb.
 	 */
 	svm_clear_current_vmcb(svm->vmcb);
+
+	sev_free_vcpu(vcpu);
 
 	__free_page(pfn_to_page(__sme_clr(svm->vmcb_pa) >> PAGE_SHIFT));
 	__free_pages(virt_to_page(svm->msrpm), MSRPM_ALLOC_ORDER);
