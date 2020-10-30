@@ -1233,6 +1233,8 @@ struct kvm_x86_ops {
 	void (*migrate_timers)(struct kvm_vcpu *vcpu);
 
 	void (*vcpu_deliver_sipi_vector)(struct kvm_vcpu *vcpu, u8 vector);
+	int (*page_enc_status_hc)(struct kvm *kvm, unsigned long gpa,
+				  unsigned long sz, unsigned long mode);
 };
 
 struct kvm_x86_nested_ops {
