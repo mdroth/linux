@@ -27,6 +27,7 @@
 #endif
 
 #include "cpu.h"
+#include <asm/tlbflush.h>
 
 static const int amd_erratum_383[];
 static const int amd_erratum_400[];
@@ -600,6 +601,9 @@ static void bsp_init_amd(struct cpuinfo_x86 *c)
 		}
 	}
 
+	if (boot_cpu_has(X86_FEATURE_INVLPGB))
+		tlbi_max_pages_per_invalidation = (cpuid_edx(0x80000008) & 0xffff) + 1;
+
 	resctrl_cpu_detect(c);
 }
 
@@ -614,7 +618,7 @@ static void early_detect_mem_encrypt(struct cpuinfo_x86 *c)
 	 *	      If BIOS has not enabled SME then don't advertise the
 	 *	      SME feature (set in scattered.c).
 	 *   For SEV: If BIOS has not enabled SEV then don't advertise the
-	 *            SEV feature (set in scattered.c).
+	 *            SEV and SEV_ES feature (set in scattered.c).
 	 *
 	 *   In all cases, since support for SME and SEV requires long mode,
 	 *   don't advertise the feature under CONFIG_X86_32.
@@ -645,6 +649,7 @@ clear_all:
 		setup_clear_cpu_cap(X86_FEATURE_SME);
 clear_sev:
 		setup_clear_cpu_cap(X86_FEATURE_SEV);
+		setup_clear_cpu_cap(X86_FEATURE_SEV_ES);
 	}
 }
 
@@ -914,6 +919,22 @@ static void init_amd_bd(struct cpuinfo_x86 *c)
 	clear_rdrand_cpuid_bit(c);
 }
 
+static bool erms = true;
+
+static int __init parse_erms(char *p)
+{
+	return kstrtobool(p, &erms);
+}
+early_param("erms", parse_erms);
+
+static bool fsrm = true;
+
+static int __init parse_fsrm(char *p)
+{
+	return kstrtobool(p, &fsrm);
+}
+early_param("fsrm", parse_fsrm);
+
 static void init_amd_zn(struct cpuinfo_x86 *c)
 {
 	set_cpu_cap(c, X86_FEATURE_ZEN);
@@ -928,6 +949,23 @@ static void init_amd_zn(struct cpuinfo_x86 *c)
 	 */
 	if (!cpu_has(c, X86_FEATURE_HYPERVISOR) && !cpu_has(c, X86_FEATURE_CPB))
 		set_cpu_cap(c, X86_FEATURE_CPB);
+
+	/* AMD INTERNAL for now: rep movsb is fast on....Zen and higher? */
+	if (erms) {
+		set_cpu_cap(c, X86_FEATURE_ERMS);
+		pr_info_once("erms: Enhanced REP MOVSB/STOSB enabled\n");
+	} else
+		pr_info_once("erms: Enhanced REP MOVSB/STOSB disabled by kernel command line\n");
+
+	if (c->x86 < 0x19)
+		return;
+
+	/* AMD INTERNAL: Until this bit gets enabled by the BIOS */
+	if (fsrm) {
+		set_cpu_cap(c, X86_FEATURE_FSRM);
+		pr_info_once("fsrm: Fast Short REP MOVSB enabled\n");
+	} else
+		pr_info_once("fsrm: Fast Short REP MOVSB disabled by kernel command line\n");
 }
 
 static void init_amd(struct cpuinfo_x86 *c)

@@ -1354,6 +1354,16 @@
 			Warning: use of this parameter will taint the kernel
 			and may cause unknown problems.
 
+	erms=		[X86_64, AMD F17h+ only] disable the Enhanced
+			REP MOVSB/STOSB feature
+			Format: off | on
+			default: on
+
+	fsrm=		[X86_64, AMD F19h only] disable the Fast Short
+			REP MOVSB feature
+			Format: off | on
+			default: on
+
 	ftrace=[tracer]
 			[FTRACE] will set and start the specified tracer
 			as early as possible in order to facilitate early
@@ -5713,6 +5723,12 @@
 
 	vt.underline=	[VT] Default color for underlined text; 0-15.
 			Default: 3 = cyan.
+
+	warn_ud2=	[X86_64 only] Dump stack prior to invoking
+			a UD2 instruction when handling kernel
+			BUG/WARN assertions.
+			Format: off | on
+			default: off
 
 	watchdog timers	[HW,WDT] For information on watchdog timers,
 			see Documentation/watchdog/watchdog-parameters.rst
