@@ -2866,6 +2866,9 @@ static int svm_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr)
 		svm->msr_decfg = data;
 		break;
 	}
+	case MSR_KVM_SEV_LIVE_MIG_EN:
+		sev_update_migration_flags(vcpu->kvm, data);
+		break;
 	case MSR_IA32_APICBASE:
 		if (kvm_vcpu_apicv_active(vcpu))
 			avic_update_vapic_bar(to_svm(vcpu), data);
@@ -3947,6 +3950,19 @@ static void svm_vcpu_after_set_cpuid(struct kvm_vcpu *vcpu)
 
 	/* Check again if INVPCID interception if required */
 	svm_check_invpcid(svm);
+
+        /*
+         * If SEV guest then enable the Live migration feature.
+         */
+        if (sev_guest(vcpu->kvm)) {
+              struct kvm_cpuid_entry2 *best;
+
+              best = kvm_find_cpuid_entry(vcpu, KVM_CPUID_FEATURES, 0);
+              if (!best)
+                      return;
+
+              best->eax |= (1 << KVM_FEATURE_SEV_LIVE_MIGRATION);
+        }
 
 	if (!kvm_vcpu_apicv_active(vcpu))
 		return;
