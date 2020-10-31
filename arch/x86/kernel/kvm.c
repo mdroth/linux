@@ -26,6 +26,7 @@
 #include <linux/kprobes.h>
 #include <linux/nmi.h>
 #include <linux/swait.h>
+#include <linux/efi.h>
 #include <asm/timer.h>
 #include <asm/cpu.h>
 #include <asm/traps.h>
@@ -429,6 +430,53 @@ static inline void __set_percpu_decrypted(void *ptr, unsigned long size)
 	early_set_memory_decrypted((unsigned long) ptr, size);
 }
 
+#ifdef CONFIG_EFI
+static bool setup_kvm_sev_migration(void)
+{
+	efi_char16_t efi_Sev_Live_Mig_support_name[] = L"SevLiveMigrationEnabled";
+	efi_guid_t efi_variable_guid = MEM_ENCRYPT_GUID;
+	efi_status_t status;
+	unsigned long size;
+	bool enabled;
+
+	if (!sev_live_migration_enabled())
+		return false;
+
+	size = sizeof(enabled);
+
+	if (!efi_enabled(EFI_RUNTIME_SERVICES)) {
+		pr_info("setup_kvm_sev_migration: no efi\n");
+		return false;
+	}
+
+	/* Get variable contents into buffer */
+	status = efi.get_variable(efi_Sev_Live_Mig_support_name,
+				  &efi_variable_guid, NULL, &size, &enabled);
+
+	if (status == EFI_NOT_FOUND) {
+		pr_info("setup_kvm_sev_migration: variable not found\n");
+		return false;
+	}
+
+	if (status != EFI_SUCCESS) {
+		pr_info("setup_kvm_sev_migration: get_variable fail\n");
+		return false;
+	}
+
+	if (enabled == 0) {
+		pr_info("setup_kvm_sev_migration: live migration disabled in OVMF\n");
+		return false;
+	}
+
+	pr_info("setup_kvm_sev_migration: live migration enabled in OVMF\n");
+	wrmsrl(MSR_KVM_SEV_LIVE_MIG_EN, KVM_SEV_LIVE_MIGRATION_ENABLED);
+
+	return true;
+}
+
+late_initcall(setup_kvm_sev_migration);
+#endif
+
 /*
  * Iterate through all possible CPUs and map the memory region pointed
  * by apf_reason, steal_time and kvm_apic_eoi as decrypted at once.
@@ -742,6 +790,20 @@ static void __init kvm_apic_init(void)
 
 static void __init kvm_init_platform(void)
 {
+#ifdef CONFIG_AMD_MEM_ENCRYPT
+	if (sev_active() &&
+	    kvm_para_has_feature(KVM_FEATURE_SEV_LIVE_MIGRATION)) {
+		printk(KERN_INFO "KVM enable live migration\n");
+		sev_live_mig_enabled = true;
+		/*
+		 * If not booted using EFI, enable Live migration support.
+		 */
+		if (!efi_enabled(EFI_BOOT))
+			wrmsrl(MSR_KVM_SEV_LIVE_MIG_EN,
+			       KVM_SEV_LIVE_MIGRATION_ENABLED);
+	} else
+		printk(KERN_INFO "KVM enable live migration feature unsupported\n");
+#endif
 	kvmclock_init();
 	x86_platform.apic_post_init = kvm_apic_init;
 }
