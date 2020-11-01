@@ -2158,6 +2158,19 @@ void __init sev_set_cpu_caps(void)
 		kvm_cpu_cap_clear(X86_FEATURE_SEV);
 	if (!sev_es_enabled)
 		kvm_cpu_cap_clear(X86_FEATURE_SEV_ES);
+
+	/*
+	 * Enable INVLPGB feature for guest
+	 * if VMCB offset 0x90 bit 7 is supported
+	 * Only SEV and higher guests get this feature
+	 * Check sev or sev-es kvm module parameters
+	 * If not, we have the risk of exposing INVLPGB
+	 * to non-SEV guests but when they execute INVLPGB
+	 * will result in #UD because we enable VMCB bit
+	 * only for SEV or SEV-ES guests(see init_vmcb)
+	 */
+	if (boot_cpu_has(X86_FEATURE_VINVLPGB))
+		kvm_cpu_cap_check_and_set(X86_FEATURE_INVLPGB);
 }
 
 void __init sev_hardware_setup(void)
