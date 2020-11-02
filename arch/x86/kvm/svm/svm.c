@@ -1184,14 +1184,6 @@ static void init_vmcb(struct vcpu_svm *svm)
 		svm->vmcb->control.nested_ctl |= SVM_NESTED_CTL_SEV_ENABLE;
 		clr_exception_intercept(svm, UD_VECTOR);
 
-		/*
-		 * Enable execution of INVLPGB and TLBSYNC instructions
-		 * in SEV guests.
-		 */
-		if (guest_cpuid_has(&svm->vcpu, X86_FEATURE_INVLPGB)) {
-			svm->vmcb->control.nested_ctl |= SVM_NESTED_CTL_INVLPGB_ENABLE;
-		}
-
 		if (sev_es_guest(svm->vcpu.kvm)) {
 			/* Perform SEV-ES specific VMCB updates */
 			sev_es_init_vmcb(svm);
@@ -1307,6 +1299,11 @@ static int svm_create_vcpu(struct kvm_vcpu *vcpu)
 
 	svm_init_osvw(vcpu);
 	vcpu->arch.microcode_version = 0x01000065;
+
+	if (sev_guest(vcpu->kvm))
+		svm->use_global_asid=true;
+	else
+		svm->use_global_asid=false;
 
 	if (sev_es_guest(svm->vcpu.kvm))
 		/* Perform SEV-ES specific VMCB creation updates */
@@ -3959,6 +3956,13 @@ static void svm_vcpu_after_set_cpuid(struct kvm_vcpu *vcpu)
 
 	/* Check again if INVPCID interception if required */
 	svm_check_invpcid(svm);
+
+	if(guest_cpuid_has(vcpu, X86_FEATURE_INVLPGB)) {
+		if(has_global_asid(svm))
+			svm->vmcb->control.nested_ctl |= SVM_NESTED_CTL_INVLPGB_ENABLE;
+		else
+			guest_cpuid_clear(vcpu, X86_FEATURE_INVLPGB);
+	}
 
         /*
          * If SEV guest then enable the Live migration feature.

@@ -174,6 +174,14 @@ struct vcpu_svm {
 	struct list_head ir_list;
 	spinlock_t ir_list_lock;
 
+	/* Set to 1 for guests that use global ASID.
+	 * If all vCPUs for a guest have the same ASID,
+	 * that guest is referred to as using global ASID
+	 * All SEV(SEV,SEV-ES and SEV-SNP) guests naturally
+	 * have global ASIDs
+	 */
+	bool use_global_asid;
+
 	/* SEV-ES support */
 	struct vmcb_save_area *vmsa;
 	struct ghcb *ghcb;
@@ -206,6 +214,11 @@ struct svm_cpu_data {
 DECLARE_PER_CPU(struct svm_cpu_data *, svm_data);
 
 void recalc_intercepts(struct vcpu_svm *svm);
+
+static inline bool has_global_asid(struct vcpu_svm *svm)
+{
+	return svm->use_global_asid;
+}
 
 static inline struct kvm_svm *to_kvm_svm(struct kvm *kvm)
 {
