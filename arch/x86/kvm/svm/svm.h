@@ -271,6 +271,15 @@ struct vcpu_svm {
 	bool guest_state_loaded;
 
 	bool x2avic_msrs_intercepted;
+
+	/*
+	 * Set to 1 for guests that use global ASID.
+	 * If all vCPUs for a guest have the same ASID,
+	 * that guest is referred to as using global ASID
+	 * All SEV(SEV,SEV-ES and SEV-SNP) guests naturally
+	 * have global ASIDs
+	 */
+	bool use_global_asid;
 };
 
 struct svm_cpu_data {
@@ -523,6 +532,11 @@ static inline bool is_x2apic_msrpm_offset(u32 offset)
 
 	return (msr >= APIC_BASE_MSR) &&
 	       (msr < (APIC_BASE_MSR + 0x100));
+}
+
+static inline bool has_global_asid(struct vcpu_svm *svm)
+{
+	return svm->use_global_asid;
 }
 
 /* svm.c */

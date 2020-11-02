@@ -1313,16 +1313,8 @@ static void init_vmcb(struct kvm_vcpu *vcpu)
 		svm->vmcb->control.int_ctl |= V_GIF_ENABLE_MASK;
 	}
 
-	if (sev_guest(vcpu->kvm)) {
+	if (sev_guest(vcpu->kvm))
 		sev_init_vmcb(svm);
-
-		/*
-		 * Enable execution of INVLPGB and TLBSYNC instructions
-		 * in SEV guests.
-		 */
-		if (guest_cpuid_has(&svm->vcpu, X86_FEATURE_INVLPGB)) {
-			svm->vmcb->control.nested_ctl |= SVM_NESTED_CTL_INVLPGB_ENABLE;
-	}
 
 	svm_hv_init_vmcb(vmcb);
 	init_vmcb_after_set_cpuid(vcpu);
@@ -1379,6 +1371,11 @@ static int svm_vcpu_create(struct kvm_vcpu *vcpu)
 	vmcb01_page = alloc_page(GFP_KERNEL_ACCOUNT | __GFP_ZERO);
 	if (!vmcb01_page)
 		goto out;
+
+	if (sev_guest(vcpu->kvm))
+		svm->use_global_asid=true;
+	else
+		svm->use_global_asid=false;
 
 	if (sev_es_guest(vcpu->kvm)) {
 		/*
@@ -4196,6 +4193,13 @@ static void svm_vcpu_after_set_cpuid(struct kvm_vcpu *vcpu)
 	svm->vgif_enabled = vgif && guest_cpuid_has(vcpu, X86_FEATURE_VGIF);
 
 	svm_recalc_instruction_intercepts(vcpu, svm);
+
+        if(guest_cpuid_has(vcpu, X86_FEATURE_INVLPGB)) {
+		if(has_global_asid(svm))
+                        svm->vmcb->control.nested_ctl |= SVM_NESTED_CTL_INVLPGB_ENABLE;
+                else
+                        guest_cpuid_clear(vcpu, X86_FEATURE_INVLPGB);
+        }
 
 	/* For sev guests, the memory encryption bit is not reserved in CR3.  */
 	if (sev_guest(vcpu->kvm)) {
