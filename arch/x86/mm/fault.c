@@ -34,6 +34,8 @@
 #define CREATE_TRACE_POINTS
 #include <asm/trace/exceptions.h>
 
+#include "amd_hw_pf_trace.c"
+
 /*
  * Returns 0 if mmiotrace is disabled, or if the fault is not
  * handled by mmiotrace:
@@ -658,6 +660,8 @@ no_context(struct pt_regs *regs, unsigned long error_code,
 		 * faulting through the emulate_vsyscall() logic.
 		 */
 		if (current->thread.sig_on_uaccess_err && signal) {
+			hw_pf_tracing_exit(-1);
+
 			set_signal_archinfo(address, error_code);
 
 			/* XXX: hwpoison faults will set the wrong code. */
@@ -757,6 +761,8 @@ show_signal_msg(struct pt_regs *regs, unsigned long error_code,
 {
 	const char *loglvl = task_pid_nr(tsk) > 1 ? KERN_INFO : KERN_EMERG;
 
+	hw_pf_tracing_exit(-1);
+
 	if (!unhandled_signal(tsk, SIGSEGV))
 		return;
 
@@ -811,6 +817,8 @@ __bad_area_nosemaphore(struct pt_regs *regs, unsigned long error_code,
 		 * layout, pretend that user-mode accesses to kernel addresses
 		 * are always protection faults.
 		 */
+		hw_pf_tracing_exit(-1);
+
 		if (address >= TASK_SIZE_MAX)
 			error_code |= X86_PF_PROT;
 
@@ -1208,6 +1216,7 @@ do_kern_addr_fault(struct pt_regs *regs, unsigned long hw_error_code,
 }
 NOKPROBE_SYMBOL(do_kern_addr_fault);
 
+
 /* Handle faults in the user portion of the address space */
 static inline
 void do_user_addr_fault(struct pt_regs *regs,
@@ -1223,16 +1232,22 @@ void do_user_addr_fault(struct pt_regs *regs,
 	tsk = current;
 	mm = tsk->mm;
 
+	hw_pf_tracing_enter();
+
 	/* kprobes don't want to hook the spurious faults: */
-	if (unlikely(kprobe_page_fault(regs, X86_TRAP_PF)))
+	if (unlikely(kprobe_page_fault(regs, X86_TRAP_PF))) {
+		hw_pf_tracing_exit(0);
 		return;
+	}
 
 	/*
 	 * Reserved bits are never expected to be set on
 	 * entries in the user portion of the page tables.
 	 */
-	if (unlikely(hw_error_code & X86_PF_RSVD))
-		pgtable_bad(regs, hw_error_code, address);
+	if (unlikely(hw_error_code & X86_PF_RSVD)) {
+		hw_pf_tracing_exit(-1);
+		pgtable_bad(regs, hw_error_code, address); /* fail */
+	}
 
 	/*
 	 * If SMAP is on, check for invalid kernel (supervisor) access to user
@@ -1246,6 +1261,7 @@ void do_user_addr_fault(struct pt_regs *regs,
 		     !(regs->flags & X86_EFLAGS_AC)))
 	{
 		bad_area_nosemaphore(regs, hw_error_code, address);
+		hw_pf_tracing_exit(0);
 		return;
 	}
 
@@ -1255,6 +1271,7 @@ void do_user_addr_fault(struct pt_regs *regs,
 	 */
 	if (unlikely(faulthandler_disabled() || !mm)) {
 		bad_area_nosemaphore(regs, hw_error_code, address);
+		hw_pf_tracing_exit(0);
 		return;
 	}
 
@@ -1294,7 +1311,7 @@ void do_user_addr_fault(struct pt_regs *regs,
 	 */
 	if (is_vsyscall_vaddr(address)) {
 		if (emulate_vsyscall(hw_error_code, regs, address))
-			return;
+			return; /* ??? */
 	}
 #endif
 
@@ -1317,7 +1334,8 @@ void do_user_addr_fault(struct pt_regs *regs,
 			 * which we do not expect faults.
 			 */
 			bad_area_nosemaphore(regs, hw_error_code, address);
-			return;
+			hw_pf_tracing_exit(0);
+			return; /* failure */
 		}
 retry:
 		mmap_read_lock(mm);
@@ -1333,16 +1351,19 @@ retry:
 	vma = find_vma(mm, address);
 	if (unlikely(!vma)) {
 		bad_area(regs, hw_error_code, address);
+		hw_pf_tracing_exit(0);
 		return;
 	}
 	if (likely(vma->vm_start <= address))
 		goto good_area;
 	if (unlikely(!(vma->vm_flags & VM_GROWSDOWN))) {
 		bad_area(regs, hw_error_code, address);
+		hw_pf_tracing_exit(0);
 		return;
 	}
 	if (unlikely(expand_stack(vma, address))) {
 		bad_area(regs, hw_error_code, address);
+		hw_pf_tracing_exit(0);
 		return;
 	}
 
@@ -1353,6 +1374,7 @@ retry:
 good_area:
 	if (unlikely(access_error(hw_error_code, vma))) {
 		bad_area_access_error(regs, hw_error_code, address, vma);
+		hw_pf_tracing_exit(0);
 		return;
 	}
 
@@ -1373,9 +1395,14 @@ good_area:
 
 	/* Quick path to respond to signals */
 	if (fault_signal_pending(fault, regs)) {
-		if (!user_mode(regs))
+		if (!user_mode(regs)) {
 			no_context(regs, hw_error_code, address, SIGBUS,
 				   BUS_ADRERR);
+			hw_pf_tracing_exit(0);
+		} else {
+			hw_pf_tracing_exit(-1);
+		}
+
 		return;
 	}
 
@@ -1393,10 +1420,12 @@ good_area:
 	mmap_read_unlock(mm);
 	if (unlikely(fault & VM_FAULT_ERROR)) {
 		mm_fault_error(regs, hw_error_code, address, fault);
+		hw_pf_tracing_exit(0);
 		return;
 	}
 
 	check_v8086_mode(regs, address, tsk);
+	hw_pf_tracing_exit(0);
 }
 NOKPROBE_SYMBOL(do_user_addr_fault);
 
