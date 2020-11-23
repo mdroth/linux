@@ -90,14 +90,20 @@ static struct smca_bank_name smca_names[] = {
 	[SMCA_CS_V2]	= { "coherent_slave",	"Coherent Slave" },
 	[SMCA_PIE]	= { "pie",		"Power, Interrupts, etc." },
 	[SMCA_UMC]	= { "umc",		"Unified Memory Controller" },
+	[SMCA_UMC_V2]	= { "umc",		"Unified Memory Controller" },
 	[SMCA_PB]	= { "param_block",	"Parameter Block" },
 	[SMCA_PSP]	= { "psp",		"Platform Security Processor" },
 	[SMCA_PSP_V2]	= { "psp",		"Platform Security Processor" },
 	[SMCA_SMU]	= { "smu",		"System Management Unit" },
 	[SMCA_SMU_V2]	= { "smu",		"System Management Unit" },
+	[SMCA_MPIO]	= { "mpio",		"MultiPath Input Output Unit" },
 	[SMCA_MP5]	= { "mp5",		"Microprocessor 5 Unit" },
 	[SMCA_NBIO]	= { "nbio",		"Northbridge IO Unit" },
 	[SMCA_PCIE]	= { "pcie",		"PCI Express Unit" },
+	[SMCA_PCIE_V2]	= { "pcie",		"PCI Express Unit" },
+	[SMCA_XGMI_PCS]	= { "xgmi_pcs",		"Ext Global Memory Interconnect PCS Unit" },
+	[SMCA_XGMI_PHY]	= { "xgmi_phy",		"Ext Global Memory Interconnect PHY Unit" },
+	[SMCA_WAFL_PHY]	= { "wafl_phy",		"WAFL PHY Unit" },
 };
 
 static const char *smca_get_name(enum smca_bank_types t)
@@ -155,6 +161,7 @@ static struct smca_hwid smca_hwid_mcatypes[] = {
 
 	/* Unified Memory Controller MCA type */
 	{ SMCA_UMC,	 HWID_MCATYPE(0x96, 0x0)	},
+	{ SMCA_UMC_V2,	 HWID_MCATYPE(0x96, 0x1)	},
 
 	/* Parameter Block MCA type */
 	{ SMCA_PB,	 HWID_MCATYPE(0x05, 0x0)	},
@@ -166,6 +173,9 @@ static struct smca_hwid smca_hwid_mcatypes[] = {
 	/* System Management Unit MCA type */
 	{ SMCA_SMU,	 HWID_MCATYPE(0x01, 0x0)	},
 	{ SMCA_SMU_V2,	 HWID_MCATYPE(0x01, 0x1)	},
+	/* MPIO Unit MCA type
+	 * TODO : BUG: Overloaded with SMU */
+	{ SMCA_MPIO,	 HWID_MCATYPE(0x01, 0x1)	},
 
 	/* Microprocessor 5 Unit MCA type */
 	{ SMCA_MP5,	 HWID_MCATYPE(0x01, 0x2)	},
@@ -175,6 +185,17 @@ static struct smca_hwid smca_hwid_mcatypes[] = {
 
 	/* PCI Express Unit MCA type */
 	{ SMCA_PCIE,	 HWID_MCATYPE(0x46, 0x0)	},
+	{ SMCA_PCIE_V2,	 HWID_MCATYPE(0x46, 0x1)	},
+
+	/* xGMI PCS MCA type
+	 * TODO : Erratum: HWID will be 0x80 in HW */
+	{ SMCA_XGMI_PCS, HWID_MCATYPE(0x50, 0x0)	},
+
+	/* xGMI PHY MCA type */
+	{ SMCA_XGMI_PHY, HWID_MCATYPE(0x259, 0x0)	},
+
+	/* WAFL PHY MCA type */
+	{ SMCA_WAFL_PHY, HWID_MCATYPE(0x267, 0x0)	},
 };
 
 struct smca_bank smca_banks[MAX_NR_BANKS];
