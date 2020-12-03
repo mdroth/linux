@@ -829,7 +829,8 @@ static __init void svm_set_cpu_caps(void)
 
 	/* CPUID 0x80000008 */
 	if (boot_cpu_has(X86_FEATURE_LS_CFG_SSBD) ||
-	    boot_cpu_has(X86_FEATURE_AMD_SSBD))
+	    boot_cpu_has(X86_FEATURE_AMD_SSBD) ||
+	    boot_cpu_has(X86_FEATURE_AMD_PSFD))
 		kvm_cpu_cap_set(X86_FEATURE_VIRT_SSBD);
 
 	/* Enable INVPCID feature */
@@ -2640,7 +2641,8 @@ static int svm_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		    !guest_cpuid_has(vcpu, X86_FEATURE_SPEC_CTRL) &&
 		    !guest_cpuid_has(vcpu, X86_FEATURE_AMD_STIBP) &&
 		    !guest_cpuid_has(vcpu, X86_FEATURE_AMD_IBRS) &&
-		    !guest_cpuid_has(vcpu, X86_FEATURE_AMD_SSBD))
+		    !guest_cpuid_has(vcpu, X86_FEATURE_AMD_SSBD) &&
+		    !guest_cpuid_has(vcpu, X86_FEATURE_AMD_PSFD))
 			return 1;
 
 		msr_info->data = svm->spec_ctrl;
@@ -2749,7 +2751,8 @@ static int svm_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr)
 		    !guest_cpuid_has(vcpu, X86_FEATURE_SPEC_CTRL) &&
 		    !guest_cpuid_has(vcpu, X86_FEATURE_AMD_STIBP) &&
 		    !guest_cpuid_has(vcpu, X86_FEATURE_AMD_IBRS) &&
-		    !guest_cpuid_has(vcpu, X86_FEATURE_AMD_SSBD))
+		    !guest_cpuid_has(vcpu, X86_FEATURE_AMD_SSBD) &&
+		    !guest_cpuid_has(vcpu, X86_FEATURE_AMD_PSFD))
 			return 1;
 
 		if (kvm_spec_ctrl_test_value(data))

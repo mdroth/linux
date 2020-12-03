@@ -385,6 +385,8 @@ void kvm_set_cpu_caps(void)
 		kvm_cpu_cap_set(X86_FEATURE_INTEL_STIBP);
 	if (boot_cpu_has(X86_FEATURE_AMD_SSBD))
 		kvm_cpu_cap_set(X86_FEATURE_SPEC_CTRL_SSBD);
+	if (boot_cpu_has(X86_FEATURE_AMD_PSFD))
+		kvm_cpu_cap_set(X86_FEATURE_SPEC_CTRL_SSBD);
 
 	kvm_cpu_cap_mask(CPUID_7_1_EAX,
 		F(AVX512_BF16)
@@ -435,6 +437,8 @@ void kvm_set_cpu_caps(void)
 		kvm_cpu_cap_set(X86_FEATURE_AMD_STIBP);
 	if (boot_cpu_has(X86_FEATURE_SPEC_CTRL_SSBD))
 		kvm_cpu_cap_set(X86_FEATURE_AMD_SSBD);
+	if (boot_cpu_has(X86_FEATURE_AMD_PSFD))
+		kvm_cpu_cap_set(X86_FEATURE_AMD_PSFD);
 	if (!boot_cpu_has_bug(X86_BUG_SPEC_STORE_BYPASS))
 		kvm_cpu_cap_set(X86_FEATURE_AMD_SSB_NO);
 	/*
