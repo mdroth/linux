@@ -33,6 +33,7 @@
  * __svm_vcpu_run - Run a vCPU via a transition to SVM guest mode
  * @vmcb_pa:	unsigned long
  * @regs:	unsigned long * (to guest registers)
+ * @hostsa_pa:	unsigned long
  */
 SYM_FUNC_START(__svm_vcpu_run)
 	push %_ASM_BP
@@ -46,6 +47,9 @@ SYM_FUNC_START(__svm_vcpu_run)
 	push %esi
 #endif
 	push %_ASM_BX
+
+	/* Save @hostsa_pa */
+	push %_ASM_ARG3
 
 	/* Save @regs. */
 	push %_ASM_ARG2
@@ -153,6 +157,12 @@ SYM_FUNC_START(__svm_vcpu_run)
 	xor %r14d, %r14d
 	xor %r15d, %r15d
 #endif
+
+	/* "POP" @hostsa_pa to RAX. */
+	pop %_ASM_AX
+
+	/* Restore host user state and FS/GS base */
+	vmload %_ASM_AX
 
 	pop %_ASM_BX
 
