@@ -3264,6 +3264,22 @@ static int __init parse_amd_iommu_dump(char *str)
 	return 1;
 }
 
+static int __init parse_amd_iommu_pgtable(char *str)
+{
+	for (; *str; ++str) {
+		if (strncmp(str, "v1", 2) == 0) {
+			amd_iommu_pgtable = AMD_IOMMU_V1;
+			amd_iommu_ops.pgsize_bitmap = AMD_IOMMU_PGSIZES;
+			break;
+		} else if (strncmp(str, "v2", 2) == 0) {
+			amd_iommu_pgtable = AMD_IOMMU_V2;
+			amd_iommu_ops.pgsize_bitmap = AMD_IOMMU_PGSIZES_V2;
+			break;
+		}
+	}
+	return 1;
+}
+
 static int __init parse_amd_iommu_intr(char *str)
 {
 	for (; *str; ++str) {
@@ -3397,6 +3413,7 @@ static int __init parse_ivrs_acpihid(char *str)
 
 __setup("amd_iommu_dump",	parse_amd_iommu_dump);
 __setup("amd_iommu=",		parse_amd_iommu_options);
+__setup("amd_iommu_pgtable=",	parse_amd_iommu_pgtable);
 __setup("amd_iommu_intr=",	parse_amd_iommu_intr);
 __setup("ivrs_ioapic",		parse_ivrs_ioapic);
 __setup("ivrs_hpet",		parse_ivrs_hpet);
