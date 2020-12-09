@@ -2029,6 +2029,24 @@ static int protection_domain_init_v1(struct protection_domain *domain, int mode)
 	return 0;
 }
 
+static int protection_domain_init_v2(struct protection_domain *domain)
+{
+	spin_lock_init(&domain->lock);
+	domain->id = domain_id_alloc();
+	if (!domain->id)
+		return -ENOMEM;
+	INIT_LIST_HEAD(&domain->dev_list);
+
+	domain->flags |= PD_GIOV_MASK;
+
+	if (domain_enable_v2(domain, 1, false)) {
+		domain_id_free(domain->id);
+		return -ENOMEM;
+	}
+
+	return 0;
+}
+
 static struct protection_domain *protection_domain_alloc(unsigned int type)
 {
 	struct io_pgtable_ops *pgtbl_ops;
@@ -2055,6 +2073,9 @@ static struct protection_domain *protection_domain_alloc(unsigned int type)
 	switch (pgtable) {
 	case AMD_IOMMU_V1:
 		ret = protection_domain_init_v1(domain, mode);
+		break;
+	case AMD_IOMMU_V2:
+		ret = protection_domain_init_v2(domain);
 		break;
 	default:
 		ret = -EINVAL;
