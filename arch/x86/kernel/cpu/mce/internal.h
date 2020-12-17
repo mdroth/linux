@@ -181,8 +181,10 @@ extern struct mca_msr_regs msr_ops;
 extern bool filter_mce(struct mce *m);
 
 #ifdef CONFIG_X86_MCE_AMD
+extern void quirk_zen_ifu(int bank, struct mce *m, struct pt_regs *regs);
 extern bool amd_filter_mce(struct mce *m);
 #else
+#define quirk_zen_ifu							NULL
 static inline bool amd_filter_mce(struct mce *m)			{ return false; };
 #endif
 

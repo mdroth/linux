@@ -208,6 +208,25 @@ static struct smca_hwid smca_hwid_mcatypes[] = {
 };
 
 /*
+ * Zen-based Instruction Fetch Units set EIPV=RIPV=0 on poison consumption
+ * errors (XEC = 12). However, the context is still valid, so behave as if
+ * EIPV=1 to save the IP and CS register for later use.
+ */
+void quirk_zen_ifu(int bank, struct mce *m, struct pt_regs *regs)
+{
+	if ((m->mcgstatus & (MCG_STATUS_EIPV|MCG_STATUS_RIPV)) != 0)
+		return;
+	if (smca_get_bank_type(bank) != SMCA_IF)
+		return;
+	if (XEC(m->status, 0x3F) != 12)
+		return;
+
+	m->mcgstatus |= MCG_STATUS_EIPV;
+	m->ip = regs->ip;
+	m->cs = regs->cs;
+}
+
+/*
  * In SMCA enabled processors, we can have multiple banks for a given IP type.
  * So to define a unique name for each bank, we use a temp c-string to append
  * the MCA_IPID[InstanceId] to type's name in get_name().
