@@ -188,8 +188,10 @@ u32 mca_msr_reg(int bank, enum mca_msr reg);
 extern bool filter_mce(struct mce *m);
 
 #ifdef CONFIG_X86_MCE_AMD
+extern void quirk_zen_ifu(int bank, struct mce *m, struct pt_regs *regs);
 extern bool amd_filter_mce(struct mce *m);
 #else
+static inline void quirk_zen_ifu(int bank, struct mce *m, struct pt_regs *regs) {}
 static inline bool amd_filter_mce(struct mce *m) { return false; }
 #endif
 
