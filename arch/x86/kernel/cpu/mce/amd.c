@@ -142,7 +142,7 @@ const char *smca_get_long_name(enum smca_bank_types t)
 }
 EXPORT_SYMBOL_GPL(smca_get_long_name);
 
-enum smca_bank_types smca_get_bank_type(unsigned int cpu, unsigned int bank)
+noinstr enum smca_bank_types smca_get_bank_type(unsigned int cpu, unsigned int bank)
 {
 	struct smca_bank *b;
 
