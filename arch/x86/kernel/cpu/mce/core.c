@@ -843,6 +843,25 @@ static noinstr bool quirk_skylake_repmov(void)
 }
 
 /*
+ * Zen-based Instruction Fetch Units set EIPV=RIPV=0 on poison consumption
+ * errors (XEC = 12). However, the context is still valid, so behave as if
+ * EIPV=1 to save the IP and CS register for later use.
+ */
+static noinstr void quirk_zen_ifu(int bank, struct mce *m, struct pt_regs *regs)
+{
+	if ((m->mcgstatus & (MCG_STATUS_EIPV|MCG_STATUS_RIPV)) != 0)
+		return;
+	if (smca_get_bank_type(m->extcpu, bank) != SMCA_IF)
+		return;
+	if (XEC(m->status, 0x3F) != 12)
+		return;
+
+	m->mcgstatus |= MCG_STATUS_EIPV;
+	m->ip = regs->ip;
+	m->cs = regs->cs;
+}
+
+/*
  * Do a quick check if any of the events requires a panic.
  * This decides if we keep the events around or clear them.
  */
@@ -860,6 +879,9 @@ static __always_inline int mce_no_way_out(struct mce *m, char **msg, unsigned lo
 		arch___set_bit(i, validp);
 		if (mce_flags.snb_ifu_quirk)
 			quirk_sandybridge_ifu(i, m, regs);
+
+		if (mce_flags.smca)
+			quirk_zen_ifu(i, m, regs);
 
 		m->bank = i;
 		if (mce_severity(m, regs, &tmp, true) >= MCE_PANIC_SEVERITY) {
