@@ -45,4 +45,15 @@ config PERF_EVENTS_AMD_IBS
 	  To compile this driver as a module, choose M here: the
           module will be called 'ibs'.
 
+config PERF_EVENTS_AMD_UNCORE
+	tristate "AMD Uncore performance events"
+	depends on PERF_EVENTS && CPU_SUP_AMD
+	default y
+	help
+	  Include support for AMD uncore performance events for use e.g.,
+	  with perf stat -e amd_{l3,df}/.../.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called 'amd-uncore'.
+
 endmenu
