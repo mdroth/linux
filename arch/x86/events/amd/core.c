@@ -11,6 +11,11 @@
 
 #include "../perf_event.h"
 
+#if IS_ENABLED(CONFIG_PERF_EVENTS_AMD_IBS)
+u32 ibs_caps;
+EXPORT_SYMBOL(ibs_caps);
+#endif
+
 static DEFINE_PER_CPU(unsigned long, perf_nmi_tstamp);
 static unsigned long perf_nmi_window;
 
