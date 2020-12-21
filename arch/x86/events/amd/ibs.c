@@ -18,8 +18,6 @@
 
 #include "../perf_event.h"
 
-static u32 ibs_caps;
-
 #if defined(CONFIG_PERF_EVENTS) && defined(CONFIG_CPU_SUP_AMD)
 
 #include <linux/kprobes.h>
@@ -821,13 +819,6 @@ static __init u32 __get_ibs_caps(void)
 	return caps;
 }
 
-u32 get_ibs_caps(void)
-{
-	return ibs_caps;
-}
-
-EXPORT_SYMBOL(get_ibs_caps);
-
 static inline int get_eilvt(int offset)
 {
 	return !setup_APIC_eilvt(offset, 0, APIC_EILVT_MSG_NMI, 1);
@@ -1069,5 +1060,23 @@ static __init int amd_ibs_init(void)
 	return 0;
 }
 
+static void __exit amd_ibs_exit(void)
+{
+	ibs_caps = 0;
+	unregister_nmi_handler(NMI_LOCAL, "perf_ibs");
+	perf_pmu_unregister(&perf_ibs_op.pmu);
+	free_percpu(perf_ibs_op.pcpu);
+	perf_pmu_unregister(&perf_ibs_fetch.pmu);
+	free_percpu(perf_ibs_fetch.pcpu);
+	cpuhp_remove_state(CPUHP_AP_PERF_X86_AMD_IBS_STARTING);
+#ifdef CONFIG_PM
+	unregister_syscore_ops(&perf_ibs_syscore_ops);
+#endif
+}
+
 /* Since we need the pci subsystem to init ibs we can't do this earlier: */
-device_initcall(amd_ibs_init);
+module_init(amd_ibs_init);
+module_exit(amd_ibs_exit);
+
+MODULE_DESCRIPTION("AMD Instruction Based Sampling (IBS) Driver");
+MODULE_LICENSE("GPL v2");

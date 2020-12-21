@@ -410,8 +410,9 @@ struct pebs_xmm {
 #define IBS_OP_MAX_CNT_EXT_MASK	(0x7FULL<<20)	/* separate upper 7 bits */
 #define IBS_RIP_INVALID		(1ULL<<38)
 
-#ifdef CONFIG_X86_LOCAL_APIC
-extern u32 get_ibs_caps(void);
+#if IS_ENABLED(CONFIG_PERF_EVENTS_AMD_IBS)
+extern u32 ibs_caps;
+static inline u32 get_ibs_caps(void) { return ibs_caps; }
 #else
 static inline u32 get_ibs_caps(void) { return 0; }
 #endif

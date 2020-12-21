@@ -34,4 +34,15 @@ config PERF_EVENTS_AMD_POWER
 	  (CPUID Fn8000_0007_EDX[12]) interface to calculate the
 	  average power consumption on Family 15h processors.
 
+config PERF_EVENTS_AMD_IBS
+	tristate "AMD Instruction Based Sampling (IBS)"
+	depends on PERF_EVENTS && CPU_SUP_AMD && X86_LOCAL_APIC
+	default y
+	help
+	  Include support for AMD Instruction Based Sampling (IBS),
+	  which enables precise instruction sampling.
+
+	  To compile this driver as a module, choose M here: the
+          module will be called 'ibs'.
+
 endmenu
