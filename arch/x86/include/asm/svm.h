@@ -248,12 +248,14 @@ struct vmcb_save_area {
 	u64 br_to;
 	u64 last_excp_from;
 	u64 last_excp_to;
+	u8 reserved_12[72];
+	u32 spec_ctrl;		/* Guest version of SPEC_CTRL at 0x2E0 */
 
 	/*
 	 * The following part of the save area is valid only for
 	 * SEV-ES guests when referenced through the GHCB.
 	 */
-	u8 reserved_7[104];
+	u8 reserved_7[28];
 	u64 reserved_8;		/* rax already available at 0x01f8 */
 	u64 rcx;
 	u64 rdx;
