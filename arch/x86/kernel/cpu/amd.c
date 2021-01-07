@@ -26,6 +26,7 @@
 #endif
 
 #include "cpu.h"
+#include <asm/tlbflush.h>
 
 static const int amd_erratum_383[];
 static const int amd_erratum_400[];
@@ -571,6 +572,9 @@ static void bsp_init_amd(struct cpuinfo_x86 *c)
 			x86_amd_ls_cfg_ssbd_mask = 1ULL << bit;
 		}
 	}
+
+	if (boot_cpu_has(X86_FEATURE_INVLPGB))
+		tlbi_max_pages_per_invalidation = (cpuid_edx(0x80000008) & 0xffff) + 1;
 
 	resctrl_cpu_detect(c);
 }

@@ -52,6 +52,9 @@ static inline void cr4_clear_bits(unsigned long mask)
 	local_irq_restore(flags);
 }
 
+int flush_tlb_kernel_range_tlbi(unsigned long start, unsigned long end, bool global);
+extern unsigned short tlbi_max_pages_per_invalidation;
+
 #ifndef MODULE
 /*
  * 6 because 6 should be plenty and struct tlb_state will fit in two cache
