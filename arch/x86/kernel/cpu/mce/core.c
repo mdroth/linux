@@ -1273,10 +1273,7 @@ static void queue_task_work(struct mce *m, int kill_current_task)
 	current->mce_ripv = !!(m->mcgstatus & MCG_STATUS_RIPV);
 	current->mce_whole_page = whole_page(m);
 
-	if (kill_current_task)
-		current->mce_kill_me.func = kill_me_now;
-	else
-		current->mce_kill_me.func = kill_me_maybe;
+	current->mce_kill_me.func = kill_me_maybe;
 
 	task_work_add(current, &current->mce_kill_me, TWA_RESUME);
 }
