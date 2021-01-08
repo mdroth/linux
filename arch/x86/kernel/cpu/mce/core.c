@@ -1236,14 +1236,6 @@ static void __mc_scan_banks(struct mce *m, struct pt_regs *regs, struct mce *fin
 	*m = *final;
 }
 
-static void kill_me_now(struct callback_head *ch)
-{
-	struct task_struct *p = container_of(ch, struct task_struct, mce_kill_me);
-
-	p->mce_count = 0;
-	force_sig(SIGBUS);
-}
-
 static void kill_me_maybe(struct callback_head *cb)
 {
 	struct task_struct *p = container_of(cb, struct task_struct, mce_kill_me);
@@ -1272,7 +1264,7 @@ static void kill_me_maybe(struct callback_head *cb)
 		return;
 
 	pr_err("Memory error not recovered");
-	kill_me_now(cb);
+	force_sig(SIGBUS);
 }
 
 static void kill_me_never(struct callback_head *cb)
@@ -1462,10 +1454,7 @@ noinstr void do_machine_check(struct pt_regs *regs)
 		/* If this triggers there is no way to recover. Die hard. */
 		BUG_ON(!on_thread_stack() || !user_mode(regs));
 
-		if (kill_current_task)
-			queue_task_work(&m, msg, kill_me_now);
-		else
-			queue_task_work(&m, msg, kill_me_maybe);
+		queue_task_work(&m, msg, kill_me_maybe);
 
 	} else {
 		/*
