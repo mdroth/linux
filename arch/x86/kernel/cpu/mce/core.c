@@ -1248,11 +1248,6 @@ static void __mc_scan_banks(struct mce *m, struct pt_regs *regs, struct mce *fin
 	*m = *final;
 }
 
-static void kill_me_now(struct callback_head *ch)
-{
-	force_sig(SIGBUS);
-}
-
 static void kill_me_maybe(struct callback_head *cb)
 {
 	struct task_struct *p = container_of(cb, struct task_struct, mce_kill_me);
@@ -1274,7 +1269,7 @@ static void kill_me_maybe(struct callback_head *cb)
 		force_sig_mceerr(BUS_MCEERR_AR, p->mce_vaddr, PAGE_SHIFT);
 	} else {
 		pr_err("Memory error not recovered");
-		kill_me_now(cb);
+		force_sig(SIGBUS);
 	}
 }
 
@@ -1285,10 +1280,7 @@ static void queue_task_work(struct mce *m, int kill_current_task)
 	current->mce_ripv = !!(m->mcgstatus & MCG_STATUS_RIPV);
 	current->mce_whole_page = whole_page(m);
 
-	if (kill_current_task)
-		current->mce_kill_me.func = kill_me_now;
-	else
-		current->mce_kill_me.func = kill_me_maybe;
+	current->mce_kill_me.func = kill_me_maybe;
 
 	task_work_add(current, &current->mce_kill_me, TWA_RESUME);
 }
