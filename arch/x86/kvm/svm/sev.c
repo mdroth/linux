@@ -874,6 +874,37 @@ e_free:
 	return ret;
 }
 
+static struct kvm_memory_slot *hva_to_memslot(struct kvm *kvm,
+					      unsigned long hva)
+{
+	struct kvm_memslots *slots = kvm_memslots(kvm);
+	struct kvm_memory_slot *memslot;
+
+	kvm_for_each_memslot(memslot, slots) {
+		if (hva >= memslot->userspace_addr &&
+		    hva < memslot->userspace_addr +
+			      (memslot->npages << PAGE_SHIFT))
+			return memslot;
+	}
+
+	return NULL;
+}
+
+static bool hva_to_gfn(struct kvm *kvm, unsigned long hva, gfn_t *gfn)
+{
+	struct kvm_memory_slot *memslot;
+	gpa_t gpa_offset;
+
+	memslot = hva_to_memslot(kvm, hva);
+	if (!memslot)
+		return false;
+
+	gpa_offset = hva - memslot->userspace_addr;
+	*gfn = ((memslot->base_gfn << PAGE_SHIFT) + gpa_offset) >> PAGE_SHIFT;
+
+	return true;
+}
+
 static int sev_dbg_crypt(struct kvm *kvm, struct kvm_sev_cmd *argp, bool dec)
 {
 	unsigned long vaddr, vaddr_end, next_vaddr;
@@ -902,6 +933,50 @@ static int sev_dbg_crypt(struct kvm *kvm, struct kvm_sev_cmd *argp, bool dec)
 
 	for (; vaddr < vaddr_end; vaddr = next_vaddr) {
 		int len, s_off, d_off;
+
+		if (dec) {
+			struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+			struct page *src_tpage = NULL;
+			gfn_t gfn_start;
+			int srcu_idx;
+
+			/* ensure hva_to_gfn translations remain valid */
+			srcu_idx = srcu_read_lock(&kvm->srcu);
+			if (!hva_to_gfn(kvm, vaddr, &gfn_start)) {
+				srcu_read_unlock(&kvm->srcu, srcu_idx);
+				return -EINVAL;
+			}
+			if (sev->page_enc_bmap) {
+				if (!test_bit(gfn_start, sev->page_enc_bmap)) {
+					src_tpage = alloc_page(GFP_KERNEL);
+					if (!src_tpage) {
+						srcu_read_unlock(&kvm->srcu, srcu_idx);
+						return -ENOMEM;
+					}
+					/*
+					 * Since user buffer may not be page aligned, calculate the
+					 * offset within the page.
+					*/
+					s_off = vaddr & ~PAGE_MASK;
+					d_off = dst_vaddr & ~PAGE_MASK;
+					len = min_t(size_t, (PAGE_SIZE - s_off), size);
+
+					if (copy_from_user(page_address(src_tpage),
+							   (void __user *)(uintptr_t)vaddr, len)) {
+						__free_page(src_tpage);
+						srcu_read_unlock(&kvm->srcu, srcu_idx);
+						return -EFAULT;
+					}
+					if (copy_to_user((void __user *)(uintptr_t)dst_vaddr,
+							 page_address(src_tpage), len)) {
+						ret = -EFAULT;
+					}
+					__free_page(src_tpage);
+					srcu_read_unlock(&kvm->srcu, srcu_idx);
+					goto already_decrypted;
+				}
+			}
+		}
 
 		/* lock userspace source and destination page */
 		src_p = sev_pin_memory(kvm, vaddr & PAGE_MASK, PAGE_SIZE, &n, 0);
@@ -947,6 +1022,7 @@ static int sev_dbg_crypt(struct kvm *kvm, struct kvm_sev_cmd *argp, bool dec)
 		sev_unpin_memory(kvm, src_p, n);
 		sev_unpin_memory(kvm, dst_p, n);
 
+already_decrypted:
 		if (ret)
 			goto err;
 
