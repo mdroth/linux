@@ -1568,6 +1568,7 @@ struct kvm_pv_cmd {
 #define KVM_X86_SET_MSR_FILTER	_IOW(KVMIO,  0xc6, struct kvm_msr_filter)
 
 #define KVM_GET_PAGE_ENC_BITMAP	_IOW(KVMIO, 0xc8, struct kvm_page_enc_bitmap)
+#define KVM_SET_PAGE_ENC_BITMAP	_IOW(KVMIO, 0xc9, struct kvm_page_enc_bitmap)
 
 /* Secure Encrypted Virtualization command */
 enum sev_cmd_id {
