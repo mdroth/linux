@@ -48,6 +48,8 @@ EXPORT_SYMBOL_GPL(sev_enable_key);
 
 bool sev_enabled __section(".data");
 
+bool sev_live_mig_enabled __section(".data");
+
 /* Buffer used for early in-place encryption by BSP, no locking needed */
 static char sme_early_buffer[PAGE_SIZE] __initdata __aligned(PAGE_SIZE);
 
@@ -205,6 +207,9 @@ static void set_memory_enc_dec_hypercall(unsigned long vaddr, int npages,
 {
 	unsigned long sz = npages << PAGE_SHIFT;
 	unsigned long vaddr_end, vaddr_next;
+
+	if (!sev_live_migration_enabled())
+		return;
 
 	vaddr_end = vaddr + sz;
 
@@ -374,6 +379,12 @@ int __init early_set_memory_decrypted(unsigned long vaddr, unsigned long size)
 int __init early_set_memory_encrypted(unsigned long vaddr, unsigned long size)
 {
 	return early_set_memory_enc_dec(vaddr, size, true);
+}
+
+void __init early_set_mem_enc_dec_hypercall(unsigned long vaddr, int npages,
+					bool enc)
+{
+	set_memory_enc_dec_hypercall(vaddr, npages, enc);
 }
 
 /*
