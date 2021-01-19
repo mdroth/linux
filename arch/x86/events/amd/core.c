@@ -11,6 +11,9 @@
 
 #include "../perf_event.h"
 
+u32 ibs_caps;
+EXPORT_SYMBOL(ibs_caps);
+
 static DEFINE_PER_CPU(unsigned long, perf_nmi_tstamp);
 static unsigned long perf_nmi_window;
 

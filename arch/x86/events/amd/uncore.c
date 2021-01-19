@@ -18,7 +18,8 @@
 #include <asm/msr.h>
 #include <asm/smp.h>
 
-#define NUM_COUNTERS_NB		4
+#define NUM_COUNTERS_NB		8
+#define NUM_COUNTERS_DFDBG	4
 #define NUM_COUNTERS_L2		4
 #define NUM_COUNTERS_L3		6
 #define MAX_COUNTERS		6
@@ -44,6 +45,7 @@ struct amd_uncore {
 	int num_counters;
 	int rdpmc_base;
 	u32 msr_base;
+	u32 dbg_msr_base;
 	cpumask_t *active_mask;
 	struct pmu *pmu;
 	struct perf_event *events[MAX_COUNTERS];
@@ -91,7 +93,10 @@ static void amd_uncore_read(struct perf_event *event)
 	 */
 
 	prev = local64_read(&hwc->prev_count);
-	rdpmcl(hwc->event_base_rdpmc, new);
+	if (hwc->event_base_rdpmc)
+		rdpmcl(hwc->event_base_rdpmc, new);
+	else
+		rdmsrl(hwc->event_base, new);
 	local64_set(&hwc->prev_count, new);
 	delta = (new << COUNTER_SHIFT) - (prev << COUNTER_SHIFT);
 	delta >>= COUNTER_SHIFT;
@@ -153,9 +158,19 @@ out:
 	if (hwc->idx == -1)
 		return -EBUSY;
 
-	hwc->config_base = uncore->msr_base + (2 * hwc->idx);
-	hwc->event_base = uncore->msr_base + 1 + (2 * hwc->idx);
-	hwc->event_base_rdpmc = uncore->rdpmc_base + hwc->idx;
+	if (uncore->dbg_msr_base && hwc->idx >= (NUM_COUNTERS_NB - NUM_COUNTERS_DFDBG)) {
+		hwc->config_base = uncore->dbg_msr_base + (2 * (hwc->idx -
+				  (NUM_COUNTERS_NB - NUM_COUNTERS_DFDBG)));
+		hwc->event_base = uncore->dbg_msr_base + (2 * (hwc->idx -
+				  (NUM_COUNTERS_NB - NUM_COUNTERS_DFDBG))) + 1;
+		/* debug MSRs don't have rdpmc assignments */
+		hwc->event_base_rdpmc = 0;
+	} else {
+		hwc->config_base = uncore->msr_base + (2 * hwc->idx);
+		hwc->event_base = uncore->msr_base + 1 + (2 * hwc->idx);
+		hwc->event_base_rdpmc = uncore->rdpmc_base + hwc->idx;
+	}
+
 	hwc->state = PERF_HES_UPTODATE | PERF_HES_STOPPED;
 
 	if (flags & PERF_EF_START)
@@ -380,6 +395,7 @@ static int amd_uncore_cpu_up_prepare(unsigned int cpu)
 		uncore_nb->num_counters = num_counters_nb;
 		uncore_nb->rdpmc_base = RDPMC_BASE_NB;
 		uncore_nb->msr_base = MSR_F15H_NB_PERF_CTL;
+		uncore_nb->dbg_msr_base = MSR_DFDBG_PERF_CTL;
 		uncore_nb->active_mask = &amd_nb_active_mask;
 		uncore_nb->pmu = &amd_nb_pmu;
 		uncore_nb->id = -1;
@@ -667,4 +683,24 @@ fail_nb:
 
 	return ret;
 }
-device_initcall(amd_uncore_init);
+
+static void __exit amd_uncore_exit(void)
+{
+	cpuhp_remove_state(CPUHP_AP_PERF_X86_AMD_UNCORE_ONLINE);
+	cpuhp_remove_state(CPUHP_AP_PERF_X86_AMD_UNCORE_STARTING);
+	cpuhp_remove_state(CPUHP_PERF_X86_AMD_UNCORE_PREP);
+	if (boot_cpu_has(X86_FEATURE_PERFCTR_LLC))
+		perf_pmu_unregister(&amd_llc_pmu);
+	if (boot_cpu_has(X86_FEATURE_PERFCTR_NB))
+		perf_pmu_unregister(&amd_nb_pmu);
+	if (amd_uncore_llc)
+		free_percpu(amd_uncore_llc);
+	if (amd_uncore_nb)
+		free_percpu(amd_uncore_nb);
+}
+
+module_init(amd_uncore_init);
+module_exit(amd_uncore_exit);
+
+MODULE_DESCRIPTION("AMD Uncore Driver");
+MODULE_LICENSE("GPL v2");

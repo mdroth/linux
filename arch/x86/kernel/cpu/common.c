@@ -77,6 +77,7 @@ EXPORT_SYMBOL(smp_num_siblings);
 
 /* Last level cache ID of each logical CPU */
 DEFINE_PER_CPU_READ_MOSTLY(u16, cpu_llc_id) = BAD_APICID;
+EXPORT_PER_CPU_SYMBOL_GPL(cpu_llc_id);
 
 /* correctly size the local cpu masks */
 void __init setup_cpu_local_masks(void)
