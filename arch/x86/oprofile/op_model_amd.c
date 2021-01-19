@@ -45,8 +45,6 @@ static unsigned long reset_value[OP_MAX_COUNTER];
 #define IBS_FETCH_SIZE			6
 #define IBS_OP_SIZE			12
 
-static u32 ibs_caps;
-
 struct ibs_config {
 	unsigned long op_enabled;
 	unsigned long fetch_enabled;
