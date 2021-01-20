@@ -177,6 +177,14 @@ struct vcpu_svm {
 	struct list_head ir_list;
 	spinlock_t ir_list_lock;
 
+	/* Set to 1 for guests that use global ASID.
+	* If all vCPUs for a guest have the same ASID,
+	* that guest is referred to as using global ASID
+	* All SEV(SEV,SEV-ES and SEV-SNP) guests naturally
+	* have global ASIDs
+	*/
+	bool use_global_asid;
+
 	/* Save desired MSR intercept (read: pass-through) state */
 	struct {
 		DECLARE_BITMAP(read, MAX_DIRECT_ACCESS_MSRS);

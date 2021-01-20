@@ -1390,6 +1390,11 @@ static int svm_create_vcpu(struct kvm_vcpu *vcpu)
 	svm_init_osvw(vcpu);
 	vcpu->arch.microcode_version = 0x01000065;
 
+	if (sev_guest(vcpu->kvm))
+		svm->use_global_asid=true;
+	else
+		svm->use_global_asid=false;
+
 	if (sev_es_guest(svm->vcpu.kvm))
 		/* Perform SEV-ES specific VMCB creation updates */
 		sev_es_create_vcpu(svm);
@@ -4050,6 +4055,14 @@ static void svm_vcpu_after_set_cpuid(struct kvm_vcpu *vcpu)
 
 	/* Check again if INVPCID interception if required */
 	svm_check_invpcid(svm);
+
+	if(guest_cpuid_has(vcpu, X86_FEATURE_INVLPGB)) {
+		if(has_global_asid(svm))
+			svm->vmcb->control.nested_ctl |= SVM_NESTED_CTL_INVLPGB_ENABLE;
+		else
+			guest_cpuid_clear(vcpu, X86_FEATURE_INVLPGB);
+	}
+
 
 	/* For sev guests, the memory encryption bit is not reserved in CR3.  */
 	if (sev_guest(vcpu->kvm)) {
