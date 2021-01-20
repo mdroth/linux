@@ -224,6 +224,11 @@ DECLARE_PER_CPU(struct svm_cpu_data *, svm_data);
 
 void recalc_intercepts(struct vcpu_svm *svm);
 
+static inline bool has_global_asid(struct vcpu_svm *svm)
+{
+	return svm->use_global_asid;
+}
+
 static inline struct kvm_svm *to_kvm_svm(struct kvm *kvm)
 {
 	return container_of(kvm, struct kvm_svm, kvm);
