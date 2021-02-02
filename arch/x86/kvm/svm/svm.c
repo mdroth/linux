@@ -1453,8 +1453,7 @@ static void svm_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 		sev_es_vcpu_load(svm, cpu);
 	} else {
 		for (i = 0; i < NR_HOST_SAVE_USER_MSRS; i++)
-			rdmsrl(host_save_user_msrs[i].index,
-			       svm->host_user_msrs[i]);
+			rdmsrl(host_save_user_msrs[i], svm->host_user_msrs[i]);
 
 	    asm volatile(__ex("vmsave %0")
                      : : "a" (__sme_page_pa(sd->save_area)) : "memory");
@@ -1490,8 +1489,7 @@ static void svm_vcpu_put(struct kvm_vcpu *vcpu)
 		sev_es_vcpu_put(svm);
 	} else {
 		for (i = 0; i < NR_HOST_SAVE_USER_MSRS; i++)
-			wrmsrl(host_save_user_msrs[i].index,
-			       svm->host_user_msrs[i]);
+			wrmsrl(host_save_user_msrs[i], svm->host_user_msrs[i]);
 	}
 }
 
