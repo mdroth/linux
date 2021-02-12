@@ -557,6 +557,11 @@ static int sev_es_sync_vmsa(struct vcpu_svm *svm)
 	save->pkru = svm->vcpu.arch.pkru;
 	save->xss  = svm->vcpu.arch.ia32_xss;
 
+	/* Sync registers needed for starting in PAE/long mode (e.g. kselftests) */
+	save->cr0  = svm->vcpu.arch.cr0;
+	save->cr3  = svm->vcpu.arch.cr3;
+	save->cr4  = svm->vcpu.arch.cr4;
+
 	/*
 	 * SEV-ES will use a VMSA that is pointed to by the VMCB, not
 	 * the traditional VMSA that is part of the VMCB. Copy the
@@ -564,6 +569,13 @@ static int sev_es_sync_vmsa(struct vcpu_svm *svm)
 	 * for LAUNCH_UPDATE_VMSA) to be the initial SEV-ES state.
 	 */
 	memcpy(svm->vmsa, save, sizeof(*save));
+
+	pr_warn("vmcb, cr0: %llx\n", save->cr0);
+	pr_warn("vmcb, cr3: %llx\n", save->cr3);
+	pr_warn("vmcb, cr4: %llx\n", save->cr4);
+	pr_warn("vmsa, cr0: %llx\n", ((struct vmcb_save_area *)svm->vmsa)->cr0);
+	pr_warn("vmsa, cr3: %llx\n", ((struct vmcb_save_area *)svm->vmsa)->cr3);
+	pr_warn("vmsa, cr4: %llx\n", ((struct vmcb_save_area *)svm->vmsa)->cr4);
 
 	return 0;
 }
