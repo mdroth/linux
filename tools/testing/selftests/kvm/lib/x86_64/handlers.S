@@ -36,7 +36,9 @@ handle_exception:
 	pop %r15
 
 	/* Discard vector and error code. */
-	add $16, %rsp
+	add $24, %rsp
+	//add $16, %rsp
+	//add $8, %rsp
 	iretq
 
 /*

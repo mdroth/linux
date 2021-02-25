@@ -368,6 +368,7 @@ struct ex_regs {
 	uint64_t r8, r9, r10, r11;
 	uint64_t r12, r13, r14, r15;
 	uint64_t vector;
+	uint64_t test;
 	uint64_t error_code;
 	uint64_t rip;
 	uint64_t cs;
