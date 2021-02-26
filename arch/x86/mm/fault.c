@@ -31,6 +31,7 @@
 #include <asm/pgtable_areas.h>		/* VMALLOC_START, ...		*/
 #include <asm/kvm_para.h>		/* kvm_handle_async_pf		*/
 #include <asm/vdso.h>			/* fixup_vdso_exception()	*/
+#include <asm/sev-snp.h>		/* lookup_rmpentry ...		*/
 
 #define CREATE_TRACE_POINTS
 #include <asm/trace/exceptions.h>
@@ -146,6 +147,75 @@ is_prefetch(struct pt_regs *regs, unsigned long error_code, unsigned long addr)
 
 DEFINE_SPINLOCK(pgd_lock);
 LIST_HEAD(pgd_list);
+
+static void dump_rmpentry(struct page *page, rmpentry_t *e)
+{
+	unsigned long paddr = page_to_pfn(page) << PAGE_SHIFT;
+
+	pr_alert("RMPEntry paddr 0x%lx [assigned=%d immutable=%d pagesize=%d gpa=0x%lx asid=%d "
+		"vmsa=%d validated=%d]\n", paddr, rmpentry_assigned(e), rmpentry_immutable(e),
+		rmpentry_pagesize(e), rmpentry_gpa(e), rmpentry_asid(e), rmpentry_vmsa(e),
+		rmpentry_validated(e));
+	pr_alert("RMPEntry paddr 0x%lx %016llx %016llx\n", paddr, e->high, e->low);
+}
+
+static void show_rmpentry(unsigned long address)
+{
+	struct page *page = virt_to_page(address);
+	rmpentry_t *entry, *large_entry;
+	int level, rmp_level;
+	pgd_t *pgd;
+	pte_t *pte;
+
+	/* Get the RMP entry for the address */
+	entry = lookup_page_in_rmptable(page, &rmp_level);
+	if (!entry) {
+		pr_alert("Failed to read RMP entry for address 0x%lx\n", address);
+		return;
+	}
+
+	dump_rmpentry(page, entry);
+
+	/* If fault occurred on 2MB tablewalk, dump the RMP entry at base of 2MB page. */
+	pgd = __va(read_cr3_pa());
+	pgd += pgd_index(address);
+	pte = lookup_address_in_pgd(pgd, address, &level);
+	if ((level > PG_LEVEL_4K) && (!IS_ALIGNED(address, PMD_SIZE))) {
+		page = virt_to_page(address & PMD_MASK);
+		large_entry = lookup_page_in_rmptable(page, &rmp_level);
+		if (!large_entry) {
+			pr_alert("Failed to read large RMP entry 0x%lx\n", address);
+			return;
+		}
+
+		dump_rmpentry(virt_to_page(address), large_entry);
+	}
+
+	/*
+	 * If the RMP entry at the faulting address was not assigned, then dump may not provide
+	 * any useful debug information. Iterate through the entire 2MB region and dump the RMP
+	 * entries if one of the bit in the RMP entry is set.
+	 */
+	if (!rmpentry_assigned(entry)) {
+		unsigned long start, end;
+
+		start = address & PMD_MASK;
+		end = start + PMD_SIZE;
+
+		for (; end > start; start += PAGE_SIZE) {
+			page = virt_to_page(start);
+
+			entry = lookup_page_in_rmptable(page, &rmp_level);
+			if (!entry)
+				return;
+
+			/* If any of the bits in RMP entry is set then dump it */
+			if (entry->high || entry->low)
+				pr_alert("RMPEntry paddr %lx: %016llx %016llx\n",
+					page_to_pfn(page) << PAGE_SHIFT, entry->high, entry->low);
+		}
+	}
+}
 
 #ifdef CONFIG_X86_32
 static inline pmd_t *vmalloc_sync_one(pgd_t *pgd, unsigned long address)
@@ -580,6 +650,10 @@ show_fault_oops(struct pt_regs *regs, unsigned long error_code, unsigned long ad
 	}
 
 	dump_pagetable(address);
+
+	if (error_code & X86_PF_RMP)
+		show_rmpentry(address);
+
 }
 
 static noinline void
