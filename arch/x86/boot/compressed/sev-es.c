@@ -20,6 +20,7 @@
 #include <asm/fpu/xcr.h>
 #include <asm/ptrace.h>
 #include <asm/svm.h>
+#include <asm/sev-snp.h>
 
 #include "error.h"
 
@@ -117,6 +118,9 @@ static bool early_setup_sev_es(void)
 
 	/* Initialize lookup tables for the instruction decoder */
 	inat_init_tables();
+
+	/* SEV-SNP guest requires the GHCB GPA must be registered */
+	sev_snp_register_ghcb(__pa(&boot_ghcb_page));
 
 	return true;
 }
