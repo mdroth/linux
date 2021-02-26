@@ -67,6 +67,35 @@ struct __packed snp_page_state_change {
 #define X86_RMP_PG_LEVEL(level)	(((level) == PG_LEVEL_4K) ? RMP_PG_SIZE_4K : RMP_PG_SIZE_2M)
 #define RMP_X86_PG_LEVEL(level)	(((level) == RMP_PG_SIZE_4K) ? PG_LEVEL_4K : PG_LEVEL_2M)
 
+/* RMP table entry format (PPR section 2.1.5.2) */
+struct __packed rmpentry {
+	union {
+		struct {
+			uint64_t assigned:1;
+			uint64_t pagesize:1;
+			uint64_t immutable:1;
+			uint64_t rsvd1:9;
+			uint64_t gpa:39;
+			uint64_t asid:10;
+			uint64_t vmsa:1;
+			uint64_t validated:1;
+			uint64_t rsvd2:1;
+		} info;
+		uint64_t low;
+	};
+	uint64_t high;
+};
+
+typedef struct rmpentry rmpentry_t;
+
+#define rmpentry_assigned(x)	((x)->info.assigned)
+#define rmpentry_pagesize(x)	(RMP_X86_PG_LEVEL((x)->info.pagesize))
+#define rmpentry_vmsa(x)	((x)->info.vmsa)
+#define rmpentry_asid(x)	((x)->info.asid)
+#define rmpentry_validated(x)	((x)->info.validated)
+#define rmpentry_gpa(x)		((unsigned long)(x)->info.gpa)
+#define rmpentry_immutable(x)	((x)->info.immutable)
+
 #ifdef CONFIG_AMD_MEM_ENCRYPT
 static inline int __pvalidate(unsigned long vaddr, int rmp_psize, int validate,
 			      unsigned long *rflags)
@@ -92,6 +121,7 @@ void __init early_snp_set_memory_shared(unsigned long vaddr, unsigned long paddr
 		unsigned int npages);
 int snp_set_memory_shared(unsigned long vaddr, unsigned int npages);
 int snp_set_memory_private(unsigned long vaddr, unsigned int npages);
+rmpentry_t *lookup_page_in_rmptable(struct page *page, int *level);
 
 #else	/* !CONFIG_AMD_MEM_ENCRYPT */
 
@@ -114,6 +144,7 @@ early_snp_set_memory_shared(unsigned long vaddr, unsigned long paddr, unsigned i
 }
 static inline int snp_set_memory_shared(unsigned long vaddr, unsigned int npages) { return 0; }
 static inline int snp_set_memory_private(unsigned long vaddr, unsigned int npages) { return 0; }
+static inline rpmentry_t *lookup_page_in_rmptable(struct page *page, int *level) { return 0; }
 
 #endif /* CONFIG_AMD_MEM_ENCRYPT */
 

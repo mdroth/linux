@@ -34,6 +34,8 @@
 
 #include "mm_internal.h"
 
+#define rmptable_page_offset(x)	(0x4000 + (((unsigned long) x) >> 8))
+
 /*
  * Since SME related variables are set early in the boot process they must
  * reside in the .data section so as not to be zeroed out when the .bss
@@ -608,3 +610,40 @@ static int __init mem_encrypt_snp_init(void)
 	return 0;
 }
 late_initcall(mem_encrypt_snp_init);
+
+static inline rmpentry_t *__lookup_entry_in_rmptable(u64 phys, int *level)
+{
+	unsigned long vaddr;
+	rmpentry_t *entry;
+
+	vaddr = rmptable_start + rmptable_page_offset(phys);
+	if (WARN_ON(vaddr > rmptable_end))
+		return NULL;
+
+	entry = (rmpentry_t *)vaddr;
+	*level = RMP_X86_PG_LEVEL(entry->info.pagesize);
+	return entry;
+}
+
+rmpentry_t *lookup_page_in_rmptable(struct page *page, int *level)
+{
+	unsigned long phys = page_to_pfn(page) << PAGE_SHIFT;
+	rmpentry_t *entry, *large_entry;
+
+	if (!static_branch_unlikely(&snp_enable_key))
+		return NULL;
+
+	entry = __lookup_entry_in_rmptable(phys, level);
+	if (!entry)
+		return NULL;
+
+	/* Check if the page is part of the large RMP entry. */
+	if (rmpentry_assigned(entry) && (!IS_ALIGNED(phys, PMD_SIZE))) {
+		large_entry = __lookup_entry_in_rmptable(phys & PMD_MASK, level);
+		if (!large_entry)
+			return NULL;
+	}
+
+	return entry;
+}
+EXPORT_SYMBOL_GPL(lookup_page_in_rmptable);
