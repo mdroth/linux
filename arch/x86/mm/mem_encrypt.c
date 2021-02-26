@@ -30,6 +30,7 @@
 #include <asm/msr.h>
 #include <asm/cmdline.h>
 #include <asm/sev-snp.h>
+#include <linux/io.h>
 
 #include "mm_internal.h"
 
@@ -44,11 +45,15 @@ u64 sev_check_data __section(".data") = 0;
 EXPORT_SYMBOL(sme_me_mask);
 DEFINE_STATIC_KEY_FALSE(sev_enable_key);
 EXPORT_SYMBOL_GPL(sev_enable_key);
+DEFINE_STATIC_KEY_FALSE(snp_enable_key);
+EXPORT_SYMBOL_GPL(snp_enable_key);
 
 bool sev_enabled __section(".data");
 
 /* Buffer used for early in-place encryption by BSP, no locking needed */
 static char sme_early_buffer[PAGE_SIZE] __initdata __aligned(PAGE_SIZE);
+
+static unsigned long rmptable_start, rmptable_end;
 
 /*
  * When SNP is active, this routine changes the page state from private to shared before
@@ -528,3 +533,78 @@ void __init mem_encrypt_init(void)
 	print_mem_encrypt_feature_info();
 }
 
+static __init void snp_enable(void *arg)
+{
+	u64 val;
+
+	rdmsrl_safe(MSR_K8_SYSCFG, &val);
+
+	val |= MSR_K8_SYSCFG_SNP_EN;
+	val |= MSR_K8_SYSCFG_SNP_VMPL_EN;
+
+	wrmsrl(MSR_K8_SYSCFG, val);
+	wrmsrl(MSR_VM_HSAVE_PA, 0);
+}
+
+static __init int rmptable_init(void)
+{
+	u64 rmp_base, rmp_end;
+	unsigned long sz;
+	void *start;
+	u64 val;
+
+	rdmsrl_safe(MSR_AMD64_RMP_BASE, &rmp_base);
+	rdmsrl_safe(MSR_AMD64_RMP_END, &rmp_end);
+
+	if (!rmp_base || !rmp_end) {
+		pr_err("SEV-SNP: Memory for the RMP table is not reserved by the BIOS\n");
+		return 1;
+	}
+
+	sz = rmp_end - rmp_base;
+
+	start = memremap(rmp_base, sz, MEMREMAP_WB);
+	if (!start) {
+		pr_err("SEV-SNP: Failed to map RMP table 0x%llx-0x%llx\n", rmp_base, rmp_end);
+		return 1;
+	}
+
+	/*
+	 * Check if SEV-SNP is already enabled, this can happen if we are coming from kexec boot.
+	 * Do not initialize the RMP table when SEV-SNP is already.
+	 */
+	rdmsrl_safe(MSR_K8_SYSCFG, &val);
+	if (val & MSR_K8_SYSCFG_SNP_EN)
+		goto skip_enable;
+
+	/* initialize the RMP table to zero */
+	memset(start, 0, sz);
+
+	/* flush the caches to ensure that data is written before we enable the SNP */
+	wbinvd_on_all_cpus();
+
+	/* Enable the SNP feature */
+	on_each_cpu(snp_enable, NULL, 1);
+
+skip_enable:
+	rmptable_start = (unsigned long)start;
+	rmptable_end = rmptable_start + sz;
+
+	pr_info("SEV-SNP: RMP table physical 0x%016llx - 0x%016llx\n", rmp_base, rmp_end);
+	return 0;
+}
+
+static int __init mem_encrypt_snp_init(void)
+{
+	if (!boot_cpu_has(X86_FEATURE_SEV_SNP))
+		return 1;
+
+	if (rmptable_init()) {
+		setup_clear_cpu_cap(X86_FEATURE_SEV_SNP);
+		return 1;
+	}
+
+	static_branch_enable(&snp_enable_key);
+	return 0;
+}
+late_initcall(mem_encrypt_snp_init);
