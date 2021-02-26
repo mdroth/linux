@@ -23,6 +23,7 @@
 #include <asm/cpu_entry_area.h>
 #include <asm/stacktrace.h>
 #include <asm/sev-es.h>
+#include <asm/sev-snp.h>
 #include <asm/insn-eval.h>
 #include <asm/fpu/internal.h>
 #include <asm/processor.h>
@@ -88,6 +89,13 @@ struct sev_es_runtime_data {
 	 * is currently unsupported in SEV-ES guests.
 	 */
 	unsigned long dr7;
+
+	/*
+	 * SEV-SNP requires that the GHCB must be registered before using it.
+	 * The flag below will indicate whether the GHCB is registered, if its
+	 * not registered then sev_es_get_ghcb() will perform the registration.
+	 */
+	bool ghcb_registered;
 };
 
 struct ghcb_state {
@@ -194,6 +202,12 @@ static __always_inline struct ghcb *sev_es_get_ghcb(struct ghcb_state *state)
 	} else {
 		state->ghcb = NULL;
 		data->ghcb_active = true;
+	}
+
+	/* SEV-SNP guest requires that GHCB must be registered before using it. */
+	if (sev_snp_active() && !data->ghcb_registered) {
+		sev_snp_register_ghcb(__pa(ghcb));
+		data->ghcb_registered = true;
 	}
 
 	return ghcb;
@@ -569,6 +583,10 @@ static bool __init sev_es_setup_ghcb(void)
 	/* Alright - Make the boot-ghcb public */
 	boot_ghcb = &boot_ghcb_page;
 
+	/* SEV-SNP guest requires that GHCB GPA must be registered */
+	if (sev_snp_active())
+		sev_snp_register_ghcb(__pa(&boot_ghcb_page));
+
 	return true;
 }
 
@@ -658,6 +676,7 @@ static void __init init_ghcb(int cpu)
 
 	data->ghcb_active = false;
 	data->backup_ghcb_active = false;
+	data->ghcb_registered = false;
 }
 
 void __init sev_es_init_vc_handling(void)
