@@ -200,6 +200,10 @@ module_param(sev_es, int, 0444);
 bool __read_mostly dump_invalid_vmcb;
 module_param(dump_invalid_vmcb, bool, 0644);
 
+/* enable/disable SEV-SNP support */
+int sev_snp = IS_ENABLED(CONFIG_AMD_MEM_ENCRYPT_ACTIVE_BY_DEFAULT);
+module_param(sev_snp, int, 0444);
+
 static u8 rsm_ins_bytes[] = "\x0f\xaa";
 
 static void svm_complete_interrupts(struct vcpu_svm *svm);
@@ -986,6 +990,7 @@ static __init int svm_hardware_setup(void)
 	} else {
 		sev = false;
 		sev_es = false;
+		sev_snp = false;
 	}
 
 	svm_adjust_mmio_mask();
