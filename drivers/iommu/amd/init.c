@@ -1537,6 +1537,7 @@ static int __init init_iommu_one(struct amd_iommu *iommu, struct ivhd_header *h)
 	iommu->cap_ptr = h->cap_ptr;
 	iommu->pci_seg = h->pci_seg;
 	iommu->mmio_phys = h->mmio_phys;
+	iommu->ivhd_type = h->type;
 
 	switch (h->type) {
 	case 0x10:
@@ -1577,6 +1578,8 @@ static int __init init_iommu_one(struct amd_iommu *iommu, struct ivhd_header *h)
 
 		if (h->efr_reg & BIT(IOMMU_EFR_XTSUP_SHIFT))
 			amd_iommu_xt_mode = IRQ_REMAP_X2APIC_MODE;
+
+		iommu->features = h->efr_reg;
 		break;
 	default:
 		return -EINVAL;
@@ -1773,6 +1776,7 @@ static const struct attribute_group *amd_iommu_groups[] = {
 static int __init iommu_init_pci(struct amd_iommu *iommu)
 {
 	int cap_ptr = iommu->cap_ptr;
+	u64 features;
 	int ret;
 
 	iommu->dev = pci_get_domain_bus_and_slot(0, PCI_BUS_NUM(iommu->devid),
@@ -1789,8 +1793,21 @@ static int __init iommu_init_pci(struct amd_iommu *iommu)
 	if (!(iommu->cap & (1 << IOMMU_CAP_IOTLB)))
 		amd_iommu_iotlb_sup = false;
 
-	/* read extended feature bits */
-	iommu->features = readq(iommu->mmio_base + MMIO_EXT_FEATURES);
+	features = readq(iommu->mmio_base + MMIO_EXT_FEATURES);
+
+	/*
+	 * Note: Starting from type 0x11, IVHD also contains exact copy
+	 * of the IOMMU Extended Feature Register [MMIO Offset 0030h].
+	 * So, make use of the one from IVHD if available. Otherwise,
+	 * use the value from MMIO, which is available only after PCI
+	 * is initialized.
+	 */
+
+	if ((iommu->ivhd_type >= 0x11) && (features != iommu->features))
+		pr_err(FW_BUG "EFR mismatch. Use IVHD value (%#llx:%#llx\n).",
+		       features, iommu->features);
+	else
+		iommu->features = features;
 
 	if (iommu_feature(iommu, FEATURE_GT)) {
 		int glxval;

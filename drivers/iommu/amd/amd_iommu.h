@@ -86,8 +86,16 @@ static inline bool is_rd890_iommu(struct pci_dev *pdev)
 
 static inline bool iommu_feature(struct amd_iommu *iommu, u64 f)
 {
-	if (!(iommu->cap & (1 << IOMMU_CAP_EFR)))
+	/*
+	 * Prior to IVHD type 0x11, the IOMMU EFR is only available via
+	 * PCI MMIO register, which is available after PCI is initialized.
+	 * Therefore, warn if this function is called prematurely.
+	 */
+	if ((iommu->ivhd_type < 0x11) &&
+	    !(iommu->cap & (1 << IOMMU_CAP_EFR))) {
+		WARN(1, "Prematurely use of iommu_feature.");
 		return false;
+	}
 
 	return !!(iommu->features & f);
 }

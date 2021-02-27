@@ -524,6 +524,9 @@ struct amd_iommu {
 	/* flags read from acpi table */
 	u8 acpi_flags;
 
+	/* IVHD type from ACPI table */
+	u64 ivhd_type;
+
 	/* Extended features */
 	u64 features;
 
