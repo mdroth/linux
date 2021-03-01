@@ -19,6 +19,7 @@
 #include <asm/fpu/internal.h>
 
 #include <asm/trapnr.h>
+#include <asm/sev-snp.h>
 
 #include "x86.h"
 #include "svm.h"
@@ -36,6 +37,9 @@ static unsigned int min_sev_asid;
 static unsigned long *sev_asid_bitmap;
 static unsigned long *sev_reclaim_asid_bitmap;
 static bool snp_active __read_mostly;
+
+static void snp_free_context_page(struct page *page);
+static int snp_decommission_context(struct kvm *kvm);
 
 struct enc_region {
 	struct list_head list;
@@ -1068,6 +1072,168 @@ e_done:
 	return rc;
 }
 
+static int snp_page_reclaim(struct page *page, int rmppage_size)
+{
+	struct sev_data_snp_page_reclaim *data;
+	struct rmpupdate e = {};
+	int rc, error;
+
+	data = kzalloc(sizeof(*data), GFP_KERNEL_ACCOUNT);
+	if (!data)
+		return -ENOMEM;
+
+	data->paddr = __sme_page_pa(page) | rmppage_size;
+	rc = sev_snp_reclaim(data, &error);
+	if (rc)
+		goto e_free;
+
+	rc = rmptable_rmpupdate(page, &e);
+e_free:
+	kfree(data);
+	return rc;
+}
+
+static void snp_free_context_page(struct page *page)
+{
+	/* reclaim the page before changing the attribute */
+	if (snp_page_reclaim(page, RMP_PG_SIZE_4K))
+		return;
+
+	__free_page(page);
+}
+
+static struct page *snp_alloc_context_page(void)
+{
+	struct rmpupdate val = {};
+	struct page *page = NULL;
+	int rc;
+
+	page = alloc_page(GFP_KERNEL);
+	if (!page)
+		return NULL;
+
+	/* Transition the context page to the firmware state.*/
+	val.immutable = 1;
+	val.assigned = 1;
+	val.pagesize = RMP_PG_SIZE_4K;
+	rc = rmptable_rmpupdate(page, &val);
+	if (rc)
+		goto e_free;
+
+	return page;
+e_free:
+	__free_page(page);
+	return NULL;
+}
+
+static struct page *snp_context_create(struct kvm *kvm, struct kvm_sev_cmd *argp)
+{
+	struct sev_data_snp_gctx_create *data;
+	struct page *context = NULL;
+	int rc;
+
+	data = kzalloc(sizeof(*data), GFP_KERNEL_ACCOUNT);
+	if (!data)
+		return NULL;
+
+	/* allocate memory for context page */
+	context = snp_alloc_context_page();
+	if (!context)
+		goto e_free;
+
+	data->gctx_paddr = __sme_page_pa(context);
+	rc = __sev_issue_cmd(argp->sev_fd, SEV_CMD_SNP_GCTX_CREATE, data, &argp->error);
+	if (rc) {
+		snp_free_context_page(context);
+		context = NULL;
+	}
+
+e_free:
+	kfree(data);
+	return context;
+}
+
+static int snp_bind_asid(struct kvm *kvm, int *error)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	struct sev_data_snp_activate *data;
+	int asid = sev_get_asid(kvm);
+	int ret, retry_count = 0;
+
+	data = kmalloc(sizeof(*data), GFP_KERNEL_ACCOUNT);
+	if (!data)
+		return -ENOMEM;
+
+	/* activate ASID on the given context */
+	data->gctx_paddr = __sme_page_pa(sev->snp_context);
+	data->asid   = asid;
+again:
+	ret = sev_issue_cmd(kvm, SEV_CMD_SNP_ACTIVATE, data, error);
+
+	/* Check if the DF_FLUSH is required, and try again */
+	if ((!retry_count) && (ret) && (*error == SEV_RET_DFFLUSH_REQUIRED)) {
+		wbinvd_on_all_cpus();
+
+		ret = sev_guest_snp_df_flush(error);
+		if (ret)
+			goto e_free;
+
+		/* only one retry */
+		retry_count = 1;
+
+		goto again;
+	}
+
+e_free:
+	kfree(data);
+	return ret;
+}
+
+static int snp_launch_start(struct kvm *kvm, struct kvm_sev_cmd *argp)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	struct sev_data_snp_launch_start *start;
+	struct kvm_sev_snp_launch_start params;
+	int rc;
+
+	if (!sev_snp_guest(kvm))
+		return -ENOTTY;
+
+	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data, sizeof(params)))
+		return -EFAULT;
+
+	/* initialize the guest context */
+	sev->snp_context = snp_context_create(kvm, argp);
+	if (!sev->snp_context)
+		return -ENOTTY;
+
+	rc = -ENOMEM;
+	start = kzalloc(sizeof(*start), GFP_KERNEL_ACCOUNT);
+	if (!start)
+		goto e_free_context;
+
+	/* issue the LAUNCH_START command */
+	start->gctx_paddr = __sme_page_pa(sev->snp_context);
+	start->policy = params.policy;
+	rc = __sev_issue_cmd(argp->sev_fd, SEV_CMD_SNP_LAUNCH_START, start, &argp->error);
+	if (rc)
+		goto e_free_context;
+
+	/* Bind ASID to this guest */
+	sev->fd = argp->sev_fd;
+	rc = snp_bind_asid(kvm, &argp->error);
+	if (rc)
+		goto e_free_context;
+
+	goto e_free_start;
+
+e_free_context:
+	snp_decommission_context(kvm);
+e_free_start:
+	kfree(start);
+	return rc;
+}
+
 int svm_mem_enc_op(struct kvm *kvm, void __user *argp)
 {
 	struct kvm_sev_cmd sev_cmd;
@@ -1120,6 +1286,9 @@ int svm_mem_enc_op(struct kvm *kvm, void __user *argp)
 		break;
 	case KVM_SEV_SNP_INIT:
 		r = sev_snp_guest_init(kvm, &sev_cmd);
+		break;
+	case KVM_SEV_SNP_LAUNCH_START:
+		r = snp_launch_start(kvm, &sev_cmd);
 		break;
 	default:
 		r = -EINVAL;
@@ -1240,6 +1409,31 @@ failed:
 	return ret;
 }
 
+static int snp_decommission_context(struct kvm *kvm)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	struct sev_data_snp_decommission *data;
+
+	/* if context is not created then do nothing */
+	if (!sev->snp_context)
+		return 0;
+
+	data = kzalloc(sizeof(*data), GFP_KERNEL_ACCOUNT);
+	if (!data)
+		return -ENOMEM;
+
+	data->gctx_paddr = __sme_page_pa(sev->snp_context);
+	sev_guest_snp_decommission(data, NULL);
+
+	/* free the context page now */
+	snp_free_context_page(sev->snp_context);
+	sev->snp_context = NULL;
+
+	kfree(data);
+
+	return 0;
+}
+
 void sev_vm_destroy(struct kvm *kvm)
 {
 	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
@@ -1272,7 +1466,15 @@ void sev_vm_destroy(struct kvm *kvm)
 
 	mutex_unlock(&kvm->lock);
 
-	sev_unbind_asid(kvm, sev->handle);
+	if (sev_snp_guest(kvm)) {
+		if (snp_decommission_context(kvm)) {
+			pr_err("SEV-SNP: failed to free guest context, leaking asid!\n");
+			return;
+		}
+	} else {
+		sev_unbind_asid(kvm, sev->handle);
+	}
+
 	sev_asid_free(sev->asid);
 }
 
