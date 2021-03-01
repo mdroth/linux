@@ -605,6 +605,7 @@ void sev_es_vcpu_put(struct vcpu_svm *svm);
 void sev_vcpu_deliver_sipi_vector(struct kvm_vcpu *vcpu, u8 vector);
 struct page *snp_safe_alloc_page(struct kvm_vcpu *vcpu);
 int sev_get_tdp_max_page_level(struct kvm_vcpu *vcpu, gpa_t gpa, int max_level);
+void sev_snp_init_vmcb(struct vcpu_svm *svm);
 
 /* vmenter.S */
 

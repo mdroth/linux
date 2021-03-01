@@ -1281,6 +1281,11 @@ static void init_vmcb(struct vcpu_svm *svm)
 			/* Perform SEV-ES specific VMCB updates */
 			sev_es_init_vmcb(svm);
 		}
+
+		if (sev_snp_guest(svm->vcpu.kvm)) {
+			/* Perform SEV-SNP specific VMCB Updates */
+			sev_snp_init_vmcb(svm);
+		}
 	}
 
 	vmcb_mark_all_dirty(svm->vmcb);
