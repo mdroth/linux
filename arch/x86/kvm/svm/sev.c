@@ -2377,6 +2377,28 @@ static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
 				  GHCB_MSR_INFO_POS);
 		break;
 	}
+	case GHCB_MSR_GPA_REGISTER_REQ: {
+		kvm_pfn_t pfn;
+		u64 gfn;
+
+		gfn = get_ghcb_msr_bits(svm,
+					GHCB_MSR_GPA_REGISTER_VALUE_MASK,
+					GHCB_MSR_GPA_REGISTER_VALUE_POS);
+
+		pfn = kvm_vcpu_gfn_to_pfn(vcpu, gfn);
+		if (is_error_noslot_pfn(pfn))
+			gfn = GHCB_MSR_GPA_REGISTER_ERROR;
+		else
+			svm->ghcb_registered_gpa = gfn_to_gpa(gfn);
+
+		set_ghcb_msr_bits(svm, gfn,
+				  GHCB_MSR_GPA_REGISTER_VALUE_MASK,
+				  GHCB_MSR_GPA_REGISTER_VALUE_POS);
+		set_ghcb_msr_bits(svm, GHCB_MSR_GPA_REGISTER_RESP,
+				  GHCB_MSR_INFO_MASK,
+				  GHCB_MSR_INFO_POS);
+		break;
+	}
 	case GHCB_MSR_TERM_REQ: {
 		u64 reason_set, reason_code;
 
@@ -2414,6 +2436,12 @@ int sev_handle_vmgexit(struct vcpu_svm *svm)
 
 	if (!ghcb_gpa) {
 		vcpu_unimpl(&svm->vcpu, "vmgexit: GHCB gpa is not set\n");
+		return -EINVAL;
+	}
+
+	/* SEV-SNP guest requires that the GHCB GPA must be registered */
+	if (sev_snp_guest(svm->vcpu.kvm) && !ghcb_gpa_is_registered(svm, ghcb_gpa)) {
+		vcpu_unimpl(&svm->vcpu, "vmgexit: GHCB GPA [%#llx] is not registered.\n", ghcb_gpa);
 		return -EINVAL;
 	}
 

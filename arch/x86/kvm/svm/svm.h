@@ -194,6 +194,8 @@ struct vcpu_svm {
 	u64 ghcb_sa_len;
 	bool ghcb_sa_sync;
 	bool ghcb_sa_free;
+
+	u64 ghcb_registered_gpa;
 };
 
 struct svm_cpu_data {
@@ -252,6 +254,13 @@ static inline bool sev_snp_guest(struct kvm *kvm)
 #else
 	return false;
 #endif
+}
+
+#define GHCB_GPA_INVALID	0xffffffffffffffff
+
+static inline bool ghcb_gpa_is_registered(struct vcpu_svm *svm, u64 val)
+{
+	return svm->ghcb_registered_gpa == val;
 }
 
 static inline void vmcb_mark_all_dirty(struct vmcb *vmcb)
@@ -579,6 +588,12 @@ void svm_vcpu_unblocking(struct kvm_vcpu *vcpu);
 #define GHCB_MSR_TERM_REASON_SET_MASK	0xf
 #define GHCB_MSR_TERM_REASON_POS	16
 #define GHCB_MSR_TERM_REASON_MASK	0xff
+
+#define GHCB_MSR_GPA_REGISTER_REQ		0x012
+#define GHCB_MSR_GPA_REGISTER_VALUE_POS		12
+#define GHCB_MSR_GPA_REGISTER_VALUE_MASK	0xfffffffffffff
+#define GHCB_MSR_GPA_REGISTER_RESP		0x013
+#define GHCB_MSR_GPA_REGISTER_ERROR		0xfffffffffffff
 
 extern unsigned int max_sev_asid;
 
