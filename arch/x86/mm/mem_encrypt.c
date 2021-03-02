@@ -672,11 +672,19 @@ EXPORT_SYMBOL_GPL(rmptable_psmash);
 int rmptable_rmpupdate(struct page *page, struct rmpupdate *val)
 {
 	unsigned long spa = page_to_pfn(page) << PAGE_SHIFT;
+	unsigned long vaddr;
 	bool flush = true;
 	int ret;
 
 	if (!static_branch_unlikely(&snp_enable_key))
 		return -ENXIO;
+
+	vaddr = (unsigned long)page_to_virt(page);
+	ret = set_memory_4k(vaddr, 1);
+	if (ret) {
+		pr_err("Failed to split spa 0x%lx vaddr=0x%lx to 4K rc=%d.\n", spa, vaddr, ret);
+		return ret;
+	}
 
 retry:
 	asm volatile(".byte 0xF2, 0x0F, 0x01, 0xFE"
