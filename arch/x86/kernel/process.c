@@ -322,6 +322,18 @@ void arch_setup_new_exec(void)
 		task_clear_spec_ssb_noexec(current);
 		speculation_ctrl_update(task_thread_info(current)->flags);
 	}
+
+	/*
+	 * Don't inherit TIF_PSFD across exec boundary when
+	 * PR_SPEC_DISABLE_NOEXEC is used.
+	 */
+	if (test_thread_flag(TIF_PSFD) &&
+	    task_spec_ssb_noexec(current)) {
+		clear_thread_flag(TIF_PSFD);
+		task_clear_spec_psf_disable(current);
+		task_clear_spec_psf_noexec(current);
+		speculation_ctrl_update(task_thread_info(current)->flags);
+	}
 }
 
 #ifdef CONFIG_X86_IOPL_IOPERM
@@ -547,6 +559,12 @@ static __always_inline void __speculation_ctrl_update(unsigned long tifp,
 		msr |= ssbd_tif_to_spec_ctrl(tifn);
 	}
 
+	/* Handle change of TIF_PSFD if CPU supports PSFD */
+	if (static_cpu_has(X86_FEATURE_AMD_PSFD)) {
+		updmsr |= !!(tif_diff & _TIF_PSFD);
+		msr |= psfd_tif_to_spec_ctrl(tifn);
+	}
+
 	/* Only evaluate TIF_SPEC_IB if conditional STIBP is enabled. */
 	if (IS_ENABLED(CONFIG_SMP) &&
 	    static_branch_unlikely(&switch_to_cond_stibp)) {
@@ -570,6 +588,11 @@ static unsigned long speculation_ctrl_update_tif(struct task_struct *tsk)
 			set_tsk_thread_flag(tsk, TIF_SPEC_IB);
 		else
 			clear_tsk_thread_flag(tsk, TIF_SPEC_IB);
+
+		if (task_spec_psf_disable(tsk))
+			set_tsk_thread_flag(tsk, TIF_PSFD);
+		else
+			clear_tsk_thread_flag(tsk, TIF_PSFD);
 	}
 	/* Return the updated threadinfo flags*/
 	return task_thread_info(tsk)->flags;

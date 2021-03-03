@@ -76,6 +76,18 @@ static inline u64 ssbd_tif_to_amd_ls_cfg(u64 tifn)
 	return (tifn & _TIF_SSBD) ? x86_amd_ls_cfg_ssbd_mask : 0ULL;
 }
 
+static inline u64 psfd_tif_to_spec_ctrl(u64 tifn)
+{
+	BUILD_BUG_ON(TIF_PSFD < SPEC_CTRL_PSFD_SHIFT);
+	return (tifn & _TIF_PSFD) >> (TIF_PSFD - SPEC_CTRL_PSFD_SHIFT);
+}
+
+static inline unsigned long psfd_spec_ctrl_to_tif(u64 spec_ctrl)
+{
+	BUILD_BUG_ON(TIF_PSFD < SPEC_CTRL_PSFD_SHIFT);
+	return (spec_ctrl & SPEC_CTRL_PSFD) << (TIF_PSFD - SPEC_CTRL_PSFD_SHIFT);
+}
+
 #ifdef CONFIG_SMP
 extern void speculative_store_bypass_ht_init(void);
 #else

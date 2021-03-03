@@ -198,6 +198,14 @@ enum ssb_mitigation {
 	SPEC_STORE_BYPASS_SECCOMP,
 };
 
+/* The Predictive Store Forwarding disable variants */
+enum psf_mitigation {
+	PREDICTIVE_STORE_FORWARD_NONE,
+	PREDICTIVE_STORE_FORWARD_DISABLE,
+	PREDICTIVE_STORE_FORWARD_PRCTL,
+	PREDICTIVE_STORE_FORWARD_SECCOMP,
+};
+
 extern char __indirect_thunk_start[];
 extern char __indirect_thunk_end[];
 

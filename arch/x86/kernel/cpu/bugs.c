@@ -38,6 +38,7 @@
 static void __init spectre_v1_select_mitigation(void);
 static void __init spectre_v2_select_mitigation(void);
 static void __init ssb_select_mitigation(void);
+static void __init psf_select_mitigation(void);
 static void __init l1tf_select_mitigation(void);
 static void __init mds_select_mitigation(void);
 static void __init mds_print_mitigation(void);
@@ -107,6 +108,7 @@ void __init check_bugs(void)
 	spectre_v1_select_mitigation();
 	spectre_v2_select_mitigation();
 	ssb_select_mitigation();
+	psf_select_mitigation();
 	l1tf_select_mitigation();
 	mds_select_mitigation();
 	taa_select_mitigation();
@@ -1196,6 +1198,134 @@ static void ssb_select_mitigation(void)
 }
 
 #undef pr_fmt
+#define pr_fmt(fmt)     "Predictive Store Forwarding: " fmt
+
+static enum psf_mitigation psf_mode __ro_after_init = PREDICTIVE_STORE_FORWARD_NONE;
+
+enum psf_mitigation_cmd {
+	PREDICTIVE_STORE_FORWARD_CMD_NONE,
+	PREDICTIVE_STORE_FORWARD_CMD_AUTO,
+	PREDICTIVE_STORE_FORWARD_CMD_ON,
+	PREDICTIVE_STORE_FORWARD_CMD_PRCTL,
+	PREDICTIVE_STORE_FORWARD_CMD_SECCOMP,
+};
+
+static const char * const psf_strings[] = {
+	[PREDICTIVE_STORE_FORWARD_NONE]		= "Vulnerable",
+	[PREDICTIVE_STORE_FORWARD_DISABLE]	= "Mitigation: Predictive Store Forwarding disabled",
+	[PREDICTIVE_STORE_FORWARD_PRCTL]	= "Mitigation: Predictive Store Forwarding disabled via prctl",
+	[PREDICTIVE_STORE_FORWARD_SECCOMP]	= "Mitigation: Predictive Store Forwarding disabled via prctl and seccomp",
+};
+
+static const struct {
+	const char *option;
+	enum psf_mitigation_cmd cmd;
+} psf_mitigation_options[]  __initconst = {
+	{ "auto",	PREDICTIVE_STORE_FORWARD_CMD_AUTO },    /* Platform decides */
+	{ "on",		PREDICTIVE_STORE_FORWARD_CMD_ON },      /* Disable Predictive Store Forwarding*/
+	{ "off",	PREDICTIVE_STORE_FORWARD_CMD_NONE },    /* Don't touch Predictive Store Forwarding */
+	{ "prctl",	PREDICTIVE_STORE_FORWARD_CMD_PRCTL },   /* Disable Predictive Store Forwarding via prctl */
+	{ "seccomp",	PREDICTIVE_STORE_FORWARD_CMD_SECCOMP }, /* Disable Predictive Store Forwarding via prctl and seccomp */
+};
+
+static enum psf_mitigation_cmd __init psf_parse_cmdline(void)
+{
+	enum psf_mitigation_cmd cmd = PREDICTIVE_STORE_FORWARD_CMD_AUTO;
+	char arg[20];
+	int ret, i;
+
+	if (cmdline_find_option_bool(boot_command_line, "nopsfd") ||
+	    cpu_mitigations_off()) {
+		return PREDICTIVE_STORE_FORWARD_CMD_NONE;
+	} else {
+		ret = cmdline_find_option(boot_command_line, "psfd",
+					  arg, sizeof(arg));
+		if (ret < 0)
+			return PREDICTIVE_STORE_FORWARD_CMD_AUTO;
+
+		for (i = 0; i < ARRAY_SIZE(psf_mitigation_options); i++) {
+			if (!match_option(arg, ret, psf_mitigation_options[i].option))
+				continue;
+
+			cmd = psf_mitigation_options[i].cmd;
+			break;
+		}
+
+		if (i >= ARRAY_SIZE(psf_mitigation_options)) {
+			pr_err("unknown option (%s). Switching to AUTO select\n", arg);
+			return PREDICTIVE_STORE_FORWARD_CMD_AUTO;
+		}
+	}
+
+	return cmd;
+}
+
+static enum psf_mitigation __init __psf_select_mitigation(void)
+{
+	enum psf_mitigation mode = PREDICTIVE_STORE_FORWARD_NONE;
+	enum psf_mitigation_cmd cmd;
+
+	if (!boot_cpu_has(X86_FEATURE_PSFD))
+		return mode;
+
+	cmd = psf_parse_cmdline();
+	if (!boot_cpu_has_bug(X86_BUG_PSF) &&
+	    (cmd == PREDICTIVE_STORE_FORWARD_CMD_NONE ||
+	     cmd == PREDICTIVE_STORE_FORWARD_CMD_AUTO))
+		return mode;
+
+	switch (cmd) {
+	case PREDICTIVE_STORE_FORWARD_CMD_AUTO:
+	case PREDICTIVE_STORE_FORWARD_CMD_SECCOMP:
+		/*
+		 * Choose prctl+seccomp as the default mode if seccomp is
+		 * enabled.
+		 */
+		if (IS_ENABLED(CONFIG_SECCOMP))
+			mode = PREDICTIVE_STORE_FORWARD_SECCOMP;
+		else
+			mode = PREDICTIVE_STORE_FORWARD_PRCTL;
+		break;
+	case PREDICTIVE_STORE_FORWARD_CMD_ON:
+		mode = PREDICTIVE_STORE_FORWARD_DISABLE;
+		break;
+	case PREDICTIVE_STORE_FORWARD_CMD_PRCTL:
+		mode = PREDICTIVE_STORE_FORWARD_PRCTL;
+		break;
+	case PREDICTIVE_STORE_FORWARD_CMD_NONE:
+		break;
+	}
+
+	x86_spec_ctrl_mask |= SPEC_CTRL_PSFD;
+
+	/*
+	 * Disabling SSB automatically disables PSF
+	 * at the micro architectural level for AMD
+	 * Zen3 CPUs
+	 *
+	 * The following statement reflects this
+	 * at the software level
+	 */
+	if (ssb_mode == SPEC_STORE_BYPASS_DISABLE &&
+	    boot_cpu_has(X86_FEATURE_AMD_PSFD))
+		mode = PREDICTIVE_STORE_FORWARD_DISABLE;
+
+	if (mode == PREDICTIVE_STORE_FORWARD_DISABLE) {
+		x86_spec_ctrl_base |= SPEC_CTRL_PSFD;
+		wrmsrl(MSR_IA32_SPEC_CTRL, x86_spec_ctrl_base);
+	}
+
+	return mode;
+}
+
+static void psf_select_mitigation(void)
+{
+	psf_mode = __psf_select_mitigation();
+	if (boot_cpu_has_bug(X86_BUG_PSF))
+		pr_info("%s\n", psf_strings[psf_mode]);
+}
+
+#undef pr_fmt
 #define pr_fmt(fmt)     "Speculation prctl: " fmt
 
 static void task_update_spec_tif(struct task_struct *tsk)
@@ -1213,6 +1343,45 @@ static void task_update_spec_tif(struct task_struct *tsk)
 	 */
 	if (tsk == current)
 		speculation_ctrl_update_current();
+}
+
+static int psf_prctl_set(struct task_struct *task, unsigned long ctrl)
+{
+	if (psf_mode != PREDICTIVE_STORE_FORWARD_PRCTL &&
+	    psf_mode != PREDICTIVE_STORE_FORWARD_SECCOMP)
+		return -ENXIO;
+
+	switch (ctrl) {
+	case PR_SPEC_ENABLE:
+		/* If speculation is force disabled, enable is not allowed */
+		if (task_spec_psf_force_disable(task))
+			return -EPERM;
+		task_clear_spec_psf_disable(task);
+		task_clear_spec_psf_noexec(task);
+		task_update_spec_tif(task);
+		break;
+	case PR_SPEC_DISABLE:
+		task_set_spec_psf_disable(task);
+		task_clear_spec_psf_noexec(task);
+		task_update_spec_tif(task);
+		break;
+	case PR_SPEC_FORCE_DISABLE:
+		task_set_spec_psf_disable(task);
+		task_set_spec_psf_force_disable(task);
+		task_clear_spec_psf_noexec(task);
+		task_update_spec_tif(task);
+		break;
+	case PR_SPEC_DISABLE_NOEXEC:
+		if (task_spec_psf_force_disable(task))
+			return -EPERM;
+		task_set_spec_psf_disable(task);
+		task_set_spec_psf_noexec(task);
+		task_update_spec_tif(task);
+		break;
+	default:
+		return -ERANGE;
+	}
+	return 0;
 }
 
 static int ssb_prctl_set(struct task_struct *task, unsigned long ctrl)
@@ -1324,6 +1493,8 @@ int arch_prctl_spec_ctrl_set(struct task_struct *task, unsigned long which,
 		return ssb_prctl_set(task, ctrl);
 	case PR_SPEC_INDIRECT_BRANCH:
 		return ib_prctl_set(task, ctrl);
+	case PR_SPEC_PSF:
+		return psf_prctl_set(task, ctrl);
 	default:
 		return -ENODEV;
 	}
@@ -1334,11 +1505,34 @@ void arch_seccomp_spec_mitigate(struct task_struct *task)
 {
 	if (ssb_mode == SPEC_STORE_BYPASS_SECCOMP)
 		ssb_prctl_set(task, PR_SPEC_FORCE_DISABLE);
+	if (psf_mode == PREDICTIVE_STORE_FORWARD_SECCOMP)
+		psf_prctl_set(task, PR_SPEC_FORCE_DISABLE);
 	if (spectre_v2_user_ibpb == SPECTRE_V2_USER_SECCOMP ||
 	    spectre_v2_user_stibp == SPECTRE_V2_USER_SECCOMP)
 		ib_prctl_set(task, PR_SPEC_FORCE_DISABLE);
 }
 #endif
+
+static int psf_prctl_get(struct task_struct *task)
+{
+	switch (psf_mode) {
+	case PREDICTIVE_STORE_FORWARD_DISABLE:
+		return PR_SPEC_DISABLE;
+	case PREDICTIVE_STORE_FORWARD_SECCOMP:
+	case PREDICTIVE_STORE_FORWARD_PRCTL:
+		if (task_spec_psf_force_disable(task))
+			return PR_SPEC_PRCTL | PR_SPEC_FORCE_DISABLE;
+		if (task_spec_psf_noexec(task))
+			return PR_SPEC_PRCTL | PR_SPEC_DISABLE_NOEXEC;
+		if (task_spec_psf_disable(task))
+			return PR_SPEC_PRCTL | PR_SPEC_DISABLE;
+		return PR_SPEC_PRCTL | PR_SPEC_ENABLE;
+	default:
+		if (boot_cpu_has_bug(X86_BUG_PSF))
+			return PR_SPEC_ENABLE;
+		return PR_SPEC_NOT_AFFECTED;
+	}
+}
 
 static int ssb_prctl_get(struct task_struct *task)
 {
@@ -1390,6 +1584,8 @@ int arch_prctl_spec_ctrl_get(struct task_struct *task, unsigned long which)
 		return ssb_prctl_get(task);
 	case PR_SPEC_INDIRECT_BRANCH:
 		return ib_prctl_get(task);
+	case PR_SPEC_PSF:
+		return psf_prctl_get(task);
 	default:
 		return -ENODEV;
 	}

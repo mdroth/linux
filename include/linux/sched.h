@@ -1619,6 +1619,10 @@ static inline bool is_percpu_thread(void)
 #define PFA_SPEC_IB_DISABLE		5	/* Indirect branch speculation restricted */
 #define PFA_SPEC_IB_FORCE_DISABLE	6	/* Indirect branch speculation permanently restricted */
 #define PFA_SPEC_SSB_NOEXEC		7	/* Speculative Store Bypass clear on execve() */
+#define PFA_SPEC_PSF_DISABLE		8	/* Predictive Store Forwarding disabled */
+#define PFA_SPEC_PSF_FORCE_DISABLE	9	/* Predictive Store Forwarding force disabled */
+#define PFA_SPEC_PSF_NOEXEC		10	/* Predictive Store Forwarding clear on execve */
+
 
 #define TASK_PFA_TEST(name, func)					\
 	static inline bool task_##func(struct task_struct *p)		\
@@ -1660,6 +1664,17 @@ TASK_PFA_CLEAR(SPEC_IB_DISABLE, spec_ib_disable)
 
 TASK_PFA_TEST(SPEC_IB_FORCE_DISABLE, spec_ib_force_disable)
 TASK_PFA_SET(SPEC_IB_FORCE_DISABLE, spec_ib_force_disable)
+
+TASK_PFA_TEST(SPEC_PSF_DISABLE, spec_psf_disable)
+TASK_PFA_SET(SPEC_PSF_DISABLE, spec_psf_disable)
+TASK_PFA_CLEAR(SPEC_PSF_DISABLE, spec_psf_disable)
+
+TASK_PFA_TEST(SPEC_PSF_NOEXEC, spec_psf_noexec)
+TASK_PFA_SET(SPEC_PSF_NOEXEC, spec_psf_noexec)
+TASK_PFA_CLEAR(SPEC_PSF_NOEXEC, spec_psf_noexec)
+
+TASK_PFA_TEST(SPEC_PSF_FORCE_DISABLE, spec_psf_force_disable)
+TASK_PFA_SET(SPEC_PSF_FORCE_DISABLE, spec_psf_force_disable)
 
 static inline void
 current_restore_flags(unsigned long orig_flags, unsigned long flags)
