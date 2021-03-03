@@ -2700,5 +2700,18 @@ struct page *snp_safe_alloc_page(struct kvm_vcpu *vcpu)
 
 int sev_get_tdp_max_page_level(struct kvm_vcpu *vcpu, gpa_t gpa, int max_level)
 {
-	return max_level;
+	int level = max_level;
+	rmpentry_t *e;
+	kvm_pfn_t pfn;
+
+	if (!sev_snp_guest(vcpu->kvm))
+		return max_level;
+
+	pfn = gfn_to_pfn(vcpu->kvm, gpa_to_gfn(gpa));
+	if (is_error_noslot_pfn(pfn))
+		return max_level;
+
+	e = lookup_page_in_rmptable(pfn_to_page(pfn), &level);
+
+	return min_t(uint32_t, level, max_level);
 }
