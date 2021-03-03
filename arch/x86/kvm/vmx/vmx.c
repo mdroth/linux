@@ -7587,6 +7587,12 @@ static int vmx_cpu_dirty_log_size(void)
 	return enable_pml ? PML_ENTITY_NUM : 0;
 }
 
+
+static int vmx_get_tdp_max_page_level(struct kvm_vcpu *vcpu, gpa_t gpa, int max_level)
+{
+	return max_level;
+}
+
 static struct kvm_x86_ops vmx_x86_ops __initdata = {
 	.hardware_unsetup = hardware_unsetup,
 
@@ -7720,6 +7726,8 @@ static struct kvm_x86_ops vmx_x86_ops __initdata = {
 	.cpu_dirty_log_size = vmx_cpu_dirty_log_size,
 
 	.vcpu_deliver_sipi_vector = kvm_vcpu_deliver_sipi_vector,
+
+	.get_tdp_max_page_level = vmx_get_tdp_max_page_level,
 };
 
 static __init int hardware_setup(void)
