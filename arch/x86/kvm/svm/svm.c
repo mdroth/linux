@@ -4564,6 +4564,7 @@ static struct kvm_x86_ops svm_x86_ops __initdata = {
 
 	.alloc_apic_backing_page = svm_alloc_apic_backing_page,
 	.get_tdp_max_page_level = sev_get_tdp_max_page_level,
+	.handle_rmp_page_fault = snp_handle_rmp_page_fault,
 };
 
 static struct kvm_x86_init_ops svm_init_ops __initdata = {
