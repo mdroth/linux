@@ -595,6 +595,17 @@ void svm_vcpu_unblocking(struct kvm_vcpu *vcpu);
 #define GHCB_MSR_GPA_REGISTER_RESP		0x013
 #define GHCB_MSR_GPA_REGISTER_ERROR		0xfffffffffffff
 
+#define GHCB_MSR_PAGE_STATE_CHANGE_REQ		0x014
+#define	GHCB_MSR_PAGE_STATE_CHANGE_GFN_POS	12
+#define	GHCB_MSR_PAGE_STATE_CHANGE_GFN_MASK	0xffffffffff
+#define	GHCB_MSR_PAGE_STATE_CHANGE_OP_POS	52
+#define	GHCB_MSR_PAGE_STATE_CHANGE_OP_MASK	0xf
+#define GHCB_MSR_PAGE_STATE_CHANGE_RESP		0x015
+#define	GHCB_MSR_PAGE_STATE_CHANGE_ERROR_POS	32
+#define	GHCB_MSR_PAGE_STATE_CHANGE_ERROR_MASK	0xffffffff
+#define	GHCB_MSR_PAGE_STATE_CHANGE_RSVD_POS	12
+#define	GHCB_MSR_PAGE_STATE_CHANGE_RSVD_MASK	0xfffff
+
 extern unsigned int max_sev_asid;
 
 static inline bool svm_sev_enabled(void)

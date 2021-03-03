@@ -25,6 +25,7 @@
 #include "svm.h"
 #include "cpuid.h"
 #include "trace.h"
+#include "mmu.h"
 
 #define __ex(x) __kvm_handle_fault_on_reboot(x)
 
@@ -2321,6 +2322,131 @@ static void set_ghcb_msr(struct vcpu_svm *svm, u64 value)
 	svm->vmcb->control.ghcb_gpa = value;
 }
 
+static int snp_rmptable_psmash(struct kvm_vcpu *vcpu, kvm_pfn_t pfn)
+{
+	pfn = pfn & ~(KVM_PAGES_PER_HPAGE(PG_LEVEL_2M) - 1);
+
+	/* Split the 2MB-page RMP entry into a corresponding set of contiguous 4KB-page RMP entry */
+	return rmptable_psmash(pfn_to_page(pfn));
+}
+
+static int snp_page_shared(struct kvm_vcpu *vcpu, gpa_t gpa, kvm_pfn_t pfn, int level)
+{
+	struct rmpupdate val;
+	int rc, rmp_level;
+	rmpentry_t *e;
+
+	e = lookup_page_in_rmptable(pfn_to_page(pfn), &rmp_level);
+	if (!e)
+		return -EINVAL;
+
+	if (!rmpentry_assigned(e))
+		return 0;
+
+	/* Log if the entry is validated */
+	if (rmpentry_validated(e))
+		pr_debug_ratelimited("Remove RMP entry for a validated gpa 0x%llx\n", gpa);
+
+	/*
+	 * Is the page part of an existing 2M RMP entry ? Split the 2MB into multiple of 4K-page
+	 * before making the memory shared.
+	 */
+	if ((level == PG_LEVEL_4K) && (rmp_level == PG_LEVEL_2M)) {
+		rc = snp_rmptable_psmash(vcpu, pfn);
+		if (rc)
+			return rc;
+	}
+
+	memset(&val, 0, sizeof(val));
+	val.pagesize = X86_RMP_PG_LEVEL(level);
+	return rmptable_rmpupdate(pfn_to_page(pfn), &val);
+}
+
+static int snp_page_private(struct kvm_vcpu *vcpu, gpa_t gpa, kvm_pfn_t pfn, int level)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(vcpu->kvm)->sev_info;
+	struct rmpupdate val;
+	int rmp_level;
+	rmpentry_t *e;
+
+	e = lookup_page_in_rmptable(pfn_to_page(pfn), &rmp_level);
+	if (!e)
+		return -EINVAL;
+
+	/*
+	 * Log if the page is already validated. A guest should have invalidated it before
+	 * requesting the page state change.
+	 */
+	if (rmpentry_validated(e))
+		pr_err_ratelimited("Asked to make a pre-validated gpa %llx private\n", gpa);
+
+	memset(&val, 0, sizeof(val));
+	val.gpa = gpa;
+	val.asid = sev->asid;
+	val.pagesize = X86_RMP_PG_LEVEL(level);
+	val.assigned = true;
+
+	return rmptable_rmpupdate(pfn_to_page(pfn), &val);
+}
+
+static int __snp_handle_page_state_change(struct kvm_vcpu *vcpu, int op, gpa_t gpa, int level)
+{
+	struct kvm *kvm = vcpu->kvm;
+	gpa_t end, next_gpa;
+	int rc, tdp_level;
+	kvm_pfn_t pfn;
+
+	end = gpa + page_level_size(level);
+
+	for (; end > gpa; gpa = next_gpa) {
+		/*
+		 * Get the pfn and level for the gpa from the nested page table.
+		 *
+		 * If the TDP walk failed, then its safe to say that we don't have a valid
+		 * mapping for the gpa in the nested page table. Create a fault to map the
+		 * page is nested page table.
+		 */
+		if (!kvm_mmu_get_tdp_walk(vcpu, gpa, &pfn, &tdp_level)) {
+
+			pfn = kvm_mmu_map_tdp_page(vcpu, gpa, PFERR_USER_MASK, level);
+			if (is_error_noslot_pfn(pfn))
+				goto out;
+
+			if (!kvm_mmu_get_tdp_walk(vcpu, gpa, &pfn, &tdp_level))
+				goto out;
+		}
+
+		/* Adjust the level so that we don't go higher than the backing page level */
+		level = min_t(size_t, level, tdp_level);
+
+		spin_lock(&kvm->mmu_lock);
+
+		switch (op) {
+		case SNP_PAGE_STATE_SHARED:
+			rc = snp_page_shared(vcpu, gpa, pfn, level);
+			break;
+		case SNP_PAGE_STATE_PRIVATE:
+			rc = snp_page_private(vcpu, gpa, pfn, level);
+			break;
+		default:
+			rc = -EINVAL;
+			break;
+		}
+
+		spin_unlock(&kvm->mmu_lock);
+
+		if (rc) {
+			pr_err_ratelimited("Error op %d gpa %llx pfn %llx level %d rc %d\n",
+					op, gpa, pfn, level, rc);
+			goto out;
+		}
+
+		next_gpa = gpa + page_level_size(level);
+	}
+out:
+	return rc;
+}
+
 static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
 {
 	struct vmcb_control_area *control = &svm->vmcb->control;
@@ -2395,6 +2521,29 @@ static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
 				  GHCB_MSR_GPA_REGISTER_VALUE_MASK,
 				  GHCB_MSR_GPA_REGISTER_VALUE_POS);
 		set_ghcb_msr_bits(svm, GHCB_MSR_GPA_REGISTER_RESP,
+				  GHCB_MSR_INFO_MASK,
+				  GHCB_MSR_INFO_POS);
+		break;
+	}
+	case GHCB_MSR_PAGE_STATE_CHANGE_REQ: {
+		gfn_t gfn;
+		int ret;
+		u8 op;
+
+		gfn = get_ghcb_msr_bits(svm,
+					GHCB_MSR_PAGE_STATE_CHANGE_GFN_MASK,
+					GHCB_MSR_PAGE_STATE_CHANGE_GFN_POS);
+		op = get_ghcb_msr_bits(svm,
+					GHCB_MSR_PAGE_STATE_CHANGE_OP_MASK,
+					GHCB_MSR_PAGE_STATE_CHANGE_OP_POS);
+		ret = __snp_handle_page_state_change(vcpu, op, gfn_to_gpa(gfn), PG_LEVEL_4K);
+		set_ghcb_msr_bits(svm, ret,
+				  GHCB_MSR_PAGE_STATE_CHANGE_ERROR_MASK,
+				  GHCB_MSR_PAGE_STATE_CHANGE_ERROR_POS);
+		set_ghcb_msr_bits(svm, 0,
+				  GHCB_MSR_PAGE_STATE_CHANGE_RSVD_MASK,
+				  GHCB_MSR_PAGE_STATE_CHANGE_RSVD_POS);
+		set_ghcb_msr_bits(svm, GHCB_MSR_PAGE_STATE_CHANGE_RESP,
 				  GHCB_MSR_INFO_MASK,
 				  GHCB_MSR_INFO_POS);
 		break;
