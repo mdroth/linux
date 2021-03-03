@@ -893,6 +893,9 @@ static void init_speculation_control(struct cpuinfo_x86 *c)
 		set_cpu_cap(c, X86_FEATURE_MSR_SPEC_CTRL);
 		clear_cpu_cap(c, X86_FEATURE_VIRT_SSBD);
 	}
+
+	if (cpu_has(c, X86_FEATURE_AMD_PSFD))
+		set_cpu_cap(c, X86_FEATURE_PSFD);
 }
 
 void get_cpu_cap(struct cpuinfo_x86 *c)
@@ -1150,6 +1153,9 @@ static void __init cpu_set_bug_bits(struct cpuinfo_x86 *c)
 	    !(ia32_cap & ARCH_CAP_SSB_NO) &&
 	   !cpu_has(c, X86_FEATURE_AMD_SSB_NO))
 		setup_force_cpu_bug(X86_BUG_SPEC_STORE_BYPASS);
+
+	if (cpu_has(c, X86_FEATURE_AMD_PSFD))
+		setup_force_cpu_bug(X86_BUG_PSF);
 
 	if (ia32_cap & ARCH_CAP_IBRS_ALL)
 		setup_force_cpu_cap(X86_FEATURE_IBRS_ENHANCED);
