@@ -2856,6 +2856,7 @@
 					       nospectre_v1 [X86,PPC]
 					       nobp=0 [S390]
 					       nospectre_v2 [X86,PPC,S390,ARM64]
+					       psfd=off[X86]
 					       spectre_v2_user=off [X86]
 					       spec_store_bypass_disable=off [X86,PPC]
 					       ssbd=force-off [ARM64]
@@ -3224,6 +3225,8 @@
 			legacy floating-point registers on task switch.
 
 	nohugeiomap	[KNL,X86,PPC,ARM64] Disable kernel huge I/O mappings.
+
+	nopsfd          [X86] Disable mitigation for Predictive Store Forwarding.
 
 	nosmt		[KNL,S390] Disable symmetric multithreading (SMT).
 			Equivalent to smt=1.
@@ -3970,6 +3973,50 @@
 			isolated from the hypervisor (if hardware supports
 			that).
 			Format: <bool>
+
+        psfd            [HW,X86]
+                        Control Predictive Store Forwarding disable mitigation
+                        (Predictive Store Forward vulnerability)
+
+                        AMD Zen3 CPUs feature a new technology called Predictive
+                        Store Forwarding. This feature is designed to improve the
+                        performance of code execution by predicting dependencies
+                        between loads and stores.
+
+                        Modern processors implement techniques to optimize the
+                        execution of a load instruction to an address that was
+                        recently written by a store instruction.
+
+                        PSF expands on the above by speculating on the relationship
+                        between loads and stores without waiting for address
+                        calculation to complete. With PSF, CPU learns over time the
+                        relationship between loads and stores.
+
+                        Incorrect PSF predictions can occur for various reasons.
+                        Please see the AMD PSF whitepaper for more information.
+                        <TODO : Insert link to whitepaper here>
+
+                        All AMD Zen3 CPUs that implement PSF also provide ability
+                        to control mitigation of PSF.
+
+                        Following options are provided to control PSF mitigation.
+
+                        The options are:
+                        on      - Unconditionally disable Speculative Store Bypass
+                        off     - Unconditionally enable Speculative Store Bypass
+                        auto    - Kernel detects whether the CPU is vulnerable.
+                                  If the CPU is not vulnerable, off is selected.
+                                  If the CPU is vulnerable, default mitigation is
+                                  KConfig dependent.
+                        prctl   - Control Predictive Store Forwarding per thread
+                                  via prctl. Predictive Store Forwarding is enabled
+                                  per process by default. The state of the control
+                                  is inherited on fork.
+                        seccomp - Same as prctl above but all seccomp threads will
+                                  disable PSF unless they opt out.
+
+                        Default mitigations:
+                        [X86/AMD Zen3] If CONFIG_SECCOMP=y "seccomp" else "prctl"
 
 	psi=		[KNL] Enable or disable pressure stall information
 			tracking.
