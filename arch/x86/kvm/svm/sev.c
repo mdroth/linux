@@ -2140,6 +2140,7 @@ static int sev_es_validate_vmgexit(struct vcpu_svm *svm)
 	case SVM_VMGEXIT_AP_HLT_LOOP:
 	case SVM_VMGEXIT_AP_JUMP_TABLE:
 	case SVM_VMGEXIT_UNSUPPORTED_EVENT:
+	case SVM_VMGEXIT_PAGE_STATE_CHANGE:
 		break;
 	default:
 		goto vmgexit_err;
@@ -2428,6 +2429,7 @@ static int __snp_handle_page_state_change(struct kvm_vcpu *vcpu, int op, gpa_t g
 		case SNP_PAGE_STATE_PRIVATE:
 			rc = snp_page_private(vcpu, gpa, pfn, level);
 			break;
+		/* TODO: Add USMASH and PSMASH support */
 		default:
 			rc = -EINVAL;
 			break;
@@ -2442,6 +2444,44 @@ static int __snp_handle_page_state_change(struct kvm_vcpu *vcpu, int op, gpa_t g
 		}
 
 		next_gpa = gpa + page_level_size(level);
+	}
+out:
+	return rc;
+}
+
+static unsigned long snp_handle_page_state_change(struct kvm_vcpu *vcpu,
+						  struct snp_page_state_change *info)
+{
+	struct snp_page_state_entry *entry = &info->entry[info->header.cur_entry];
+	unsigned long rc;
+	int level, op;
+	gpa_t gpa;
+
+	if (!sev_snp_guest(vcpu->kvm))
+		return -ENXIO;
+
+	if ((info->header.cur_entry >= SNP_PAGE_STATE_CHANGE_MAX_ENTRY) ||
+	    (info->header.end_entry >= SNP_PAGE_STATE_CHANGE_MAX_ENTRY) ||
+	    (info->header.cur_entry > info->header.end_entry))
+		return VMGEXIT_PAGE_STATE_INVALID_HEADER;
+
+	while (info->header.cur_entry <= info->header.end_entry) {
+
+		entry = &info->entry[info->header.cur_entry];
+		gpa = gfn_to_gpa(entry->gfn);
+		level = RMP_X86_PG_LEVEL(entry->pagesize);
+		op = entry->operation;
+
+		if (!IS_ALIGNED(gpa, page_level_size(level))) {
+			rc = VMGEXIT_PAGE_STATE_INVALID_ENTRY;
+			goto out;
+		}
+
+		rc = __snp_handle_page_state_change(vcpu, op, gpa, level);
+		if (rc)
+			goto out;
+
+		info->header.cur_entry++;
 	}
 out:
 	return rc;
@@ -2665,6 +2705,20 @@ int sev_handle_vmgexit(struct vcpu_svm *svm)
 		}
 
 		ret = 1;
+		break;
+	}
+	case SVM_VMGEXIT_PAGE_STATE_CHANGE: {
+		struct snp_page_state_change *info;
+		int rc;
+
+		ret = 1;
+
+		if (!setup_vmgexit_scratch(svm, true, sizeof(ghcb->save.sw_scratch)))
+			break;
+
+		info = (struct snp_page_state_change *)svm->ghcb_sa;
+		rc = snp_handle_page_state_change(&svm->vcpu, info);
+		ghcb_set_sw_exit_info_2(ghcb, rc);
 		break;
 	}
 	case SVM_VMGEXIT_UNSUPPORTED_EVENT:

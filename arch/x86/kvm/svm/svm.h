@@ -606,6 +606,10 @@ void svm_vcpu_unblocking(struct kvm_vcpu *vcpu);
 #define	GHCB_MSR_PAGE_STATE_CHANGE_RSVD_POS	12
 #define	GHCB_MSR_PAGE_STATE_CHANGE_RSVD_MASK	0xfffff
 
+#define VMGEXIT_PAGE_STATE_INVALID_HEADER	0x100000001
+#define VMGEXIT_PAGE_STATE_INVALID_ENTRY	0x100000002
+#define VMGEXIT_PAGE_STATE_FIRMWARE_ERROR(x)	((x & 0xffffffff) | 0x200000000)
+
 extern unsigned int max_sev_asid;
 
 static inline bool svm_sev_enabled(void)
