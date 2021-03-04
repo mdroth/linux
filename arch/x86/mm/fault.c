@@ -1304,6 +1304,70 @@ do_kern_addr_fault(struct pt_regs *regs, unsigned long hw_error_code,
 }
 NOKPROBE_SYMBOL(do_kern_addr_fault);
 
+#define RMP_FAULT_RETRY		0
+#define RMP_FAULT_KILL		1
+#define RMP_FAULT_PAGE_SPLIT	2
+
+static inline size_t pages_per_hpage(int level)
+{
+	return page_level_size(level) / PAGE_SIZE;
+}
+
+/*
+ * The RMP fault can happen when hypervisor attempt to write to:
+ * 1. a guest owned page or
+ * 2. one of page in the large page is a guest owned page.
+ *
+ * The #1 will happen only when a process or VMM is attempting to modify the guest page
+ * without guests cooperation. If guest wants VMM to write to its memory then it should
+ * have made the page shared. If we detect #1, kill the process because we can not resolve
+ * the fault.
+ *
+ * The #2 can happen when the page level does not match between the RMP entry and x86
+ * page table walk. e.g the page is mapped as a large page in the x86 page table but its
+ * added as a 4K shared page in the RMP entry. This can be resolved by spliting the address
+ * into the smaller page level.
+ */
+static int handle_rmp_page_fault(unsigned long hw_error_code, unsigned long address)
+{
+	unsigned long pfn, mask;
+	int rmp_level, level;
+	rmpentry_t *e;
+	pte_t *pte;
+
+	/* Get the native page level */
+	pte = lookup_address_in_mm(current->mm, address, &level);
+	if (unlikely(!pte))
+		return RMP_FAULT_KILL;
+
+	pfn = pte_pfn(*pte);
+	if (level > PG_LEVEL_4K) {
+		mask = pages_per_hpage(level) - pages_per_hpage(level - 1);
+		pfn |= (address >> PAGE_SHIFT) & mask;
+	}
+
+	/* Get the page level from the RMP entry. */
+	e = lookup_page_in_rmptable(pfn_to_page(pfn), &rmp_level);
+	if (!e) {
+		pr_alert("Failed to read lookup RMP entry for uaddress 0x%lx pfn %lx\n",
+				address, pfn);
+		return RMP_FAULT_KILL;
+	}
+
+	/* Its a guest owned page */
+	if (rmpentry_assigned(e))
+		return RMP_FAULT_KILL;
+
+	/*
+	 * Its a shared page but the page level does not match between the native walk
+	 * and RMP entry.
+	 */
+	if (!rmpentry_assigned(e) && (level > rmp_level))
+		return RMP_FAULT_PAGE_SPLIT;
+
+	return RMP_FAULT_RETRY;
+}
+
 /* Handle faults in the user portion of the address space */
 static inline
 void do_user_addr_fault(struct pt_regs *regs,
@@ -1314,6 +1378,7 @@ void do_user_addr_fault(struct pt_regs *regs,
 	struct task_struct *tsk;
 	struct mm_struct *mm;
 	vm_fault_t fault;
+	int ret;
 	unsigned int flags = FAULT_FLAG_DEFAULT;
 
 	tsk = current;
@@ -1375,6 +1440,22 @@ void do_user_addr_fault(struct pt_regs *regs,
 		flags |= FAULT_FLAG_WRITE;
 	if (hw_error_code & X86_PF_INSTR)
 		flags |= FAULT_FLAG_INSTRUCTION;
+
+	/*
+	 * If its an RMP violation fault, see if we can resolve it.
+	 */
+	if ((hw_error_code & X86_PF_RMP)) {
+		ret = handle_rmp_page_fault(hw_error_code, address);
+		if (ret == RMP_FAULT_PAGE_SPLIT) {
+			flags |= FAULT_FLAG_PAGE_SPLIT;
+		} else if (ret == RMP_FAULT_KILL) {
+			fault |= VM_FAULT_SIGBUS;
+			mm_fault_error(regs, hw_error_code, address, fault);
+			return;
+		} else {
+			return;
+		}
+	}
 
 #ifdef CONFIG_X86_64
 	/*
