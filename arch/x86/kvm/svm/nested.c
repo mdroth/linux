@@ -547,6 +547,7 @@ int nested_svm_vmrun(struct vcpu_svm *svm)
 		hsave->save.cr3    = vmcb->save.cr3;
 	else
 		hsave->save.cr3    = kvm_read_cr3(&svm->vcpu);
+	hsave->save.spec_ctrl = vmcb->save.spec_ctrl;
 
 	copy_vmcb_control_area(&hsave->control, &vmcb->control);
 
@@ -688,7 +689,9 @@ int nested_svm_vmexit(struct vcpu_svm *svm)
 	kvm_rip_write(&svm->vcpu, hsave->save.rip);
 	svm->vmcb->save.dr7 = DR7_FIXED_1;
 	svm->vmcb->save.cpl = 0;
+	svm->vmcb->save.spec_ctrl = hsave->save.spec_ctrl;
 	svm->vmcb->control.exit_int_info = 0;
+
 
 	vmcb_mark_all_dirty(svm->vmcb);
 
