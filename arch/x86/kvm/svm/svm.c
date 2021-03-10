@@ -947,6 +947,22 @@ static __init void svm_set_cpu_caps(void)
 
 	/* CPUID 0x8000001F (SME/SEV features) */
 	sev_set_cpu_caps();
+
+	/* Enable INVPCID feature */
+	kvm_cpu_cap_check_and_set(X86_FEATURE_INVPCID);
+
+	/* Enable INVLPGB feature for guest
+	 * if VMCB offset 0x90 bit 7 is supported
+	 * Only SEV and higher guests get this feature
+	 * Check sev or sev-es kvm module parameters
+	 * If not, we have the risk of exposing INVLPGB
+	 * to non-SEV guests but when they execute INVLPGB
+	 * will result in #UD because we enable VMCB bit
+	 * only for SEV or SEV-ES guests(see init_vmcb)
+	 *
+	 */
+	if ((sev || sev_es) && boot_cpu_has(X86_FEATURE_VINVLPGB))
+		kvm_cpu_cap_check_and_set(X86_FEATURE_INVLPGB);
 }
 
 static __init int svm_hardware_setup(void)
@@ -1421,6 +1437,11 @@ static int svm_create_vcpu(struct kvm_vcpu *vcpu)
 
 	svm_init_osvw(vcpu);
 	vcpu->arch.microcode_version = 0x01000065;
+
+	if (sev_guest(vcpu->kvm))
+		svm->use_global_asid=true;
+	else
+		svm->use_global_asid=false;
 
 	if (sev_es_guest(vcpu->kvm))
 		/* Perform SEV-ES specific VMCB creation updates */
@@ -4029,6 +4050,15 @@ static void svm_vcpu_after_set_cpuid(struct kvm_vcpu *vcpu)
 
 	svm_recalc_instruction_intercepts(vcpu, svm);
 
+	/* only guests that use global asid get to use
+	 * INVLGB in guests
+	 */
+	if(guest_cpuid_has(vcpu, X86_FEATURE_INVLPGB)) {
+		if(has_global_asid(svm))
+			svm->vmcb->control.nested_ctl |= SVM_NESTED_CTL_INVLPGB_ENABLE;
+		else
+			guest_cpuid_clear(vcpu, X86_FEATURE_INVLPGB);
+	}
 	/* For sev guests, the memory encryption bit is not reserved in CR3.  */
 	if (sev_guest(vcpu->kvm)) {
 		best = kvm_find_cpuid_entry(vcpu, 0x8000001F, 0);
