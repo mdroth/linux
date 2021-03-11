@@ -14,6 +14,9 @@
 #define has_cpuflag(f)	boot_cpu_has(f)
 #endif
 
+/* Provides sev_es_terminate() */
+#include "sev-common-shared.c"
+
 static bool __init sev_es_check_cpu_features(void)
 {
 	if (!has_cpuflag(X86_FEATURE_RDRAND)) {
@@ -22,24 +25,6 @@ static bool __init sev_es_check_cpu_features(void)
 	}
 
 	return true;
-}
-
-static void sev_es_terminate(unsigned int reason)
-{
-	u64 val = GHCB_SEV_TERMINATE;
-
-	/*
-	 * Tell the hypervisor what went wrong - only reason-set 0 is
-	 * currently supported.
-	 */
-	val |= GHCB_SEV_TERMINATE_REASON(0, reason);
-
-	/* Request Guest Termination from Hypvervisor */
-	sev_es_wr_ghcb_msr(val);
-	VMGEXIT();
-
-	while (true)
-		asm volatile("hlt\n" : : : "memory");
 }
 
 static bool sev_es_negotiate_protocol(void)
