@@ -506,8 +506,29 @@ static void early_init_amd_mc(struct cpuinfo_x86 *c)
 #endif
 }
 
+#define FCH_PM_INDEX            0xCD6
+#define FCH_PM_DATA             0xCD7
+#define OFFSET_S5_RESET_STATUS  0xC0
+
+static void print_s5_reset_status(void)
+{
+	char val[4];
+	int i;
+
+	u16 reg = OFFSET_S5_RESET_STATUS;
+
+	for (i = 0; i < 4; i++) {
+		outb(reg + i, FCH_PM_INDEX);
+		val[i] = inb(FCH_PM_DATA);
+	}
+
+	pr_err("AMD_DEBUG: S5_RESET_STATUS=0x%08x\n", *(u32 *)val);
+}
+
 static void bsp_init_amd(struct cpuinfo_x86 *c)
 {
+	print_s5_reset_status();
+
 	if (cpu_has(c, X86_FEATURE_CONSTANT_TSC)) {
 
 		if (c->x86 > 0x10 ||
