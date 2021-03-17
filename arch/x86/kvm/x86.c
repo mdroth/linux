@@ -9616,7 +9616,23 @@ EXPORT_SYMBOL_GPL(kvm_task_switch);
 
 static bool kvm_is_valid_sregs(struct kvm_vcpu *vcpu, struct kvm_sregs *sregs)
 {
+	pr_warn("cr3: %lx\n", cregs->cr3);
 	if ((sregs->efer & EFER_LME) && (sregs->cr0 & X86_CR0_PG)) {
+		unsigned int eax, ebx, ecx, edx;
+
+		/* TODO: this needs to be moved to something SVM-specific */
+		/* TODO: we need to use host value here, because selftests
+		 * doesn't currently allow us to set the vcpu's CPUID values
+		 * prior to calling set_sregs(). if that's not acceptable then
+		 * we need a different approach either here or in userspace
+		 * (and associated documentation?)
+		 */
+		pr_warn("cr3_lm_rsvd_bits (before): %lx\n", vcpu->arch.cr3_lm_rsvd_bits);
+		cpuid_count(0x8000001f, 0, &eax, &ebx, &ecx, &edx);
+		if (ebx)
+			vcpu->arch.cr3_lm_rsvd_bits &= ~(1UL << (ebx & 0x3f));
+		pr_warn("cr3_lm_rsvd_bits (after): %lx\n", vcpu->arch.cr3_lm_rsvd_bits);
+
 		/*
 		 * When EFER.LME and CR0.PG are set, the processor is in
 		 * 64-bit mode (though maybe in a 32-bit code segment).
