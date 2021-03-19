@@ -20,6 +20,7 @@
 /x86_64/userspace_msr_exit_test
 /x86_64/vmx_apic_access_test
 /x86_64/sev_boot_test
+/x86_64/sev_es_boot_test
 /x86_64/vmx_close_while_nested_test
 /x86_64/vmx_dirty_log_test
 /x86_64/vmx_preemption_timer_test
