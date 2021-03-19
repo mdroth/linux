@@ -20,6 +20,7 @@ struct userspace_mem_region {
 	void *host_mem;
 	void *mmap_start;
 	size_t mmap_size;
+	bool encrypted;
 	struct list_head list;
 };
 
@@ -56,6 +57,7 @@ struct kvm_vm {
 	vm_vaddr_t idt;
 	vm_vaddr_t handlers;
 	uint32_t dirty_ring_size;
+	struct vm_memcrypt *memcrypt;
 };
 
 struct vcpu *vcpu_find(struct kvm_vm *vm, uint32_t vcpuid);

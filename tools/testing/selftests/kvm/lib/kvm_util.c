@@ -672,10 +672,10 @@ int kvm_memcmp_hva_gva(void *hva, struct kvm_vm *vm, vm_vaddr_t gva, size_t len)
  * given by slot, which must be unique and < KVM_MEM_SLOTS_NUM.  The
  * region is created with the flags given by flags.
  */
-void vm_userspace_mem_region_add(struct kvm_vm *vm,
+void _vm_userspace_mem_region_add(struct kvm_vm *vm,
 	enum vm_mem_backing_src_type src_type,
 	uint64_t guest_paddr, uint32_t slot, uint64_t npages,
-	uint32_t flags)
+	uint32_t flags, bool encrypted)
 {
 	int ret;
 	struct userspace_mem_region *region;
@@ -778,6 +778,7 @@ void vm_userspace_mem_region_add(struct kvm_vm *vm,
 		}
 	}
 
+	region->encrypted = encrypted;
 	region->unused_phy_pages = sparsebit_alloc();
 	sparsebit_set_num(region->unused_phy_pages,
 		guest_paddr >> vm->page_shift, npages);
@@ -796,6 +797,72 @@ void vm_userspace_mem_region_add(struct kvm_vm *vm,
 
 	/* Add to linked-list of memory regions. */
 	list_add(&region->list, &vm->userspace_mem_regions);
+
+	/* Region may be encrypted later, register it now if needed. */
+	if (encrypted && vm->memcrypt && vm->memcrypt->register_user_range)
+		vm->memcrypt->register_user_range(vm,
+				region->region.userspace_addr,
+				region->region.memory_size);
+}
+
+/*
+ * VM Userspace Memory Region Add
+ *
+ * Input Args:
+ *   vm - Virtual Machine
+ *   backing_src - Storage source for this region.
+ *                 NULL to use anonymous memory.
+ *   guest_paddr - Starting guest physical address
+ *   slot - KVM region slot
+ *   npages - Number of physical pages
+ *   flags - KVM memory region flags (e.g. KVM_MEM_LOG_DIRTY_PAGES)
+ *
+ * Output Args: None
+ *
+ * Return: None
+ *
+ * Allocates a memory area of the number of pages specified by npages
+ * and maps it to the VM specified by vm, at a starting physical address
+ * given by guest_paddr.  The region is created with a KVM region slot
+ * given by slot, which must be unique and < KVM_MEM_SLOTS_NUM.  The
+ * region is created with the flags given by flags.
+ */
+void vm_userspace_mem_region_add(struct kvm_vm *vm,
+	enum vm_mem_backing_src_type src_type,
+	uint64_t guest_paddr, uint32_t slot, uint64_t npages,
+	uint32_t flags)
+{
+	_vm_userspace_mem_region_add(vm, src_type, guest_paddr, slot, npages,
+				     flags, false);
+}
+
+/*
+ * VM Userspace Memory Region Add Encrypted
+ *
+ * Input Args:
+ *   vm - Virtual Machine
+ *   backing_src - Storage source for this region.
+ *                 NULL to use anonymous memory.
+ *   guest_paddr - Starting guest physical address
+ *   slot - KVM region slot
+ *   npages - Number of physical pages
+ *   flags - KVM memory region flags (e.g. KVM_MEM_LOG_DIRTY_PAGES)
+ *
+ * Output Args: None
+ *
+ * Return: None
+ *
+ * Same as VM Userspace Memory Region Add, but marked as encrypted so
+ * the region is handled accordingly when the guest is configured for
+ * secure/encrypted memory.
+ */
+void vm_userspace_mem_region_add_encrypted(struct kvm_vm *vm,
+	enum vm_mem_backing_src_type src_type,
+	uint64_t guest_paddr, uint32_t slot, uint64_t npages,
+	uint32_t flags)
+{
+	_vm_userspace_mem_region_add(vm, src_type, guest_paddr, slot, npages,
+				     flags, true);
 }
 
 /*
@@ -1174,9 +1241,13 @@ void virt_map(struct kvm_vm *vm, uint64_t vaddr, uint64_t paddr,
  * address providing the memory to the vm physical address is returned.
  * A TEST_ASSERT failure occurs if no region containing gpa exists.
  */
-void *addr_gpa2hva(struct kvm_vm *vm, vm_paddr_t gpa)
+void *addr_gpa2hva(struct kvm_vm *vm, vm_paddr_t gpa_raw)
 {
 	struct userspace_mem_region *region;
+	vm_paddr_t gpa = gpa_raw;
+
+	if (vm->memcrypt && vm->memcrypt->encrypt_bit)
+		gpa = gpa_raw & ~(1ULL << vm->memcrypt->encrypt_bit);
 
 	list_for_each_entry(region, &vm->userspace_mem_regions, list) {
 		if ((gpa >= region->region.guest_phys_addr)
@@ -1857,6 +1928,7 @@ vm_paddr_t vm_phy_pages_alloc(struct kvm_vm *vm, size_t num,
 {
 	struct userspace_mem_region *region;
 	sparsebit_idx_t pg, base;
+	vm_paddr_t gpa;
 
 	TEST_ASSERT(num > 0, "Must allocate at least one page");
 
@@ -1889,7 +1961,12 @@ vm_paddr_t vm_phy_pages_alloc(struct kvm_vm *vm, size_t num,
 	for (pg = base; pg < base + num; ++pg)
 		sparsebit_clear(region->unused_phy_pages, pg);
 
-	return base * vm->page_size;
+	gpa = base * vm->page_size;
+
+	if (region->encrypted && vm->memcrypt && vm->memcrypt->encrypt_bit)
+		gpa |= (1ULL << vm->memcrypt->encrypt_bit);
+
+	return gpa;
 }
 
 vm_paddr_t vm_phy_page_alloc(struct kvm_vm *vm, vm_paddr_t paddr_min,
@@ -2009,4 +2086,32 @@ unsigned int vm_calc_num_guest_pages(enum vm_guest_mode mode, size_t size)
 	unsigned int n;
 	n = DIV_ROUND_UP(size, vm_guest_mode_params[mode].page_size);
 	return vm_adjust_num_guest_pages(mode, n);
+}
+
+struct vm_memcrypt *vm_memcrypt_get(struct kvm_vm *vm)
+{
+	return vm->memcrypt;
+}
+
+void vm_memcrypt_set(struct kvm_vm *vm, struct vm_memcrypt *memcrypt)
+{
+	vm->memcrypt = memcrypt;
+}
+
+void vm_memcrypt_encrypt_memslot(struct kvm_vm *vm, uint32_t memslot)
+{
+	struct userspace_mem_region *region;
+	sparsebit_idx_t pg;
+
+	if (!vm->memcrypt || !vm->memcrypt->encrypt_phy_range)
+		return;
+
+	region = memslot2region(vm, memslot);
+
+	/* TODO: optimize this to handle contiguous ranges with single call */
+	for (pg = 0; pg < (region->region.memory_size / vm->page_size); ++pg)
+		if (!sparsebit_is_set(region->unused_phy_pages, pg))
+			vm->memcrypt->encrypt_phy_range(vm,
+					region->region.guest_phys_addr + pg * vm->page_size,
+					vm->page_size);
 }

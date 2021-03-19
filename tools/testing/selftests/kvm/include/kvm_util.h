@@ -133,6 +133,10 @@ void vm_userspace_mem_region_add(struct kvm_vm *vm,
 	enum vm_mem_backing_src_type src_type,
 	uint64_t guest_paddr, uint32_t slot, uint64_t npages,
 	uint32_t flags);
+void vm_userspace_mem_region_add_encrypted(struct kvm_vm *vm,
+	enum vm_mem_backing_src_type src_type,
+	uint64_t guest_paddr, uint32_t slot, uint64_t npages,
+	uint32_t flags);
 
 void vcpu_ioctl(struct kvm_vm *vm, uint32_t vcpuid, unsigned long ioctl,
 		void *arg);
@@ -325,6 +329,26 @@ struct kvm_dirty_log *
 allocate_kvm_dirty_log(struct kvm_userspace_memory_region *region);
 
 int vm_create_device(struct kvm_vm *vm, struct kvm_create_device *cd);
+
+/*
+ * Memory encryption hooks. These may be a bit SEV-centric at the moment,
+ * but that can be reworked or abstracted away as the need arises.
+ */
+struct vm_memcrypt {
+	int fd;
+	int8_t encrypt_bit;
+
+	/* register a userspace/hva range as encrypted */
+	void (*register_user_range)(struct kvm_vm *vm, uint64_t addr, uint64_t size);
+
+	/* encrypt a gpa range */
+	void (*encrypt_phy_range)(struct kvm_vm *vm, uint64_t addr, uint64_t size);
+};
+
+struct vm_memcrypt *vm_memcrypt_get(struct kvm_vm *vm);
+void vm_memcrypt_set(struct kvm_vm *vm, struct vm_memcrypt *memcrypt);
+void vm_memcrypt_encrypt_memslot(struct kvm_vm *vm, uint32_t memslot);
+
 
 #define sync_global_to_guest(vm, g) ({				\
 	typeof(g) *_p = addr_gva2hva(vm, (vm_vaddr_t)&(g));	\

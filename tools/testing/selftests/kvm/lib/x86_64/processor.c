@@ -221,11 +221,28 @@ void virt_pgd_alloc(struct kvm_vm *vm, uint32_t pgd_memslot)
 	}
 }
 
-void virt_pg_map(struct kvm_vm *vm, uint64_t vaddr, uint64_t paddr,
+static uint64_t encrypt_mask(struct kvm_vm *vm, uint64_t address_raw)
+{
+	uint64_t address;
+	uint64_t mask;
+
+	if (!vm->memcrypt || !vm->memcrypt->encrypt_bit)
+		return address_raw;
+
+	mask = ~(1ULL << vm->memcrypt->encrypt_bit);
+
+	address = address_raw & mask;
+
+	return address;
+}
+
+void virt_pg_map(struct kvm_vm *vm, uint64_t vaddr, uint64_t paddr_raw,
 	uint32_t pgd_memslot)
 {
 	uint16_t index[4];
 	struct pageMapL4Entry *pml4e;
+
+	uint64_t paddr = encrypt_mask(vm, paddr_raw);
 
 	TEST_ASSERT(vm->mode == VM_MODE_PXXV48_4K, "Attempt to use "
 		"unknown or unsupported guest mode, mode: 0x%x", vm->mode);
@@ -264,7 +281,7 @@ void virt_pg_map(struct kvm_vm *vm, uint64_t vaddr, uint64_t paddr,
 
 	/* Allocate page directory table if not present. */
 	struct pageDirectoryPointerEntry *pdpe;
-	pdpe = addr_gpa2hva(vm, pml4e[index[3]].address * vm->page_size);
+	pdpe = addr_gpa2hva(vm, encrypt_mask(vm, pml4e[index[3]].address) * vm->page_size);
 	if (!pdpe[index[2]].present) {
 		pdpe[index[2]].address = vm_phy_page_alloc(vm,
 			KVM_GUEST_PAGE_TABLE_MIN_PADDR, pgd_memslot)
@@ -275,7 +292,7 @@ void virt_pg_map(struct kvm_vm *vm, uint64_t vaddr, uint64_t paddr,
 
 	/* Allocate page table if not present. */
 	struct pageDirectoryEntry *pde;
-	pde = addr_gpa2hva(vm, pdpe[index[2]].address * vm->page_size);
+	pde = addr_gpa2hva(vm, encrypt_mask(vm, pdpe[index[2]].address) * vm->page_size);
 	if (!pde[index[1]].present) {
 		pde[index[1]].address = vm_phy_page_alloc(vm,
 			KVM_GUEST_PAGE_TABLE_MIN_PADDR, pgd_memslot)
@@ -286,8 +303,8 @@ void virt_pg_map(struct kvm_vm *vm, uint64_t vaddr, uint64_t paddr,
 
 	/* Fill in page table entry. */
 	struct pageTableEntry *pte;
-	pte = addr_gpa2hva(vm, pde[index[1]].address * vm->page_size);
-	pte[index[0]].address = paddr >> vm->page_shift;
+	pte = addr_gpa2hva(vm, encrypt_mask(vm, pde[index[1]].address) * vm->page_size);
+	pte[index[0]].address = paddr_raw >> vm->page_shift;
 	pte[index[0]].writable = true;
 	pte[index[0]].present = 1;
 }
@@ -484,6 +501,7 @@ vm_paddr_t addr_gva2gpa(struct kvm_vm *vm, vm_vaddr_t gva)
 	struct pageDirectoryPointerEntry *pdpe;
 	struct pageDirectoryEntry *pde;
 	struct pageTableEntry *pte;
+	vm_paddr_t gpa;
 
 	TEST_ASSERT(vm->mode == VM_MODE_PXXV48_4K, "Attempt to use "
 		"unknown or unsupported guest mode, mode: 0x%x", vm->mode);
@@ -499,19 +517,21 @@ vm_paddr_t addr_gva2gpa(struct kvm_vm *vm, vm_vaddr_t gva)
 	if (!pml4e[index[3]].present)
 		goto unmapped_gva;
 
-	pdpe = addr_gpa2hva(vm, pml4e[index[3]].address * vm->page_size);
+	pdpe = addr_gpa2hva(vm, encrypt_mask(vm, pml4e[index[3]].address) * vm->page_size);
 	if (!pdpe[index[2]].present)
 		goto unmapped_gva;
 
-	pde = addr_gpa2hva(vm, pdpe[index[2]].address * vm->page_size);
+	pde = addr_gpa2hva(vm, encrypt_mask(vm, pdpe[index[2]].address) * vm->page_size);
 	if (!pde[index[1]].present)
 		goto unmapped_gva;
 
-	pte = addr_gpa2hva(vm, pde[index[1]].address * vm->page_size);
+	pte = addr_gpa2hva(vm, encrypt_mask(vm, pde[index[1]].address) * vm->page_size);
 	if (!pte[index[0]].present)
 		goto unmapped_gva;
 
-	return (pte[index[0]].address * vm->page_size) + (gva & 0xfffu);
+	gpa = (encrypt_mask(vm, pte[index[0]].address) * vm->page_size) + (gva & 0xfffu);
+
+	return gpa;
 
 unmapped_gva:
 	TEST_FAIL("No mapping for vm virtual address, gva: 0x%lx", gva);
