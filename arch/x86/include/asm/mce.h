@@ -392,4 +392,5 @@ umc_normaddr_to_sysaddr(u64 norm_addr, u16 nid, u8 umc, u64 *sys_addr)	{ return 
 #endif
 
 static inline void mce_hygon_feature_init(struct cpuinfo_x86 *c)	{ return mce_amd_feature_init(c); }
+bool is_smca_umc_v2(int bank);
 #endif /* _ASM_X86_MCE_H */
