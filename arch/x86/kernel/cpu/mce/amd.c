@@ -1682,3 +1682,9 @@ out_err:
 	mce_threshold_remove_device(cpu);
 	return err;
 }
+
+bool is_smca_umc_v2(int bank)
+{
+	return (smca_get_bank_type(bank) == SMCA_UMC_V2);
+}
+EXPORT_SYMBOL_GPL(is_smca_umc_v2);
