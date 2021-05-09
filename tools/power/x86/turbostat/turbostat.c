@@ -6438,6 +6438,8 @@ int main(int argc, char **argv)
 
 	turbostat_init();
 
+	msr_sum_record();
+
 	/* dump counters and exit */
 	if (dump_only)
 		return get_and_dump_counters();
@@ -6449,7 +6451,6 @@ int main(int argc, char **argv)
 		return 0;
 	}
 
-	msr_sum_record();
 	/*
 	 * if any params left, it must be a command to fork
 	 */
