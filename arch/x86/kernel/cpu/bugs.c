@@ -38,6 +38,7 @@
 static void __init spectre_v1_select_mitigation(void);
 static void __init spectre_v2_select_mitigation(void);
 static void __init ssb_select_mitigation(void);
+static void __init psf_select_mitigation(void);
 static void __init l1tf_select_mitigation(void);
 static void __init mds_select_mitigation(void);
 static void __init mds_print_mitigation(void);
@@ -107,6 +108,7 @@ void __init check_bugs(void)
 	spectre_v1_select_mitigation();
 	spectre_v2_select_mitigation();
 	ssb_select_mitigation();
+	psf_select_mitigation();
 	l1tf_select_mitigation();
 	mds_select_mitigation();
 	taa_select_mitigation();
@@ -1193,6 +1195,98 @@ static void ssb_select_mitigation(void)
 
 	if (boot_cpu_has_bug(X86_BUG_SPEC_STORE_BYPASS))
 		pr_info("%s\n", ssb_strings[ssb_mode]);
+}
+
+#undef pr_fmt
+#define pr_fmt(fmt)	"Predictive Store Forward: " fmt
+
+static enum psf_mitigation psf_mode __ro_after_init = PREDICTIVE_STORE_FORWARD_NONE;
+
+/* The kernel command line selection */
+enum psf_mitigation_cmd {
+	PREDICTIVE_STORE_FORWARD_CMD_NONE,
+	PREDICTIVE_STORE_FORWARD_CMD_ON,
+};
+
+static const char * const psf_strings[] = {
+	[PREDICTIVE_STORE_FORWARD_NONE]		= "Vulnerable",
+	[PREDICTIVE_STORE_FORWARD_DISABLE]	= "Mitigation: Predictive Store Forward disabled",
+};
+
+static const struct {
+	const char *option;
+	enum psf_mitigation_cmd cmd;
+} psf_mitigation_options[]  __initconst = {
+	{ "on",		PREDICTIVE_STORE_FORWARD_CMD_ON },      /* Disable Speculative Store Bypass */
+	{ "off",	PREDICTIVE_STORE_FORWARD_CMD_NONE },    /* Don't touch Speculative Store Bypass */
+};
+
+static enum psf_mitigation_cmd __init psf_parse_cmdline(void)
+{
+	enum psf_mitigation_cmd cmd = PREDICTIVE_STORE_FORWARD_CMD_NONE;
+	char arg[20];
+	int ret, i;
+
+	ret = cmdline_find_option(boot_command_line, "predictive_store_fwd_disable",
+				  arg, sizeof(arg));
+	if (ret < 0)
+		return PREDICTIVE_STORE_FORWARD_CMD_NONE;
+
+	for (i = 0; i < ARRAY_SIZE(psf_mitigation_options); i++) {
+		if (!match_option(arg, ret, psf_mitigation_options[i].option))
+			continue;
+
+		cmd = psf_mitigation_options[i].cmd;
+		break;
+	}
+
+	if (i >= ARRAY_SIZE(psf_mitigation_options)) {
+		pr_err("unknown option (%s). Switching to AUTO select\n", arg);
+		return PREDICTIVE_STORE_FORWARD_CMD_NONE;
+	}
+
+	return cmd;
+}
+
+static enum psf_mitigation __init __psf_select_mitigation(void)
+{
+	enum psf_mitigation mode = PREDICTIVE_STORE_FORWARD_NONE;
+	enum psf_mitigation_cmd cmd;
+
+	if (!boot_cpu_has(X86_FEATURE_PSFD))
+		return mode;
+
+	cmd = psf_parse_cmdline();
+
+	switch (cmd) {
+	case PREDICTIVE_STORE_FORWARD_CMD_ON:
+		mode = PREDICTIVE_STORE_FORWARD_DISABLE;
+		break;
+	default:
+		mode = PREDICTIVE_STORE_FORWARD_NONE;
+		break;
+	}
+
+	x86_spec_ctrl_mask |= SPEC_CTRL_PSFD;
+
+	if (ssb_mode == SPEC_STORE_BYPASS_DISABLE)
+		mode = PREDICTIVE_STORE_FORWARD_DISABLE;
+
+	if (mode == PREDICTIVE_STORE_FORWARD_DISABLE) {
+		setup_force_cpu_cap(X86_FEATURE_PSFD);
+		x86_spec_ctrl_base |= SPEC_CTRL_PSFD;
+		wrmsrl(MSR_IA32_SPEC_CTRL, x86_spec_ctrl_base);
+	}
+
+	return mode;
+}
+
+static void psf_select_mitigation(void)
+{
+	psf_mode = __psf_select_mitigation();
+
+	if (boot_cpu_has(X86_FEATURE_PSFD))
+		pr_info("%s\n", psf_strings[psf_mode]);
 }
 
 #undef pr_fmt

@@ -4078,6 +4078,11 @@
 			Format: {"off"}
 			Disable Hardware Transactional Memory
 
+	predictive_store_fwd_disable=	[X86] This option controls PSF.
+			off - Turns on PSF.
+			on  - Turns off PSF.
+			default : off.
+
 	preempt=	[KNL]
 			Select preemption mode if you have CONFIG_PREEMPT_DYNAMIC
 			none - Limited to cond_resched() calls
