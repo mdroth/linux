@@ -36,6 +36,8 @@
 #define CREATE_TRACE_POINTS
 #include <asm/trace/exceptions.h>
 
+#include "amd_hw_pf_trace.c"
+
 /*
  * Returns 0 if mmiotrace is disabled, or if the fault is not
  * handled by mmiotrace:
@@ -731,6 +733,8 @@ kernelmode_fixup_or_oops(struct pt_regs *regs, unsigned long error_code,
 		 * faulting through the emulate_vsyscall() logic.
 		 */
 		if (current->thread.sig_on_uaccess_err && signal) {
+			hw_pf_tracing_exit(-1);
+
 			sanitize_error_code(address, &error_code);
 
 			set_signal_archinfo(address, error_code);
@@ -764,6 +768,8 @@ show_signal_msg(struct pt_regs *regs, unsigned long error_code,
 		unsigned long address, struct task_struct *tsk)
 {
 	const char *loglvl = task_pid_nr(tsk) > 1 ? KERN_INFO : KERN_EMERG;
+
+	hw_pf_tracing_exit(-1);
 
 	if (!unhandled_signal(tsk, SIGSEGV))
 		return;
@@ -1223,6 +1229,8 @@ void do_user_addr_fault(struct pt_regs *regs,
 	tsk = current;
 	mm = tsk->mm;
 
+	hw_pf_tracing_enter();
+
 	if (unlikely((error_code & (X86_PF_USER | X86_PF_INSTR)) == X86_PF_INSTR)) {
 		/*
 		 * Whoops, this is kernel mode code trying to execute from
@@ -1231,23 +1239,30 @@ void do_user_addr_fault(struct pt_regs *regs,
 		 * this is unrecoverable.  Don't even try to look up the
 		 * VMA or look for extable entries.
 		 */
-		if (is_errata93(regs, address))
+		if (is_errata93(regs, address)) {
+			hw_pf_tracing_exit(0);
 			return;
+		}
 
 		page_fault_oops(regs, error_code, address);
+		hw_pf_tracing_exit(-1);
 		return;
 	}
 
 	/* kprobes don't want to hook the spurious faults: */
-	if (unlikely(kprobe_page_fault(regs, X86_TRAP_PF)))
+	if (unlikely(kprobe_page_fault(regs, X86_TRAP_PF))) {
+		hw_pf_tracing_exit(0);
 		return;
+	}
 
 	/*
 	 * Reserved bits are never expected to be set on
 	 * entries in the user portion of the page tables.
 	 */
-	if (unlikely(error_code & X86_PF_RSVD))
+	if (unlikely(error_code & X86_PF_RSVD)) {
+		hw_pf_tracing_exit(-1);
 		pgtable_bad(regs, error_code, address);
+	}
 
 	/*
 	 * If SMAP is on, check for invalid kernel (supervisor) access to user
@@ -1264,6 +1279,7 @@ void do_user_addr_fault(struct pt_regs *regs,
 		 * invalid pointer.  get_kernel_nofault() will not get here.
 		 */
 		page_fault_oops(regs, error_code, address);
+		hw_pf_tracing_exit(-1);
 		return;
 	}
 
@@ -1273,6 +1289,7 @@ void do_user_addr_fault(struct pt_regs *regs,
 	 */
 	if (unlikely(faulthandler_disabled() || !mm)) {
 		bad_area_nosemaphore(regs, error_code, address);
+		hw_pf_tracing_exit(0);
 		return;
 	}
 
@@ -1311,8 +1328,10 @@ void do_user_addr_fault(struct pt_regs *regs,
 	 * to consider the PF_PK bit.
 	 */
 	if (is_vsyscall_vaddr(address)) {
-		if (emulate_vsyscall(error_code, regs, address))
+		if (emulate_vsyscall(error_code, regs, address)) {
+			hw_pf_tracing_exit(0);
 			return;
+		}
 	}
 #endif
 
@@ -1371,6 +1390,7 @@ retry:
 good_area:
 	if (unlikely(access_error(error_code, vma))) {
 		bad_area_access_error(regs, error_code, address, vma);
+		hw_pf_tracing_exit(0);
 		return;
 	}
 
@@ -1397,6 +1417,7 @@ good_area:
 		if (!user_mode(regs))
 			kernelmode_fixup_or_oops(regs, error_code, address,
 						 SIGBUS, BUS_ADRERR);
+		hw_pf_tracing_exit(0);
 		return;
 	}
 
@@ -1433,8 +1454,10 @@ good_area:
 		 * userspace (which will retry the fault, or kill us if we got
 		 * oom-killed):
 		 */
+		hw_pf_tracing_exit(0);
 		pagefault_out_of_memory();
 	} else {
+		hw_pf_tracing_exit(-1);
 		if (fault & (VM_FAULT_SIGBUS|VM_FAULT_HWPOISON|
 			     VM_FAULT_HWPOISON_LARGE))
 			do_sigbus(regs, error_code, address, fault);
