@@ -555,23 +555,6 @@ static struct sched_domain_topology_level x86_numa_in_package_topology[] = {
 	{ NULL, },
 };
 
-static struct sched_domain_topology_level nomc_topology[] = {
-#ifdef CONFIG_SCHED_SMT
-	{ cpu_smt_mask, x86_smt_flags, SD_INIT_NAME(SMT_NOMC) },
-#endif
-	{ cpu_cpu_mask, SD_INIT_NAME(DIE_NOMC) },
-	{ NULL, },
-};
-
-static struct sched_domain_topology_level nol3_topology[] = {
-#ifdef CONFIG_SCHED_SMT
-	{ cpu_smt_mask, x86_smt_flags, SD_INIT_NAME(SMT_NOL3) },
-#endif
-	{ cpu_coregroup_mask, SD_INIT_NAME(MC_NOL3) },
-	{ cpu_cpu_mask, SD_INIT_NAME(DIE_NOL3) },
-	{ NULL, },
-};
-
 static struct sched_domain_topology_level x86_topology[] = {
 #ifdef CONFIG_SCHED_SMT
 	{ cpu_smt_mask, x86_smt_flags, SD_INIT_NAME(SMT) },
@@ -1333,8 +1316,6 @@ static void __init smp_get_logical_apicid(void)
  * @max_cpus: configured maximum number of CPUs, It is a legacy parameter
  *            for common interface support.
  */
-extern bool sched_nomc;
-extern bool sched_nol3;
 void __init native_smp_prepare_cpus(unsigned int max_cpus)
 {
 	unsigned int i;
@@ -1362,14 +1343,7 @@ void __init native_smp_prepare_cpus(unsigned int max_cpus)
 	 *
 	 * Must be done before set_cpus_sibling_map() is ran.
 	 */
-//SURAVEE
-	if (sched_nomc) {
-		set_sched_topology(nomc_topology);
-	} else if (sched_nol3) {
-		set_sched_topology(nol3_topology);
-	} else {
-		set_sched_topology(x86_topology);
-	}
+	set_sched_topology(x86_topology);
 
 	set_cpu_sibling_map(0);
 	init_freq_invariance(false, false);
@@ -1449,10 +1423,8 @@ void __init native_smp_cpus_done(unsigned int max_cpus)
 
 	calculate_max_logical_packages();
 
-//SURAVEE
-	if (x86_has_numa_in_package && !sched_nomc && !sched_nol3) {
+	if (x86_has_numa_in_package)
 		set_sched_topology(x86_numa_in_package_topology);
-	}
 
 	nmi_selftest();
 	impress_friends();

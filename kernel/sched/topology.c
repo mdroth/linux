@@ -10,20 +10,6 @@ DEFINE_MUTEX(sched_domains_mutex);
 static cpumask_var_t sched_domains_tmpmask;
 static cpumask_var_t sched_domains_tmpmask2;
 
-
-//SURAVEE
-bool sched_nomc = false;
-bool sched_nol3 = false;
-static int __init sched_mc_setup(char *str)
-{
-	if (parse_option_str(str, "nomc"))
-		sched_nomc = true;
-	if (parse_option_str(str, "nol3"))
-		sched_nol3 = true;
-	return 0;
-}
-early_param("sched_mc", sched_mc_setup);
-
 #ifdef CONFIG_SCHED_DEBUG
 
 static int __init sched_debug_setup(char *str)
@@ -1543,7 +1529,6 @@ void set_sched_topology(struct sched_domain_topology_level *tl)
 	if (WARN_ON_ONCE(sched_smp_initialized))
 		return;
 
-printk("DEBUG: %s: sched_domain_topology=%s\n", __func__, tl->name);
 	sched_domain_topology = tl;
 }
 
