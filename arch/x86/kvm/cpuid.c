@@ -448,11 +448,7 @@ void kvm_set_cpu_caps(void)
 		kvm_cpu_cap_set(X86_FEATURE_INTEL_STIBP);
 	if (boot_cpu_has(X86_FEATURE_AMD_SSBD))
 		kvm_cpu_cap_set(X86_FEATURE_SPEC_CTRL_SSBD);
-<<<<<<< HEAD
 	if (boot_cpu_has(X86_FEATURE_PSFD))
-=======
-	if (boot_cpu_has(X86_FEATURE_AMD_PSFD))
->>>>>>> 035296eed8a376d7565860ad4a346daeebbda84a
 		kvm_cpu_cap_set(X86_FEATURE_SPEC_CTRL_SSBD);
 
 	kvm_cpu_cap_mask(CPUID_7_1_EAX,
