@@ -996,6 +996,11 @@ static int sys_addr_to_csrow(struct mem_ctl_info *mci, u64 sys_addr)
 /* Protect the PCI config register pairs used for DF indirect access. */
 static DEFINE_MUTEX(df_indirect_mutex);
 
+struct df_reg {
+	u8 func;
+	u16 offset;
+};
+
 /*
  * Data Fabric Indirect Access uses FICAA/FICAD.
  *
@@ -1005,8 +1010,12 @@ static DEFINE_MUTEX(df_indirect_mutex);
  *
  * Fabric Indirect Configuration Access Data (FICAD): There are FICAD LO
  * and FICAD HI registers but so far we only need the LO register.
+ *
+ * Use Instance Id 0xFF to indicate a broadcast read.
  */
-static int amd_df_indirect_read(u16 node, u8 func, u16 reg, u8 instance_id, u32 *lo)
+
+#define DF_BROADCAST	0xFF
+static int amd_df_indirect_read(u16 node, struct df_reg reg, u8 instance_id, u32 *lo)
 {
 	struct pci_dev *F4;
 	u32 ficaa;
@@ -1019,9 +1028,9 @@ static int amd_df_indirect_read(u16 node, u8 func, u16 reg, u8 instance_id, u32 
 	if (!F4)
 		goto out;
 
-	ficaa  = 1;
-	ficaa |= reg & 0x3FC;
-	ficaa |= (func & 0x7) << 11;
+	ficaa  = (instance_id == DF_BROADCAST) ? 0 : 1;
+	ficaa |= reg.offset & 0x3FC;
+	ficaa |= (reg.func & 0x7) << 11;
 	ficaa |= instance_id << 16;
 
 	mutex_lock(&df_indirect_mutex);
@@ -1043,203 +1052,457 @@ out:
 	return err;
 }
 
-static int umc_normaddr_to_sysaddr(u64 norm_addr, u16 nid, u8 umc, u64 *sys_addr)
-{
-	u64 dram_base_addr, dram_limit_addr, dram_hole_base;
-	/* We start from the normalized address */
-	u64 ret_addr = norm_addr;
+enum df_reg_names {
+	/* Function 0 */
+	FAB_BLK_INST_INFO_3,
+	DRAM_HOLE_CTL,
+	DRAM_BASE_ADDR,
+	DRAM_LIMIT_ADDR,
+	DRAM_OFFSET,
 
+	/* Function 1 */
+	SYS_FAB_ID_MASK,
+};
+
+static struct df_reg df_regs[] = {
+	/* D18F0x50 (FabricBlockInstanceInformation3_CS) */
+	[FAB_BLK_INST_INFO_3]	=	{0, 0x50},
+	/* D18F0x104 (DramHoleControl) */
+	[DRAM_HOLE_CTL]		=	{0, 0x104},
+	/* D18F0x110 (DramBaseAddress) */
+	[DRAM_BASE_ADDR]	=	{0, 0x110},
+	/* D18F0x114 (DramLimitAddress) */
+	[DRAM_LIMIT_ADDR]	=	{0, 0x114},
+	/* D18F0x1B4 (DramOffset) */
+	[DRAM_OFFSET]		=	{0, 0x1B4},
+	/* D18F1x208 (SystemFabricIdMask) */
+	[SYS_FAB_ID_MASK]	=	{1, 0x208},
+};
+
+/* These are mapped 1:1 to the hardware values. Special cases are set at > 0x20. */
+enum intlv_modes {
+	NONE		= 0x00,
+	NOHASH_2CH	= 0x01,
+	DF2_HASH_2CH	= 0x21,
+};
+
+/* Use "reg_" prefix for raw register values. */
+struct addr_ctx {
+	enum intlv_modes intlv_mode;
+	u64 ret_addr;
+	u32 reg_dram_offset;
+	u32 reg_base_addr;
+	u32 reg_limit_addr;
+	u32 reg_fab_id_mask0;
+	u16 cs_fabric_id;
+	u16 die_id_mask;
+	u16 socket_id_mask;
+	u16 nid;
+	u8 inst_id;
+	u8 map_num;
+	u8 intlv_addr_bit;
+	u8 intlv_num_chan;
+	u8 intlv_num_dies;
+	u8 intlv_num_sockets;
+	u8 cs_id;
+	int (*dehash_addr)(struct addr_ctx *ctx);
+	void (*make_space_for_cs_id)(struct addr_ctx *ctx);
+	void (*insert_cs_id)(struct addr_ctx *ctx);
+};
+
+struct data_fabric_ops {
+	u64 (*get_hi_addr_offset)(struct addr_ctx *ctx);
+	u16 (*get_dst_fabric_id)(struct addr_ctx *ctx);
+	u16 (*get_component_id_mask)(struct addr_ctx *ctx);
+	u8 (*get_die_id_shift)(struct addr_ctx *ctx);
+	u8 (*get_socket_id_shift)(struct addr_ctx *ctx);
+	u8 (*get_intlv_addr_sel)(struct addr_ctx *ctx);
+	int (*get_intlv_mode)(struct addr_ctx *ctx);
+	int (*get_cs_fabric_id)(struct addr_ctx *ctx);
+	int (*get_masks)(struct addr_ctx *ctx);
+	void (*get_intlv_num_dies)(struct addr_ctx *ctx);
+	void (*get_intlv_num_sockets)(struct addr_ctx *ctx);
+};
+
+static void expand_bits(u8 start_bit, u8 num_bits, u64 *value)
+{
+	u64 temp1, temp2;
+
+	if (start_bit == 0) {
+		*value <<= num_bits;
+		return;
+	}
+
+	temp1 = *value & GENMASK_ULL(start_bit - 1, 0);
+	temp2 = (*value & GENMASK_ULL(63, start_bit)) << num_bits;
+	*value = temp1 | temp2;
+}
+
+static void make_space_for_cs_id_simple(struct addr_ctx *ctx)
+{
+	u8 num_intlv_bits = ctx->intlv_num_chan;
+
+	num_intlv_bits += ctx->intlv_num_dies;
+	num_intlv_bits += ctx->intlv_num_sockets;
+	expand_bits(ctx->intlv_addr_bit, num_intlv_bits, &ctx->ret_addr);
+}
+
+static void insert_cs_id_simple(struct addr_ctx *ctx)
+{
+	ctx->ret_addr |= (ctx->cs_id << ctx->intlv_addr_bit);
+}
+
+static u64 get_hi_addr_offset_df2(struct addr_ctx *ctx)
+{
+	return (ctx->reg_dram_offset & GENMASK_ULL(31, 20)) << 8;
+}
+
+static int dehash_addr_df2(struct addr_ctx *ctx)
+{
+	u8 hashed_bit =	(ctx->ret_addr >> 12) ^
+			(ctx->ret_addr >> 18) ^
+			(ctx->ret_addr >> 21) ^
+			(ctx->ret_addr >> 30) ^
+			(ctx->ret_addr >> ctx->intlv_addr_bit);
+
+	hashed_bit &= BIT(0);
+
+	if (hashed_bit != ((ctx->ret_addr >> ctx->intlv_addr_bit) & BIT(0)))
+		ctx->ret_addr ^= BIT(ctx->intlv_addr_bit);
+
+	return 0;
+}
+
+static int get_intlv_mode_df2(struct addr_ctx *ctx)
+{
+	ctx->intlv_mode = (ctx->reg_base_addr >> 4) & 0xF;
+
+	if (ctx->intlv_mode == 8) {
+		ctx->intlv_mode = DF2_HASH_2CH;
+		ctx->dehash_addr = &dehash_addr_df2;
+	}
+
+	ctx->make_space_for_cs_id = &make_space_for_cs_id_simple;
+	ctx->insert_cs_id = &insert_cs_id_simple;
+
+	if (ctx->intlv_mode != NONE &&
+	    ctx->intlv_mode != NOHASH_2CH &&
+	    ctx->intlv_mode != DF2_HASH_2CH)
+		return -EINVAL;
+
+	return 0;
+}
+
+static u8 get_intlv_addr_sel_df2(struct addr_ctx *ctx)
+{
+	return (ctx->reg_base_addr >> 8) & 0x7;
+}
+
+static void get_intlv_num_dies_df2(struct addr_ctx *ctx)
+{
+	ctx->intlv_num_dies  = (ctx->reg_limit_addr >> 10) & 0x3;
+}
+
+static void get_intlv_num_sockets_df2(struct addr_ctx *ctx)
+{
+	ctx->intlv_num_sockets = (ctx->reg_limit_addr >> 8) & 0x1;
+}
+
+static int get_cs_fabric_id_df2(struct addr_ctx *ctx)
+{
 	u32 tmp;
 
-	u8 die_id_shift, die_id_mask, socket_id_shift, socket_id_mask;
-	u8 intlv_num_dies, intlv_num_chan, intlv_num_sockets;
-	u8 intlv_addr_sel, intlv_addr_bit;
-	u8 num_intlv_bits, hashed_bit;
-	u8 lgcy_mmio_hole_en, base = 0;
-	u8 cs_mask, cs_id = 0;
-	bool hash_enabled = false;
+	if (amd_df_indirect_read(ctx->nid, df_regs[FAB_BLK_INST_INFO_3], ctx->inst_id, &tmp))
+		return -EINVAL;
 
-	/* Read D18F0x1B4 (DramOffset), check if base 1 is used. */
-	if (amd_df_indirect_read(nid, 0, 0x1B4, umc, &tmp))
-		goto out_err;
+	ctx->cs_fabric_id = (tmp >> 8) & 0xFF;
+
+	return 0;
+}
+
+static int get_masks_df2(struct addr_ctx *ctx)
+{
+	ctx->die_id_mask    = (ctx->reg_fab_id_mask0 >> 8) & 0xFF;
+	ctx->socket_id_mask = (ctx->reg_fab_id_mask0 >> 16) & 0xFF;
+
+	return 0;
+}
+
+static u8 get_die_id_shift_df2(struct addr_ctx *ctx)
+{
+	return (ctx->reg_fab_id_mask0 >> 24) & 0xF;
+}
+
+static u8 get_socket_id_shift_df2(struct addr_ctx *ctx)
+{
+	return (ctx->reg_fab_id_mask0 >> 28) & 0xF;
+}
+
+static u16 get_dst_fabric_id_df2(struct addr_ctx *ctx)
+{
+	return ctx->reg_limit_addr & 0xFF;
+}
+
+static u16 get_component_id_mask_df2(struct addr_ctx *ctx)
+{
+	return (~(ctx->socket_id_mask | ctx->die_id_mask)) & 0xFF;
+}
+
+struct data_fabric_ops df2_ops = {
+	.get_hi_addr_offset		=	&get_hi_addr_offset_df2,
+	.get_intlv_mode			=	&get_intlv_mode_df2,
+	.get_intlv_addr_sel		=	&get_intlv_addr_sel_df2,
+	.get_intlv_num_dies		=	&get_intlv_num_dies_df2,
+	.get_intlv_num_sockets		=	&get_intlv_num_sockets_df2,
+	.get_cs_fabric_id		=	&get_cs_fabric_id_df2,
+	.get_masks			=	&get_masks_df2,
+	.get_die_id_shift		=	&get_die_id_shift_df2,
+	.get_socket_id_shift		=	&get_socket_id_shift_df2,
+	.get_dst_fabric_id		=	&get_dst_fabric_id_df2,
+	.get_component_id_mask		=	&get_component_id_mask_df2,
+};
+
+struct data_fabric_ops *df_ops;
+
+static int set_df_ops(struct addr_ctx *ctx)
+{
+	if (amd_df_indirect_read(0, df_regs[SYS_FAB_ID_MASK],
+				 DF_BROADCAST, &ctx->reg_fab_id_mask0))
+		return -EINVAL;
+
+	df_ops = &df2_ops;
+
+	return 0;
+}
+
+static int get_dram_offset_reg(struct addr_ctx *ctx)
+{
+	if (amd_df_indirect_read(ctx->nid, df_regs[DRAM_OFFSET],
+				 ctx->inst_id, &ctx->reg_dram_offset))
+		return -EINVAL;
+
+	return 0;
+}
+
+static int remove_dram_offset(struct addr_ctx *ctx)
+{
+	if (get_dram_offset_reg(ctx))
+		return -EINVAL;
+
+	ctx->map_num = 0;
 
 	/* Remove HiAddrOffset from normalized address, if enabled: */
-	if (tmp & BIT(0)) {
-		u64 hi_addr_offset = (tmp & GENMASK_ULL(31, 20)) << 8;
+	if (ctx->reg_dram_offset & BIT(0)) {
+		u64 hi_addr_offset = df_ops->get_hi_addr_offset(ctx);
 
-		if (norm_addr >= hi_addr_offset) {
-			ret_addr -= hi_addr_offset;
-			base = 1;
+		if (ctx->ret_addr >= hi_addr_offset) {
+			ctx->ret_addr -= hi_addr_offset;
+			ctx->map_num = 1;
 		}
 	}
 
-	/* Read D18F0x110 (DramBaseAddress). */
-	if (amd_df_indirect_read(nid, 0, 0x110 + (8 * base), umc, &tmp))
-		goto out_err;
+	return 0;
+}
+
+static int get_dram_addr_map(struct addr_ctx *ctx)
+{
+	struct df_reg reg = df_regs[DRAM_BASE_ADDR];
+
+	reg.offset += ctx->map_num * 8;
+
+	if (amd_df_indirect_read(ctx->nid, reg, ctx->inst_id, &ctx->reg_base_addr))
+		return -EINVAL;
 
 	/* Check if address range is valid. */
-	if (!(tmp & BIT(0))) {
-		pr_err("%s: Invalid DramBaseAddress range: 0x%x.\n",
-			__func__, tmp);
-		goto out_err;
+	if (!(ctx->reg_base_addr & BIT(0))) {
+		pr_debug("Invalid DramBaseAddress range: 0x%x.\n", ctx->reg_base_addr);
+		return -EINVAL;
 	}
 
-	lgcy_mmio_hole_en = tmp & BIT(1);
-	intlv_num_chan	  = (tmp >> 4) & 0xF;
-	intlv_addr_sel	  = (tmp >> 8) & 0x7;
-	dram_base_addr	  = (tmp & GENMASK_ULL(31, 12)) << 16;
+	reg = df_regs[DRAM_LIMIT_ADDR];
+	reg.offset += ctx->map_num * 8;
+
+	if (amd_df_indirect_read(ctx->nid, reg, ctx->inst_id, &ctx->reg_limit_addr))
+		return -EINVAL;
+
+	return 0;
+}
+
+static int get_intlv_addr_bit(struct addr_ctx *ctx)
+{
+	u8 intlv_addr_sel = df_ops->get_intlv_addr_sel(ctx);
 
 	/* {0, 1, 2, 3} map to address bits {8, 9, 10, 11} respectively */
 	if (intlv_addr_sel > 3) {
-		pr_err("%s: Invalid interleave address select %d.\n",
-			__func__, intlv_addr_sel);
-		goto out_err;
+		pr_debug("Invalid interleave address select %d.\n", intlv_addr_sel);
+		return -EINVAL;
 	}
 
-	/* Read D18F0x114 (DramLimitAddress). */
-	if (amd_df_indirect_read(nid, 0, 0x114 + (8 * base), umc, &tmp))
-		goto out_err;
+	ctx->intlv_addr_bit = intlv_addr_sel + 8;
 
-	intlv_num_sockets = (tmp >> 8) & 0x1;
-	intlv_num_dies	  = (tmp >> 10) & 0x3;
-	dram_limit_addr	  = ((tmp & GENMASK_ULL(31, 12)) << 16) | GENMASK_ULL(27, 0);
+	return 0;
+}
 
-	intlv_addr_bit = intlv_addr_sel + 8;
-
-	/* Re-use intlv_num_chan by setting it equal to log2(#channels) */
-	switch (intlv_num_chan) {
-	case 0:	intlv_num_chan = 0; break;
-	case 1: intlv_num_chan = 1; break;
-	case 3: intlv_num_chan = 2; break;
-	case 5:	intlv_num_chan = 3; break;
-	case 7:	intlv_num_chan = 4; break;
-
-	case 8: intlv_num_chan = 1;
-		hash_enabled = true;
+static void get_intlv_num_chan(struct addr_ctx *ctx)
+{
+	/* Save the log2(# of channels). */
+	switch (ctx->intlv_mode) {
+	case NONE:
+		ctx->intlv_num_chan = 0;
+		break;
+	case NOHASH_2CH:
+	case DF2_HASH_2CH:
+		ctx->intlv_num_chan = 1;
 		break;
 	default:
-		pr_err("%s: Invalid number of interleaved channels %d.\n",
-			__func__, intlv_num_chan);
-		goto out_err;
+		/* Valid interleaving modes where checked earlier. */
+		break;
+	}
+}
+
+static u8 calc_level_bits(u8 id, u8 level_mask, u8 shift, u8 mask, u8 num_bits)
+{
+	return (((id & level_mask) >> shift) & mask) << num_bits;
+}
+
+static int calculate_cs_id(struct addr_ctx *ctx)
+{
+	u16 dst_fabric_id = df_ops->get_dst_fabric_id(ctx);
+	u16 mask, num_intlv_bits = ctx->intlv_num_chan;
+
+	mask = df_ops->get_component_id_mask(ctx);
+	ctx->cs_id = (ctx->cs_fabric_id & mask) - (dst_fabric_id & mask);
+
+	mask = (1 << num_intlv_bits) - 1;
+	ctx->cs_id &= mask;
+
+	/* If interleaved over more than 1 die: */
+	if (ctx->intlv_num_dies) {
+		u8 die_id_shift = df_ops->get_die_id_shift(ctx);
+
+		mask = (1 << ctx->intlv_num_dies) - 1;
+
+		ctx->cs_id |= calc_level_bits(ctx->cs_fabric_id, ctx->die_id_mask,
+					      die_id_shift, mask, num_intlv_bits);
+
+		num_intlv_bits += ctx->intlv_num_dies;
 	}
 
-	num_intlv_bits = intlv_num_chan;
+	/* If interleaved over more than 1 socket: */
+	if (ctx->intlv_num_sockets) {
+		u8 socket_id_shift = df_ops->get_socket_id_shift(ctx);
 
-	if (intlv_num_dies > 2) {
-		pr_err("%s: Invalid number of interleaved nodes/dies %d.\n",
-			__func__, intlv_num_dies);
-		goto out_err;
+		mask = (1 << ctx->intlv_num_sockets) - 1;
+
+		ctx->cs_id |= calc_level_bits(ctx->cs_fabric_id, ctx->socket_id_mask,
+					      socket_id_shift, mask, num_intlv_bits);
 	}
 
-	num_intlv_bits += intlv_num_dies;
+	return 0;
+}
 
-	/* Add a bit if sockets are interleaved. */
-	num_intlv_bits += intlv_num_sockets;
+static int denormalize_addr(struct addr_ctx *ctx)
+{
+	/* Return early if no interleaving. */
+	if (ctx->intlv_mode == NONE)
+		return 0;
 
-	/* Assert num_intlv_bits <= 4 */
-	if (num_intlv_bits > 4) {
-		pr_err("%s: Invalid interleave bits %d.\n",
-			__func__, num_intlv_bits);
-		goto out_err;
-	}
+	if (get_intlv_addr_bit(ctx))
+		return -EINVAL;
 
-	if (num_intlv_bits > 0) {
-		u64 temp_addr_x, temp_addr_i, temp_addr_y;
-		u8 die_id_bit, sock_id_bit, cs_fabric_id;
+	get_intlv_num_chan(ctx);
+	df_ops->get_intlv_num_dies(ctx);
+	df_ops->get_intlv_num_sockets(ctx);
 
-		/*
-		 * Read FabricBlockInstanceInformation3_CS[BlockFabricID].
-		 * This is the fabric id for this coherent slave. Use
-		 * umc/channel# as instance id of the coherent slave
-		 * for FICAA.
-		 */
-		if (amd_df_indirect_read(nid, 0, 0x50, umc, &tmp))
-			goto out_err;
+	ctx->make_space_for_cs_id(ctx);
 
-		cs_fabric_id = (tmp >> 8) & 0xFF;
-		die_id_bit   = 0;
+	if (calculate_cs_id(ctx))
+		return -EINVAL;
 
-		/* If interleaved over more than 1 channel: */
-		if (intlv_num_chan) {
-			die_id_bit = intlv_num_chan;
-			cs_mask	   = (1 << die_id_bit) - 1;
-			cs_id	   = cs_fabric_id & cs_mask;
-		}
+	ctx->insert_cs_id(ctx);
 
-		sock_id_bit = die_id_bit;
+	return 0;
+}
 
-		/* Read D18F1x208 (SystemFabricIdMask). */
-		if (intlv_num_dies || intlv_num_sockets)
-			if (amd_df_indirect_read(nid, 1, 0x208, umc, &tmp))
-				goto out_err;
-
-		/* If interleaved over more than 1 die. */
-		if (intlv_num_dies) {
-			sock_id_bit  = die_id_bit + intlv_num_dies;
-			die_id_shift = (tmp >> 24) & 0xF;
-			die_id_mask  = (tmp >> 8) & 0xFF;
-
-			cs_id |= ((cs_fabric_id & die_id_mask) >> die_id_shift) << die_id_bit;
-		}
-
-		/* If interleaved over more than 1 socket. */
-		if (intlv_num_sockets) {
-			socket_id_shift	= (tmp >> 28) & 0xF;
-			socket_id_mask	= (tmp >> 16) & 0xFF;
-
-			cs_id |= ((cs_fabric_id & socket_id_mask) >> socket_id_shift) << sock_id_bit;
-		}
-
-		/*
-		 * The pre-interleaved address consists of XXXXXXIIIYYYYY
-		 * where III is the ID for this CS, and XXXXXXYYYYY are the
-		 * address bits from the post-interleaved address.
-		 * "num_intlv_bits" has been calculated to tell us how many "I"
-		 * bits there are. "intlv_addr_bit" tells us how many "Y" bits
-		 * there are (where "I" starts).
-		 */
-		temp_addr_y = ret_addr & GENMASK_ULL(intlv_addr_bit-1, 0);
-		temp_addr_i = (cs_id << intlv_addr_bit);
-		temp_addr_x = (ret_addr & GENMASK_ULL(63, intlv_addr_bit)) << num_intlv_bits;
-		ret_addr    = temp_addr_x | temp_addr_i | temp_addr_y;
-	}
+static int add_base_and_hole(struct addr_ctx *ctx)
+{
+	u64 dram_base_addr = (ctx->reg_base_addr & GENMASK_ULL(31, 12)) << 16;
 
 	/* Add dram base address */
-	ret_addr += dram_base_addr;
+	ctx->ret_addr += dram_base_addr;
 
 	/* If legacy MMIO hole enabled */
-	if (lgcy_mmio_hole_en) {
-		if (amd_df_indirect_read(nid, 0, 0x104, umc, &tmp))
-			goto out_err;
+	if (ctx->reg_base_addr & BIT(1)) {
+		u32 dram_hole_base;
 
-		dram_hole_base = tmp & GENMASK(31, 24);
-		if (ret_addr >= dram_hole_base)
-			ret_addr += (BIT_ULL(32) - dram_hole_base);
+		if (amd_df_indirect_read(0, df_regs[DRAM_HOLE_CTL],
+					 DF_BROADCAST, &dram_hole_base))
+			return -EINVAL;
+
+		dram_hole_base &= GENMASK(31, 24);
+		if (ctx->ret_addr >= dram_hole_base)
+			ctx->ret_addr += (BIT_ULL(32) - dram_hole_base);
 	}
 
-	if (hash_enabled) {
-		/* Save some parentheses and grab ls-bit at the end. */
-		hashed_bit =	(ret_addr >> 12) ^
-				(ret_addr >> 18) ^
-				(ret_addr >> 21) ^
-				(ret_addr >> 30) ^
-				cs_id;
-
-		hashed_bit &= BIT(0);
-
-		if (hashed_bit != ((ret_addr >> intlv_addr_bit) & BIT(0)))
-			ret_addr ^= BIT(intlv_addr_bit);
-	}
-
-	/* Is calculated system address is above DRAM limit address? */
-	if (ret_addr > dram_limit_addr)
-		goto out_err;
-
-	*sys_addr = ret_addr;
 	return 0;
+}
 
-out_err:
-	return -EINVAL;
+static int addr_over_limit(struct addr_ctx *ctx)
+{
+	u64 dram_limit_addr  = ((ctx->reg_limit_addr & GENMASK_ULL(31, 12)) << 16)
+					| GENMASK_ULL(27, 0);
+
+	/* Is calculated system address above DRAM limit address? */
+	if (ctx->ret_addr > dram_limit_addr)
+		return -EINVAL;
+
+	return 0;
+}
+
+static int umc_normaddr_to_sysaddr(u64 *addr, u16 nid, u8 umc)
+{
+	struct addr_ctx ctx;
+
+	memset(&ctx, 0, sizeof(ctx));
+
+	/* We start from the normalized address */
+	ctx.ret_addr = *addr;
+
+	ctx.nid = nid;
+	ctx.inst_id = umc;
+
+	if (set_df_ops(&ctx))
+		return -EINVAL;
+
+	if (df_ops->get_masks(&ctx))
+		return -EINVAL;
+
+	if (df_ops->get_cs_fabric_id(&ctx))
+		return -EINVAL;
+
+	if (remove_dram_offset(&ctx))
+		return -EINVAL;
+
+	if (get_dram_addr_map(&ctx))
+		return -EINVAL;
+
+	if (df_ops->get_intlv_mode(&ctx))
+		return -EINVAL;
+
+	if (denormalize_addr(&ctx))
+		return -EINVAL;
+
+	if (add_base_and_hole(&ctx))
+		return -EINVAL;
+
+	if (ctx.dehash_addr && ctx.dehash_addr(&ctx))
+		return -EINVAL;
+
+	if (addr_over_limit(&ctx))
+		return -EINVAL;
+
+	*addr = ctx.ret_addr;
+	return 0;
 }
 
 static int get_channel_from_ecc_syndrome(struct mem_ctl_info *, u16);
@@ -3145,7 +3408,7 @@ static void decode_umc_error(int node_id, struct mce *m)
 	struct mem_ctl_info *mci;
 	struct amd64_pvt *pvt;
 	struct err_info err;
-	u64 sys_addr;
+	u64 sys_addr = m->addr;
 
 	mci = edac_mc_find(node_id);
 	if (!mci)
@@ -3176,7 +3439,7 @@ static void decode_umc_error(int node_id, struct mce *m)
 
 	err.csrow = m->synd & 0x7;
 
-	if (umc_normaddr_to_sysaddr(m->addr, pvt->mc_node_id, err.channel, &sys_addr)) {
+	if (umc_normaddr_to_sysaddr(&sys_addr, pvt->mc_node_id, err.channel)) {
 		err.err_code = ERR_NORM_ADDR;
 		goto log_error;
 	}
