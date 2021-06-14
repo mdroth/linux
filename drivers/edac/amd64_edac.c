@@ -1063,6 +1063,7 @@ out:
 
 enum df_reg_names {
 	/* Function 0 */
+	FAB_BLK_INST_CNT,
 	FAB_BLK_INST_INFO_3,
 	DRAM_HOLE_CTL,
 	DRAM_BASE_ADDR,
@@ -1076,6 +1077,8 @@ enum df_reg_names {
 };
 
 static struct df_reg df_regs[] = {
+	/* D18F0x40 (FabricBlockInstanceCount) */
+	[FAB_BLK_INST_CNT]	=	{0, 0x40},
 	/* D18F0x50 (FabricBlockInstanceInformation3_CS) */
 	[FAB_BLK_INST_INFO_3]	=	{0, 0x50},
 	/* D18F0x104 (DramHoleControl) */
@@ -1127,6 +1130,7 @@ struct addr_ctx {
 	u8 intlv_num_sockets;
 	u8 cs_id;
 	u8 node_id_shift;
+	u8 num_blk_instances;
 	bool late_hole_remove;
 	int (*dehash_addr)(struct addr_ctx *ctx);
 	void (*make_space_for_cs_id)(struct addr_ctx *ctx);
@@ -1447,6 +1451,13 @@ struct data_fabric_ops *df_ops;
 
 static int set_df_ops(struct addr_ctx *ctx)
 {
+	u32 tmp;
+
+	if (amd_df_indirect_read(0, df_regs[FAB_BLK_INST_CNT], DF_BROADCAST, &tmp))
+		return -EINVAL;
+
+	ctx->num_blk_instances = tmp & 0xFF;
+
 	if (amd_df_indirect_read(0, df_regs[SYS_FAB_ID_MASK],
 				 DF_BROADCAST, &ctx->reg_fab_id_mask0))
 		return -EINVAL;
