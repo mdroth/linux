@@ -1127,6 +1127,7 @@ struct addr_ctx {
 	u8 intlv_num_sockets;
 	u8 cs_id;
 	u8 node_id_shift;
+	bool late_hole_remove;
 	int (*dehash_addr)(struct addr_ctx *ctx);
 	void (*make_space_for_cs_id)(struct addr_ctx *ctx);
 	void (*insert_cs_id)(struct addr_ctx *ctx);
@@ -1686,10 +1687,13 @@ static int umc_normaddr_to_sysaddr(u64 *addr, u16 nid, u8 umc)
 	if (denormalize_addr(&ctx))
 		return -EINVAL;
 
-	if (add_base_and_hole(&ctx))
+	if (!ctx.late_hole_remove && add_base_and_hole(&ctx))
 		return -EINVAL;
 
 	if (ctx.dehash_addr && ctx.dehash_addr(&ctx))
+		return -EINVAL;
+
+	if (ctx.late_hole_remove && add_base_and_hole(&ctx))
 		return -EINVAL;
 
 	if (addr_over_limit(&ctx))
