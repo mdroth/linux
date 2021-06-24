@@ -331,6 +331,7 @@ enum smca_bank_types {
 	SMCA_XGMI_PCS,	/* xGMI PCS Unit */
 	SMCA_XGMI_PHY,	/* xGMI PHY Unit */
 	SMCA_WAFL_PHY,	/* WAFL PHY Unit */
+	SMCA_UNKNOWN,	/* Unknown type */
 	N_SMCA_BANK_TYPES
 };
 

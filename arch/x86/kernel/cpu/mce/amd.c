@@ -116,6 +116,7 @@ static struct smca_bank_name smca_names[] = {
 	[SMCA_XGMI_PCS]			= { "xgmi_pcs",		"Ext Global Memory Interconnect PCS Unit" },
 	[SMCA_XGMI_PHY]			= { "xgmi_phy",		"Ext Global Memory Interconnect PHY Unit" },
 	[SMCA_WAFL_PHY]			= { "wafl_phy",		"WAFL PHY Unit" },
+	[SMCA_UNKNOWN]			= { "unknown",		"Unrecognized Bank Type" },
 };
 
 static const char *smca_get_name(enum smca_bank_types t)
@@ -205,6 +206,9 @@ static struct smca_hwid smca_hwid_mcatypes[] = {
 
 	/* WAFL PHY MCA type */
 	{ SMCA_WAFL_PHY, HWID_MCATYPE(0x267, 0x0)	},
+
+	/* Unknown type - this must be last in the list */
+	{ SMCA_UNKNOWN,  HWID_MCATYPE(0xFFF, 0xFFFF)	},
 };
 
 /*
@@ -332,7 +336,9 @@ static void smca_configure(unsigned int bank, unsigned int cpu)
 
 	for (i = 0; i < ARRAY_SIZE(smca_hwid_mcatypes); i++) {
 		s_hwid = &smca_hwid_mcatypes[i];
-		if (hwid_mcatype == s_hwid->hwid_mcatype) {
+
+		if (hwid_mcatype == s_hwid->hwid_mcatype ||
+		    s_hwid->bank_type == SMCA_UNKNOWN) {
 			smca_banks[bank].hwid = s_hwid;
 			smca_banks[bank].id = low;
 			smca_banks[bank].sysfs_id = s_hwid->count++;
@@ -1081,12 +1087,28 @@ static const char *get_name(unsigned int bank, struct threshold_block *b)
 		return NULL;
 	}
 
-	if (smca_banks[bank].hwid->count == 1)
-		return smca_get_name(bank_type);
+	if (smca_banks[bank].hwid->count == 1) {
+		if (bank_type == SMCA_UNKNOWN) {
+			snprintf(buf_mcatype, MAX_MCATYPE_NAME_LEN,
+				 "%s_%x", smca_get_name(bank_type),
+					  smca_banks[bank].id);
 
-	snprintf(buf_mcatype, MAX_MCATYPE_NAME_LEN,
-		 "%s_%x", smca_get_name(bank_type),
-			  smca_banks[bank].sysfs_id);
+			return buf_mcatype;
+		} else {
+			return smca_get_name(bank_type);
+		}
+	}
+
+	if (b && bank_type == SMCA_UNKNOWN) {
+		snprintf(buf_mcatype, MAX_MCATYPE_NAME_LEN,
+			 "%s_%x_block_%u", smca_get_name(bank_type),
+			 smca_banks[bank].id, b->block);
+	} else {
+		snprintf(buf_mcatype, MAX_MCATYPE_NAME_LEN,
+			 "%s_%u", smca_get_name(bank_type),
+				  smca_banks[bank].sysfs_id);
+	}
+
 	return buf_mcatype;
 }
 

@@ -1061,6 +1061,9 @@ static void decode_smca_error(struct mce *m)
 
 	pr_emerg(HW_ERR "%s Ext. Error Code: %d", ip_name, xec);
 
+	if (bank_type == SMCA_UNKNOWN)
+		return;
+
 	/* Only print the decode of valid error codes */
 	if (xec < smca_mce_descs[bank_type].num_descs)
 		pr_cont(", %s.\n", smca_mce_descs[bank_type].descs[xec]);
