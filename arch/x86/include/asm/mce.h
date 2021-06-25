@@ -343,6 +343,7 @@ extern int mce_threshold_remove_device(unsigned int cpu);
 
 void mce_amd_feature_init(struct cpuinfo_x86 *c);
 void smca_extract_err_addr(struct mce *m);
+void smca_feature_init(void);
 
 #else
 
@@ -351,6 +352,7 @@ static inline int mce_threshold_remove_device(unsigned int cpu)		{ return 0; };
 static inline bool amd_mce_is_memory_error(struct mce *m)		{ return false; };
 static inline void mce_amd_feature_init(struct cpuinfo_x86 *c)		{ }
 static inline void smca_extract_err_addr(struct mce *m)			{ }
+static inline void smca_feature_init(void)				{ }
 #endif
 
 static inline void mce_hygon_feature_init(struct cpuinfo_x86 *c)	{ return mce_amd_feature_init(c); }

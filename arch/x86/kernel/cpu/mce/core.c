@@ -67,11 +67,7 @@ DEFINE_PER_CPU(unsigned, mce_exception_count);
 
 DEFINE_PER_CPU_READ_MOSTLY(unsigned int, mce_num_banks);
 
-struct mce_bank {
-	u64			ctl;			/* subevents to enable */
-	bool			init;			/* initialise bank? */
-};
-static DEFINE_PER_CPU_READ_MOSTLY(struct mce_bank[MAX_NR_BANKS], mce_banks_array);
+DEFINE_PER_CPU_READ_MOSTLY(struct mce_bank[MAX_NR_BANKS], mce_banks_array);
 
 #define ATTR_LEN               16
 /* One object for each MCE bank, shared by all CPUs */
@@ -699,10 +695,6 @@ static void mce_read_aux(struct mce *m, int i)
 			m->addr <<= shift;
 		}
 
-		/*
-		 * Extract [55:<lsb>] where lsb is the least significant
-		 * *valid* bit of the address bits.
-		 */
 		if (mce_flags.smca)
 			smca_extract_err_addr(m);
 	}
@@ -1838,6 +1830,8 @@ static void __mcheck_cpu_init_early(struct cpuinfo_x86 *c)
 			msr_ops.status	= smca_status_reg;
 			msr_ops.addr	= smca_addr_reg;
 			msr_ops.misc	= smca_misc_reg;
+
+			smca_feature_init();
 		}
 	}
 }

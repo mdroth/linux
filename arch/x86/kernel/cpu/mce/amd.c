@@ -734,9 +734,26 @@ bool amd_mce_is_memory_error(struct mce *m)
 
 void smca_extract_err_addr(struct mce *m)
 {
-	u8 lsb = (m->addr >> 56) & 0x3f;
+	if (this_cpu_ptr(mce_banks_array)[m->bank].lsb_in_status) {
+		u8 lsb = (m->status >> 24) & 0x3f;
 
-	m->addr &= GENMASK_ULL(55, lsb);
+		m->addr &= GENMASK_ULL(56, lsb);
+	} else {
+		u8 lsb = (m->addr >> 56) & 0x3f;
+
+		m->addr &= GENMASK_ULL(55, lsb);
+	}
+}
+
+void smca_feature_init(void)
+{
+	unsigned int bank;
+	u64 mca_cfg;
+
+	for (bank = 0; bank < this_cpu_read(mce_num_banks); ++bank) {
+		rdmsrl(MSR_AMD64_SMCA_MCx_CONFIG(bank), mca_cfg);
+		this_cpu_ptr(mce_banks_array)[bank].lsb_in_status = !!(mca_cfg & BIT(8));
+	}
 }
 
 static void __log_error(unsigned int bank, u64 status, u64 addr, u64 misc)
@@ -753,10 +770,6 @@ static void __log_error(unsigned int bank, u64 status, u64 addr, u64 misc)
 	if (m.status & MCI_STATUS_ADDRV) {
 		m.addr = addr;
 
-		/*
-		 * Extract [55:<lsb>] where lsb is the least significant
-		 * *valid* bit of the address bits.
-		 */
 		if (mce_flags.smca)
 			smca_extract_err_addr(&m);
 	}
