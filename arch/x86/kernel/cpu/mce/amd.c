@@ -732,6 +732,13 @@ bool amd_mce_is_memory_error(struct mce *m)
 	return m->bank == 4 && xec == 0x8;
 }
 
+void smca_extract_err_addr(struct mce *m)
+{
+	u8 lsb = (m->addr >> 56) & 0x3f;
+
+	m->addr &= GENMASK_ULL(55, lsb);
+}
+
 static void __log_error(unsigned int bank, u64 status, u64 addr, u64 misc)
 {
 	struct mce m;
@@ -750,11 +757,8 @@ static void __log_error(unsigned int bank, u64 status, u64 addr, u64 misc)
 		 * Extract [55:<lsb>] where lsb is the least significant
 		 * *valid* bit of the address bits.
 		 */
-		if (mce_flags.smca) {
-			u8 lsb = (m.addr >> 56) & 0x3f;
-
-			m.addr &= GENMASK_ULL(55, lsb);
-		}
+		if (mce_flags.smca)
+			smca_extract_err_addr(&m);
 	}
 
 	if (mce_flags.smca) {
