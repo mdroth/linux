@@ -25,6 +25,8 @@
 #define PCI_DEVICE_ID_AMD_17H_M60H_DF_F4 0x144c
 #define PCI_DEVICE_ID_AMD_17H_M70H_DF_F4 0x1444
 #define PCI_DEVICE_ID_AMD_19H_DF_F4	0x1654
+#define PCI_DEVICE_ID_AMD_ALDEBARAN_ROOT	0x14bb
+#define PCI_DEVICE_ID_AMD_ALDEBARAN_DF_F4	0x14d4
 
 /* Protect the PCI config register pairs used for SMN. */
 static DEFINE_MUTEX(smn_mutex);
@@ -88,6 +90,21 @@ static const struct pci_device_id hygon_nb_misc_ids[] = {
 
 static const struct pci_device_id hygon_nb_link_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_HYGON, PCI_DEVICE_ID_AMD_17H_DF_F4) },
+	{}
+};
+
+static const struct pci_device_id amd_noncpu_root_ids[] = {
+	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_ALDEBARAN_ROOT) },
+	{}
+};
+
+static const struct pci_device_id amd_noncpu_nb_misc_ids[] = {
+	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_ALDEBARAN_DF_F3) },
+	{}
+};
+
+static const struct pci_device_id amd_noncpu_nb_link_ids[] = {
+	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_ALDEBARAN_DF_F4) },
 	{}
 };
 
@@ -179,11 +196,16 @@ int amd_cache_northbridges(void)
 	const struct pci_device_id *misc_ids = amd_nb_misc_ids;
 	const struct pci_device_id *link_ids = amd_nb_link_ids;
 	const struct pci_device_id *root_ids = amd_root_ids;
+
+	const struct pci_device_id *noncpu_misc_ids = amd_noncpu_nb_misc_ids;
+	const struct pci_device_id *noncpu_link_ids = amd_noncpu_nb_link_ids;
+	const struct pci_device_id *noncpu_root_ids = amd_noncpu_root_ids;
+
 	struct pci_dev *root, *misc, *link;
 	struct amd_northbridge *nb;
 	u16 roots_per_misc = 0;
-	u16 misc_count = 0;
-	u16 root_count = 0;
+	u16 misc_count = 0, misc_count_noncpu = 0;
+	u16 root_count = 0, root_count_noncpu = 0;
 	u16 i, j;
 
 	if (amd_northbridges.num)
@@ -202,9 +224,15 @@ int amd_cache_northbridges(void)
 	if (!misc_count)
 		return -ENODEV;
 
+	while ((misc = next_northbridge(misc, noncpu_misc_ids)) != NULL)
+		misc_count_noncpu++;
+
 	root = NULL;
 	while ((root = next_northbridge(root, root_ids)) != NULL)
 		root_count++;
+
+	while ((root = next_northbridge(root, noncpu_root_ids)) != NULL)
+		root_count_noncpu++;
 
 	if (root_count) {
 		roots_per_misc = root_count / misc_count;
@@ -219,15 +247,27 @@ int amd_cache_northbridges(void)
 		}
 	}
 
-	nb = kcalloc(misc_count, sizeof(struct amd_northbridge), GFP_KERNEL);
+	/*
+	 * The valid amd_northbridges are in between (0 ~ misc_count) and
+	 * (NONCPU_NODE_INDEX ~ NONCPU_NODE_INDEX + misc_count_noncpu)
+	 */
+	if (misc_count_noncpu)
+		/*
+		 * There are NONCPU Nodes with pci root ports starting at index 8
+		 * allocate few extra cells for simplicity in handling the indexes
+		 */
+		amd_northbridges.num = NONCPU_NODE_INDEX + misc_count_noncpu;
+	else
+		amd_northbridges.num = misc_count;
+
+	nb = kcalloc(amd_northbridges.num, sizeof(struct amd_northbridge), GFP_KERNEL);
 	if (!nb)
 		return -ENOMEM;
 
 	amd_northbridges.nb = nb;
-	amd_northbridges.num = misc_count;
 
 	link = misc = root = NULL;
-	for (i = 0; i < amd_northbridges.num; i++) {
+	for (i = 0; i < misc_count; i++) {
 		node_to_amd_nb(i)->root = root =
 			next_northbridge(root, root_ids);
 		node_to_amd_nb(i)->misc = misc =
@@ -246,6 +286,18 @@ int amd_cache_northbridges(void)
 		 */
 		for (j = 1; j < roots_per_misc; j++)
 			root = next_northbridge(root, root_ids);
+	}
+
+	link = misc = root = NULL;
+	if (misc_count_noncpu) {
+		for (i = NONCPU_NODE_INDEX; i < NONCPU_NODE_INDEX + misc_count_noncpu; i++) {
+			node_to_amd_nb(i)->root = root =
+				next_northbridge(root, noncpu_root_ids);
+			node_to_amd_nb(i)->misc = misc =
+				next_northbridge(misc, noncpu_misc_ids);
+			node_to_amd_nb(i)->link = link =
+				next_northbridge(link, noncpu_link_ids);
+		}
 	}
 
 	if (amd_gart_present())
