@@ -1562,8 +1562,41 @@ static u16 get_dst_fabric_id_df35(struct addr_ctx *ctx)
 	return ctx->reg_limit_addr & 0xFFF;
 }
 
+/* UMC to CS mapping for Aldebaran die[0]s */
+u8 umc_to_cs_mapping_aldebaran_die0[] = { 28, 20, 24, 16, 12, 4, 8, 0,
+					 6, 30, 2, 26, 22, 14, 18, 10,
+					 19, 11, 15, 7, 3, 27, 31, 23,
+					 9, 1, 5, 29, 25, 17, 21, 13};
+
+/* UMC to CS mapping for Aldebaran die[1]s */
+u8 umc_to_cs_mapping_aldebaran_die1[] = { 19, 11, 15, 7, 3, 27, 31, 23,
+					9, 1, 5, 29, 25, 17, 21, 13,
+					28, 20, 24, 16, 12, 4, 8, 0,
+					6, 30, 2, 26, 22, 14, 18, 10};
+
+int get_umc_to_cs_mapping(struct addr_ctx *ctx)
+{
+	if (ctx->inst_id >= sizeof(umc_to_cs_mapping_aldebaran_die0))
+		return -EINVAL;
+
+	/*
+	 * Aldebaran has 2 dies and are enumerated alternatively
+	 * die0's are enumerated as node 8, 10, 12 and 14
+	 * die1's are enumerated as node 9, 11, 13 and 15
+	 */
+	if (ctx->nid % 2)
+		ctx->inst_id = umc_to_cs_mapping_aldebaran_die1[ctx->inst_id];
+	else
+		ctx->inst_id = umc_to_cs_mapping_aldebaran_die0[ctx->inst_id];
+
+	return 0;
+}
+
 static int get_cs_fabric_id_df35(struct addr_ctx *ctx)
 {
+	if (ctx->nid >= NONCPU_NODE_INDEX && get_umc_to_cs_mapping(ctx))
+		return -EINVAL;
+
 	ctx->cs_fabric_id = ctx->inst_id | (ctx->nid << ctx->node_id_shift);
 
 	return 0;
