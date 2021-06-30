@@ -79,6 +79,12 @@ struct amd_northbridge_info {
 
 #ifdef CONFIG_AMD_NB
 
+/*
+ * On Newer heterogeneous systems from AMD with CPU and GPU nodes connected
+ * via xGMI links, the NON CPU Nodes are enumerated from index 8
+ */
+#define NONCPU_NODE_INDEX	8
+
 u16 amd_nb_num(void);
 bool amd_nb_has_feature(unsigned int feature);
 struct amd_northbridge *node_to_amd_nb(int node);
