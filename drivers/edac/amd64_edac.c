@@ -996,6 +996,7 @@ static int sys_addr_to_csrow(struct mem_ctl_info *mci, u64 sys_addr)
 /*
  * Glossary of acronyms used in address translation for Zen-based systems
  *
+ * CCM		=	Cache Coherent Master
  * COD		=	Cluster-on-Die
  * CS		=	Coherent Slave
  * DF		=	Data Fabric
@@ -1064,6 +1065,7 @@ out:
 enum df_reg_names {
 	/* Function 0 */
 	FAB_BLK_INST_CNT,
+	FAB_BLK_INST_INFO_0,
 	FAB_BLK_INST_INFO_3,
 	DRAM_HOLE_CTL,
 	DRAM_BASE_ADDR,
@@ -1074,11 +1076,16 @@ enum df_reg_names {
 	/* Function 1 */
 	SYS_FAB_ID_MASK,
 	SYS_FAB_ID_MASK_1,
+	SYSFABIDMASK0_DF3POINT5,
+	SYSFABIDMASK1_DF3POINT5,
+	SYSFABIDMASK2_DF3POINT5,
 };
 
 static struct df_reg df_regs[] = {
 	/* D18F0x40 (FabricBlockInstanceCount) */
 	[FAB_BLK_INST_CNT]	=	{0, 0x40},
+	/* D18F0x44 (FabricBlockInstanceInformation0) */
+	[FAB_BLK_INST_INFO_0]	=	{0, 0x44},
 	/* D18F0x50 (FabricBlockInstanceInformation3_CS) */
 	[FAB_BLK_INST_INFO_3]	=	{0, 0x50},
 	/* D18F0x104 (DramHoleControl) */
@@ -1095,6 +1102,12 @@ static struct df_reg df_regs[] = {
 	[SYS_FAB_ID_MASK]	=	{1, 0x208},
 	/* D18F1x20C (SystemFabricIdMask1) */
 	[SYS_FAB_ID_MASK_1]	=	{1, 0x20C},
+	/* D18F1x150 (SystemFabricIdMask0) */
+	[SYSFABIDMASK0_DF3POINT5] =	{1, 0x150},
+	/* D18F1x154 (SystemFabricIdMask1) */
+	[SYSFABIDMASK1_DF3POINT5] =	{1, 0x154},
+	/* D18F1x158 (SystemFabricIdMask2) */
+	[SYSFABIDMASK2_DF3POINT5] =	{1, 0x158},
 };
 
 /* These are mapped 1:1 to the hardware values. Special cases are set at > 0x20. */
@@ -1103,9 +1116,14 @@ enum intlv_modes {
 	NOHASH_2CH	= 0x01,
 	NOHASH_4CH	= 0x03,
 	NOHASH_8CH	= 0x05,
+	NOHASH_16CH	= 0x07,
+	NOHASH_32CH	= 0x08,
 	HASH_COD4_2CH	= 0x0C,
 	HASH_COD2_4CH	= 0x0D,
 	HASH_COD1_8CH	= 0x0E,
+	HASH_8CH	= 0x1C,
+	HASH_16CH	= 0x1D,
+	HASH_32CH	= 0x1E,
 	DF2_HASH_2CH	= 0x21,
 };
 
@@ -1118,6 +1136,7 @@ struct addr_ctx {
 	u32 reg_limit_addr;
 	u32 reg_fab_id_mask0;
 	u32 reg_fab_id_mask1;
+	u32 reg_fab_id_mask2;
 	u16 cs_fabric_id;
 	u16 die_id_mask;
 	u16 socket_id_mask;
@@ -1447,6 +1466,128 @@ struct data_fabric_ops df3_ops = {
 	.get_component_id_mask		=	&get_component_id_mask_df3,
 };
 
+static int dehash_addr_df35(struct addr_ctx *ctx)
+{
+	u8 hashed_bit, intlv_ctl_64k, intlv_ctl_2M, intlv_ctl_1G;
+	u8 num_intlv_bits = ctx->intlv_num_chan;
+	u32 tmp, i;
+
+	if (amd_df_indirect_read(0, df_regs[DF_GLOBAL_CTL], DF_BROADCAST, &tmp))
+		return -EINVAL;
+
+	intlv_ctl_64k = !!((tmp >> 20) & 0x1);
+	intlv_ctl_2M  = !!((tmp >> 21) & 0x1);
+	intlv_ctl_1G  = !!((tmp >> 22) & 0x1);
+
+	/*
+	 * CSSelect[0] = XOR of addr{8,  16, 21, 30};
+	 * CSSelect[1] = XOR of addr{9,  17, 22, 31};
+	 * CSSelect[2] = XOR of addr{10, 18, 23, 32};
+	 * CSSelect[3] = XOR of addr{11, 19, 24, 33}; - 16 and 32 channel only
+	 * CSSelect[4] = XOR of addr{12, 20, 25, 34}; - 32 channel only
+	 */
+	for (i = 0; i < num_intlv_bits; i++) {
+		hashed_bit =	((ctx->ret_addr >> (8 + i)) ^
+				((ctx->ret_addr >> (16 + i)) & intlv_ctl_64k) ^
+				((ctx->ret_addr >> (21 + i)) & intlv_ctl_2M) ^
+				((ctx->ret_addr >> (30 + i)) & intlv_ctl_1G));
+
+		hashed_bit &= BIT(0);
+		if (hashed_bit != ((ctx->ret_addr >> (8 + i)) & BIT(0)))
+			ctx->ret_addr ^= BIT(8 + i);
+	}
+
+	return 0;
+}
+
+static int get_intlv_mode_df35(struct addr_ctx *ctx)
+{
+	ctx->intlv_mode = (ctx->reg_base_addr >> 2) & 0x1F;
+
+	if (ctx->intlv_mode == HASH_COD4_2CH ||
+	    ctx->intlv_mode == HASH_COD2_4CH ||
+	    ctx->intlv_mode == HASH_COD1_8CH) {
+		ctx->make_space_for_cs_id = &make_space_for_cs_id_cod_hash;
+		ctx->insert_cs_id = &insert_cs_id_cod_hash;
+		ctx->dehash_addr = &dehash_addr_df3;
+	} else {
+		ctx->make_space_for_cs_id = &make_space_for_cs_id_simple;
+		ctx->insert_cs_id = &insert_cs_id_simple;
+
+		if (ctx->intlv_mode == HASH_8CH ||
+		    ctx->intlv_mode == HASH_16CH ||
+		    ctx->intlv_mode == HASH_32CH)
+			ctx->dehash_addr = &dehash_addr_df35;
+	}
+
+	return 0;
+}
+
+static void get_intlv_num_dies_df35(struct addr_ctx *ctx)
+{
+	ctx->intlv_num_dies  = (ctx->reg_base_addr >> 7) & 0x1;
+}
+
+static u8 get_die_id_shift_df35(struct addr_ctx *ctx)
+{
+	return ctx->node_id_shift;
+}
+
+static u8 get_socket_id_shift_df35(struct addr_ctx *ctx)
+{
+	return (ctx->reg_fab_id_mask1 >> 8) & 0xF;
+}
+
+static int get_masks_df35(struct addr_ctx *ctx)
+{
+	if (amd_df_indirect_read(0, df_regs[SYSFABIDMASK1_DF3POINT5],
+				 DF_BROADCAST, &ctx->reg_fab_id_mask1))
+		return -EINVAL;
+
+	if (amd_df_indirect_read(0, df_regs[SYSFABIDMASK2_DF3POINT5],
+				 DF_BROADCAST, &ctx->reg_fab_id_mask2))
+		return -EINVAL;
+
+	ctx->node_id_shift = ctx->reg_fab_id_mask1 & 0xF;
+
+	ctx->die_id_mask = ctx->reg_fab_id_mask2 & 0xFFFF;
+
+	ctx->socket_id_mask = (ctx->reg_fab_id_mask2 >> 16) & 0xFFFF;
+
+	return 0;
+}
+
+static u16 get_dst_fabric_id_df35(struct addr_ctx *ctx)
+{
+	return ctx->reg_limit_addr & 0xFFF;
+}
+
+static int get_cs_fabric_id_df35(struct addr_ctx *ctx)
+{
+	ctx->cs_fabric_id = ctx->inst_id | (ctx->nid << ctx->node_id_shift);
+
+	return 0;
+}
+
+static u16 get_component_id_mask_df35(struct addr_ctx *ctx)
+{
+	return ctx->reg_fab_id_mask0 & 0xFFFF;
+}
+
+struct data_fabric_ops df3point5_ops = {
+	.get_hi_addr_offset		=	&get_hi_addr_offset_df3,
+	.get_intlv_mode			=	&get_intlv_mode_df35,
+	.get_intlv_addr_sel		=	&get_intlv_addr_sel_df3,
+	.get_intlv_num_dies		=	&get_intlv_num_dies_df35,
+	.get_intlv_num_sockets		=	&get_intlv_num_sockets_df3,
+	.get_masks			=	&get_masks_df35,
+	.get_die_id_shift		=	&get_die_id_shift_df35,
+	.get_socket_id_shift		=	&get_socket_id_shift_df35,
+	.get_dst_fabric_id		=	&get_dst_fabric_id_df35,
+	.get_cs_fabric_id		=	&get_cs_fabric_id_df35,
+	.get_component_id_mask		=	&get_component_id_mask_df35,
+};
+
 struct data_fabric_ops *df_ops;
 
 static int set_df_ops(struct addr_ctx *ctx)
@@ -1457,6 +1598,16 @@ static int set_df_ops(struct addr_ctx *ctx)
 		return -EINVAL;
 
 	ctx->num_blk_instances = tmp & 0xFF;
+
+	if (amd_df_indirect_read(0, df_regs[SYSFABIDMASK0_DF3POINT5],
+				 DF_BROADCAST, &ctx->reg_fab_id_mask0))
+		return -EINVAL;
+
+	if ((ctx->reg_fab_id_mask0 & 0xFF) != 0) {
+		ctx->late_hole_remove = true;
+		df_ops = &df3point5_ops;
+		return 0;
+	}
 
 	if (amd_df_indirect_read(0, df_regs[SYS_FAB_ID_MASK],
 				 DF_BROADCAST, &ctx->reg_fab_id_mask0))
@@ -1558,7 +1709,16 @@ static void get_intlv_num_chan(struct addr_ctx *ctx)
 		break;
 	case NOHASH_8CH:
 	case HASH_COD1_8CH:
+	case HASH_8CH:
 		ctx->intlv_num_chan = 3;
+		break;
+	case NOHASH_16CH:
+	case HASH_16CH:
+		ctx->intlv_num_chan = 4;
+		break;
+	case NOHASH_32CH:
+	case HASH_32CH:
+		ctx->intlv_num_chan = 5;
 		break;
 	default:
 		/* Valid interleaving modes where checked earlier. */
@@ -1665,6 +1825,43 @@ static int addr_over_limit(struct addr_ctx *ctx)
 	return 0;
 }
 
+static int find_ccm_instance_id(struct addr_ctx *ctx)
+{
+	u32 temp;
+
+	for (ctx->inst_id = 0; ctx->inst_id < ctx->num_blk_instances; ctx->inst_id++) {
+		if (amd_df_indirect_read(0, df_regs[FAB_BLK_INST_INFO_0], ctx->inst_id, &temp))
+			return -EINVAL;
+
+		if (temp == 0)
+			continue;
+
+		if ((temp & 0xF) == 0)
+			return 0;
+	}
+
+	return -EINVAL;
+}
+
+#define DF_NUM_DRAM_MAPS_AVAILABLE  16
+static int find_map_reg_by_dstfabricid(struct addr_ctx *ctx)
+{
+	u16 node_id_mask = (ctx->reg_fab_id_mask0 >> 16) & 0xFFFF;
+	u16 dst_fabric_id;
+
+	for (ctx->map_num = 0; ctx->map_num < DF_NUM_DRAM_MAPS_AVAILABLE ; ctx->map_num++) {
+		if (get_dram_addr_map(ctx))
+			continue;
+
+		dst_fabric_id = df_ops->get_dst_fabric_id(ctx);
+
+		if ((dst_fabric_id & node_id_mask) == (ctx->cs_fabric_id & node_id_mask))
+			return 0;
+	}
+
+	return -EINVAL;
+}
+
 static int umc_normaddr_to_sysaddr(u64 *addr, u16 nid, u8 umc)
 {
 	struct addr_ctx ctx;
@@ -1686,11 +1883,19 @@ static int umc_normaddr_to_sysaddr(u64 *addr, u16 nid, u8 umc)
 	if (df_ops->get_cs_fabric_id(&ctx))
 		return -EINVAL;
 
-	if (remove_dram_offset(&ctx))
-		return -EINVAL;
+	if (ctx.nid >= NONCPU_NODE_INDEX) {
+		if (find_ccm_instance_id(&ctx))
+			return -EINVAL;
 
-	if (get_dram_addr_map(&ctx))
-		return -EINVAL;
+		if (find_map_reg_by_dstfabricid(&ctx))
+			return -EINVAL;
+	} else {
+		if (remove_dram_offset(&ctx))
+			return -EINVAL;
+
+		if (get_dram_addr_map(&ctx))
+			return -EINVAL;
+	}
 
 	if (df_ops->get_intlv_mode(&ctx))
 		return -EINVAL;
