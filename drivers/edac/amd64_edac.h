@@ -126,6 +126,8 @@
 #define PCI_DEVICE_ID_AMD_17H_M70H_DF_F6 0x1446
 #define PCI_DEVICE_ID_AMD_19H_DF_F0	0x1650
 #define PCI_DEVICE_ID_AMD_19H_DF_F6	0x1656
+#define PCI_DEVICE_ID_AMD_ALDEBARAN_DF_F0	0x14D0
+#define PCI_DEVICE_ID_AMD_ALDEBARAN_DF_F6	0x14D6
 
 /*
  * Function 1 - Address Map
@@ -298,6 +300,7 @@ enum amd_families {
 	F17_M60H_CPUS,
 	F17_M70H_CPUS,
 	F19_CPUS,
+	ALDEBARAN_GPUS,
 	NUM_FAMILIES,
 };
 
@@ -389,6 +392,9 @@ struct amd64_pvt {
 	enum mem_type dram_type;
 
 	struct amd64_umc *umc;	/* UMC registers */
+	char buf[20];
+
+	u8 is_noncpu;
 };
 
 enum err_codes {
@@ -409,6 +415,27 @@ struct err_info {
 	u32 page;
 	u32 offset;
 };
+
+static inline u32 get_noncpu_umc_base(u8 umc, u8 channel)
+{
+	/*
+	 * On the NONCPU nodes, base address is calculated based on
+	 * UMC channel and the HBM channel.
+	 *
+	 * UMC channels are selected in 6th nibble
+	 * UMC chY[3:0]= [(chY*2 + 1) : (chY*2)]50000;
+	 *
+	 * HBM channels are selected in 3rd nibble
+	 * HBM chX[3:0]= [Y  ]5X[3:0]000;
+	 * HBM chX[7:4]= [Y+1]5X[3:0]000
+	 */
+	umc *= 2;
+
+	if (channel / 4)
+		umc++;
+
+	return 0x50000 + (umc << 20) + ((channel % 4) << 12);
+}
 
 static inline u32 get_umc_base(u8 channel)
 {
