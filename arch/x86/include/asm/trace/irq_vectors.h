@@ -123,6 +123,14 @@ DEFINE_IRQ_VECTOR_EVENT(deferred_error_apic);
 DEFINE_IRQ_VECTOR_EVENT(thermal_apic);
 #endif
 
+#ifdef CONFIG_CPU_SUP_AMD
+/*
+ * ibs_apic - called when entering/exiting an IBS apic interrupt
+ * vector handler
+ */
+DEFINE_IRQ_VECTOR_EVENT(ibs_apic);
+#endif
+
 TRACE_EVENT(vector_config,
 
 	TP_PROTO(unsigned int irq, unsigned int vector,
