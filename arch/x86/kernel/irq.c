@@ -78,6 +78,10 @@ int arch_show_interrupts(struct seq_file *p, int prec)
 	for_each_online_cpu(j)
 		seq_printf(p, "%10u ", irq_stats(j)->apic_perf_irqs);
 	seq_puts(p, "  Performance monitoring interrupts\n");
+	seq_printf(p, "%*s: ", prec, "IBS");
+	for_each_online_cpu(j)
+		seq_printf(p, "%10u ", irq_stats(j)->apic_ibs_irqs);
+	seq_puts(p, "  IBS Performance monitoring interrupts\n");
 	seq_printf(p, "%*s: ", prec, "IWI");
 	for_each_online_cpu(j)
 		seq_printf(p, "%10u ", irq_stats(j)->apic_irq_work_irqs);
@@ -196,6 +200,7 @@ u64 arch_irq_stat_cpu(unsigned int cpu)
 	sum += irq_stats(cpu)->apic_timer_irqs;
 	sum += irq_stats(cpu)->irq_spurious_count;
 	sum += irq_stats(cpu)->apic_perf_irqs;
+	sum += irq_stats(cpu)->apic_ibs_irqs;
 	sum += irq_stats(cpu)->apic_irq_work_irqs;
 	sum += irq_stats(cpu)->icr_read_retry_count;
 	if (x86_platform_ipi_callback)

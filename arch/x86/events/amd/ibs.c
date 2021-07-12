@@ -15,6 +15,9 @@
 #include <linux/sched/clock.h>
 
 #include <asm/apic.h>
+#include <asm/irq_regs.h>
+#include <asm/idtentry.h>
+#include <asm/trace/irq_vectors.h>
 
 #include "../perf_event.h"
 
@@ -26,6 +29,9 @@ static u32 ibs_caps;
 #include <linux/hardirq.h>
 
 #include <asm/nmi.h>
+
+static bool ibs_no_nmi = 0;
+core_param(ibs_no_nmi, ibs_no_nmi, bool, 0);
 
 #define IBS_FETCH_CONFIG_MASK	(IBS_FETCH_RAND_EN | IBS_FETCH_MAX_CNT)
 #define IBS_OP_CONFIG_MASK	IBS_OP_MAX_CNT
@@ -715,7 +721,7 @@ out:
 }
 
 static int
-perf_ibs_nmi_handler(unsigned int cmd, struct pt_regs *regs)
+perf_ibs_interrupt_handler(unsigned int cmd, struct pt_regs *regs)
 {
 	u64 stamp = sched_clock();
 	int handled = 0;
@@ -723,14 +729,26 @@ perf_ibs_nmi_handler(unsigned int cmd, struct pt_regs *regs)
 	handled += perf_ibs_handle_irq(&perf_ibs_fetch, regs);
 	handled += perf_ibs_handle_irq(&perf_ibs_op, regs);
 
-	if (handled)
+	if (handled) {
 		inc_irq_stat(apic_perf_irqs);
+		inc_irq_stat(apic_ibs_irqs);
+	}
 
 	perf_sample_event_took(sched_clock() - stamp);
 
 	return handled;
 }
-NOKPROBE_SYMBOL(perf_ibs_nmi_handler);
+NOKPROBE_SYMBOL(perf_ibs_interrupt_handler);
+
+int (*ibs_interrupt)(unsigned int cmd, struct pt_regs *regs) = perf_ibs_interrupt_handler;
+
+DEFINE_IDTENTRY_SYSVEC(sysvec_ibs)
+{
+	trace_ibs_apic_entry(IBS_APIC_VECTOR);
+	ibs_interrupt(0, regs);
+	trace_ibs_apic_exit(IBS_APIC_VECTOR);
+	ack_APIC_irq();
+}
 
 static __init int perf_ibs_pmu_init(struct perf_ibs *perf_ibs, char *name)
 {
@@ -789,7 +807,9 @@ static __init void perf_event_ibs_init(void)
 
 	perf_ibs_pmu_init(&perf_ibs_op, "ibs_op");
 
-	register_nmi_handler(NMI_LOCAL, perf_ibs_nmi_handler, 0, "perf_ibs");
+	if (!ibs_no_nmi)
+		register_nmi_handler(NMI_LOCAL, perf_ibs_interrupt_handler, 0, "perf_ibs");
+
 	pr_info("perf: AMD IBS detected (0x%08x)\n", ibs_caps);
 }
 
@@ -831,6 +851,9 @@ EXPORT_SYMBOL(get_ibs_caps);
 
 static inline int get_eilvt(int offset)
 {
+	if (ibs_no_nmi)
+		return !setup_APIC_eilvt(offset, IBS_APIC_VECTOR, APIC_EILVT_MSG_FIX, 0);
+
 	return !setup_APIC_eilvt(offset, 0, APIC_EILVT_MSG_NMI, 1);
 }
 
@@ -980,7 +1003,10 @@ static void setup_APIC_ibs(void)
 	if (offset < 0)
 		goto failed;
 
-	if (!setup_APIC_eilvt(offset, 0, APIC_EILVT_MSG_NMI, 0))
+	if (ibs_no_nmi && !setup_APIC_eilvt(offset, IBS_APIC_VECTOR, APIC_EILVT_MSG_FIX, 0))
+		return;
+
+	if (!ibs_no_nmi && !setup_APIC_eilvt(offset, 0, APIC_EILVT_MSG_NMI, 0))
 		return;
 failed:
 	pr_warn("perf: IBS APIC setup failed on cpu #%d\n",
