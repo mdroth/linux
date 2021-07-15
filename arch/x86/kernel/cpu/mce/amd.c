@@ -76,7 +76,6 @@ static const char * const smca_umc_block_names[] = {
 struct smca_hwid {
 	unsigned int bank_type;	/* Use with smca_bank_types for easy indexing. */
 	u32 hwid_mcatype;	/* (hwid,mcatype) tuple */
-	u8 count;		/* Number of instances. */
 };
 
 struct smca_bank {
@@ -85,7 +84,8 @@ struct smca_bank {
 	u8 sysfs_id;		/* Value used for sysfs name. */
 };
 
-static struct smca_bank smca_banks[MAX_NR_BANKS];
+static DEFINE_PER_CPU_READ_MOSTLY(struct smca_bank[MAX_NR_BANKS], smca_banks);
+static DEFINE_PER_CPU_READ_MOSTLY(u8[N_SMCA_BANK_TYPES], smca_bank_counts);
 
 struct smca_bank_name {
 	const char *name;	/* Short name for sysfs */
@@ -143,14 +143,14 @@ const char *smca_get_long_name(enum smca_bank_types t)
 }
 EXPORT_SYMBOL_GPL(smca_get_long_name);
 
-enum smca_bank_types smca_get_bank_type(unsigned int bank)
+enum smca_bank_types smca_get_bank_type(unsigned int cpu, unsigned int bank)
 {
 	struct smca_bank *b;
 
 	if (bank >= MAX_NR_BANKS)
 		return N_SMCA_BANK_TYPES;
 
-	b = &smca_banks[bank];
+	b = &this_cpu_ptr(smca_banks)[bank];
 	if (!b->hwid)
 		return N_SMCA_BANK_TYPES;
 
@@ -248,7 +248,7 @@ void quirk_zen_ifu(int bank, struct mce *m, struct pt_regs *regs)
 {
 	if ((m->mcgstatus & (MCG_STATUS_EIPV|MCG_STATUS_RIPV)) != 0)
 		return;
-	if (smca_get_bank_type(bank) != SMCA_IF)
+	if (smca_get_bank_type(m->extcpu, bank) != SMCA_IF)
 		return;
 	if (XEC(m->status, 0x3F) != 12)
 		return;
@@ -313,6 +313,7 @@ static void smca_set_misc_banks_map(unsigned int bank, unsigned int cpu)
 
 static void smca_configure(unsigned int bank, unsigned int cpu)
 {
+	u8 *bank_counts = this_cpu_ptr(smca_bank_counts);
 	unsigned int i, hwid_mcatype;
 	struct smca_hwid *s_hwid;
 	u32 high, low;
@@ -350,10 +351,6 @@ static void smca_configure(unsigned int bank, unsigned int cpu)
 
 	smca_set_misc_banks_map(bank, cpu);
 
-	/* Return early if this bank was already initialized. */
-	if (smca_banks[bank].hwid && smca_banks[bank].hwid->hwid_mcatype != 0)
-		return;
-
 	if (rdmsr_safe(MSR_AMD64_SMCA_MCx_IPID(bank), &low, &high)) {
 		pr_warn("Failed to read MCA_IPID for bank %d\n", bank);
 		return;
@@ -367,9 +364,9 @@ static void smca_configure(unsigned int bank, unsigned int cpu)
 
 		if (hwid_mcatype == s_hwid->hwid_mcatype ||
 		    s_hwid->bank_type == SMCA_UNKNOWN) {
-			smca_banks[bank].hwid = s_hwid;
-			smca_banks[bank].id = low;
-			smca_banks[bank].sysfs_id = s_hwid->count++;
+			this_cpu_ptr(smca_banks)[bank].hwid = s_hwid;
+			this_cpu_ptr(smca_banks)[bank].id = low;
+			this_cpu_ptr(smca_banks)[bank].sysfs_id = bank_counts[s_hwid->bank_type]++;
 			break;
 		}
 	}
@@ -655,7 +652,7 @@ out:
 
 bool amd_filter_mce(struct mce *m)
 {
-	enum smca_bank_types bank_type = smca_get_bank_type(m->bank);
+	enum smca_bank_types bank_type = smca_get_bank_type(m->extcpu, m->bank);
 	struct cpuinfo_x86 *c = &boot_cpu_data;
 
 	/* See Family 17h Models 10h-2Fh Erratum #1114. */
@@ -693,7 +690,7 @@ static void disable_err_thresholding(struct cpuinfo_x86 *c, unsigned int bank)
 	} else if (c->x86 == 0x17 &&
 		   (c->x86_model >= 0x10 && c->x86_model <= 0x2F)) {
 
-		if (smca_get_bank_type(bank) != SMCA_IF)
+		if (smca_get_bank_type(smp_processor_id(), bank) != SMCA_IF)
 			return;
 
 		msrs[0] = MSR_AMD64_SMCA_MCx_MISC(bank);
@@ -761,7 +758,7 @@ bool amd_mce_is_memory_error(struct mce *m)
 	u8 xec = (m->status >> 16) & 0x1f;
 
 	if (mce_flags.smca)
-		return smca_get_bank_type(m->bank) == SMCA_UMC && xec == 0x0;
+		return smca_get_bank_type(m->extcpu, m->bank) == SMCA_UMC && xec == 0x0;
 
 	return m->bank == 4 && xec == 0x8;
 }
@@ -1094,7 +1091,7 @@ static struct kobj_type threshold_ktype = {
 	.release		= threshold_block_release,
 };
 
-static const char *get_name(unsigned int bank, struct threshold_block *b)
+static const char *get_name(unsigned int cpu, unsigned int bank, struct threshold_block *b)
 {
 	enum smca_bank_types bank_type;
 
@@ -1105,7 +1102,7 @@ static const char *get_name(unsigned int bank, struct threshold_block *b)
 		return th_names[bank];
 	}
 
-	bank_type = smca_get_bank_type(bank);
+	bank_type = smca_get_bank_type(cpu, bank);
 	if (bank_type >= N_SMCA_BANK_TYPES)
 		return NULL;
 
@@ -1115,11 +1112,11 @@ static const char *get_name(unsigned int bank, struct threshold_block *b)
 		return NULL;
 	}
 
-	if (smca_banks[bank].hwid->count == 1) {
+	if (per_cpu(smca_bank_counts, cpu)[bank_type] == 1) {
 		if (bank_type == SMCA_UNKNOWN) {
 			snprintf(buf_mcatype, MAX_MCATYPE_NAME_LEN,
 				 "%s_%x", smca_get_name(bank_type),
-					  smca_banks[bank].id);
+					  per_cpu(smca_banks, cpu)[bank].id);
 
 			return buf_mcatype;
 		} else {
@@ -1130,11 +1127,11 @@ static const char *get_name(unsigned int bank, struct threshold_block *b)
 	if (b && bank_type == SMCA_UNKNOWN) {
 		snprintf(buf_mcatype, MAX_MCATYPE_NAME_LEN,
 			 "%s_%x_block_%u", smca_get_name(bank_type),
-			 smca_banks[bank].id, b->block);
+			 per_cpu(smca_banks, cpu)[bank].id, b->block);
 	} else {
 		snprintf(buf_mcatype, MAX_MCATYPE_NAME_LEN,
 			 "%s_%u", smca_get_name(bank_type),
-				  smca_banks[bank].sysfs_id);
+				  per_cpu(smca_banks, cpu)[bank].sysfs_id);
 	}
 
 	return buf_mcatype;
@@ -1192,7 +1189,7 @@ static int allocate_threshold_blocks(unsigned int cpu, struct threshold_bank *tb
 	else
 		tb->blocks = b;
 
-	err = kobject_init_and_add(&b->kobj, &threshold_ktype, tb->kobj, get_name(bank, b));
+	err = kobject_init_and_add(&b->kobj, &threshold_ktype, tb->kobj, get_name(cpu, bank, b));
 	if (err)
 		goto out_free;
 recurse:
@@ -1247,7 +1244,7 @@ static int threshold_create_bank(struct threshold_bank **bp, unsigned int cpu,
 	struct device *dev = this_cpu_read(mce_device);
 	struct amd_northbridge *nb = NULL;
 	struct threshold_bank *b = NULL;
-	const char *name = get_name(bank, NULL);
+	const char *name = get_name(cpu, bank, NULL);
 	int err = 0;
 
 	if (!dev)
