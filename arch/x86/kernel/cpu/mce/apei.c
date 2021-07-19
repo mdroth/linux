@@ -88,12 +88,12 @@ int apei_smca_report_x86_error(struct cper_ia_proc_ctx *ctx_info, u64 lapic_id)
 
 	mce_setup(&m);
 
-	m.extcpu = -1;
+	m.cpu = m.extcpu = -1;
 	m.socketid = -1;
 
 	for_each_possible_cpu(cpu) {
 		if (cpu_data(cpu).initial_apicid == lapic_id) {
-			m.extcpu = cpu;
+			m.cpu = m.extcpu = cpu;
 			m.socketid = cpu_data(m.extcpu).phys_proc_id;
 			break;
 		}
@@ -107,6 +107,9 @@ int apei_smca_report_x86_error(struct cper_ia_proc_ctx *ctx_info, u64 lapic_id)
 	/* Skipping MCA_CONFIG */
 	m.ipid = *(i_mce + 4);
 	m.synd = *(i_mce + 5);
+
+	m.synd1 = *(i_mce + 13);
+	m.synd2 = *(i_mce + 14);
 
 	mce_log(&m);
 
