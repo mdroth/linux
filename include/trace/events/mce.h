@@ -22,6 +22,8 @@ TRACE_EVENT(mce_record,
 		__field(	u64,		addr		)
 		__field(	u64,		misc		)
 		__field(	u64,		synd		)
+		__field(	u64,		synd1		)
+		__field(	u64,		synd2		)
 		__field(	u64,		ipid		)
 		__field(	u64,		ip		)
 		__field(	u64,		tsc		)
@@ -42,6 +44,8 @@ TRACE_EVENT(mce_record,
 		__entry->addr		= m->addr;
 		__entry->misc		= m->misc;
 		__entry->synd		= m->synd;
+		__entry->synd1		= m->synd1;
+		__entry->synd2		= m->synd2;
 		__entry->ipid		= m->ipid;
 		__entry->ip		= m->ip;
 		__entry->tsc		= m->tsc;
@@ -55,12 +59,13 @@ TRACE_EVENT(mce_record,
 		__entry->cpuvendor	= m->cpuvendor;
 	),
 
-	TP_printk("CPU: %d, MCGc/s: %llx/%llx, MC%d: %016Lx, IPID: %016Lx, ADDR/MISC/SYND: %016Lx/%016Lx/%016Lx, RIP: %02x:<%016Lx>, TSC: %llx, PROCESSOR: %u:%x, TIME: %llu, SOCKET: %u, APIC: %x",
+	TP_printk("CPU: %d, MCGc/s: %llx/%llx, MC%d: %016Lx, IPID: %016Lx, ADDR/MISC/SYND: %016Lx/%016Lx/%016Lx, SYND1/SYND2: %016Lx/%016Lx, RIP: %02x:<%016Lx>, TSC: %llx, PROCESSOR: %u:%x, TIME: %llu, SOCKET: %u, APIC: %x",
 		__entry->cpu,
 		__entry->mcgcap, __entry->mcgstatus,
 		__entry->bank, __entry->status,
 		__entry->ipid,
 		__entry->addr, __entry->misc, __entry->synd,
+		__entry->synd1, __entry->synd2,
 		__entry->cs, __entry->ip,
 		__entry->tsc,
 		__entry->cpuvendor, __entry->cpuid,
