@@ -184,6 +184,10 @@ static void __print_mce(struct mce *m)
 	if (mce_flags.smca) {
 		if (m->synd)
 			pr_cont("SYND %llx ", m->synd);
+		if (m->synd1)
+			pr_cont("SYND1 %llx ", m->synd1);
+		if (m->synd2)
+			pr_cont("SYND2 %llx ", m->synd2);
 		if (m->ipid)
 			pr_cont("IPID %llx ", m->ipid);
 	}
@@ -633,8 +637,11 @@ static noinstr void mce_read_aux(struct mce *m, int i)
 	if (mce_flags.smca) {
 		m->ipid = mce_rdmsrl(MSR_AMD64_SMCA_MCx_IPID(i));
 
-		if (m->status & MCI_STATUS_SYNDV)
+		if (m->status & MCI_STATUS_SYNDV) {
 			m->synd = mce_rdmsrl(MSR_AMD64_SMCA_MCx_SYND(i));
+			m->synd1 = mce_rdmsrl(MSR_AMD64_SMCA_MCx_SYND1(i));
+			m->synd2 = mce_rdmsrl(MSR_AMD64_SMCA_MCx_SYND2(i));
+		}
 	}
 }
 
