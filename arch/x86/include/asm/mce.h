@@ -350,6 +350,7 @@ enum smca_bank_types {
 extern const char *smca_get_long_name(enum smca_bank_types t);
 extern enum smca_bank_types smca_get_bank_type(unsigned int cpu, unsigned int bank);
 extern bool amd_mce_is_memory_error(struct mce *m);
+extern bool amd_frutext_in_mca(struct mce *m);
 
 extern int mce_threshold_create_device(unsigned int cpu);
 extern int mce_threshold_remove_device(unsigned int cpu);
@@ -363,6 +364,7 @@ void smca_feature_init(void);
 static inline int mce_threshold_create_device(unsigned int cpu)		{ return 0; };
 static inline int mce_threshold_remove_device(unsigned int cpu)		{ return 0; };
 static inline bool amd_mce_is_memory_error(struct mce *m)		{ return false; };
+extern inline bool amd_frutext_in_mca(struct mce *m)			{ return false; };
 static inline void mce_amd_feature_init(struct cpuinfo_x86 *c)		{ }
 static inline void smca_extract_err_addr(struct mce *m)			{ }
 static inline void smca_feature_init(void)				{ }
