@@ -1317,6 +1317,17 @@ amd_decode_mce(struct notifier_block *nb, unsigned long val, void *data)
 		pr_cont("\n");
 
 		decode_smca_error(m);
+
+		if (amd_frutext_in_mca(m)) {
+			char frutext[32];
+
+			memset(frutext, 0, sizeof(frutext));
+			memcpy(&frutext[0], &m->synd1, 8);
+			memcpy(&frutext[8], &m->synd2, 8);
+
+			pr_emerg(HW_ERR "FRU Text: %s\n", frutext);
+		}
+
 		goto err_code;
 	}
 

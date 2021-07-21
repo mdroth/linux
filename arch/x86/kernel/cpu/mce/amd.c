@@ -784,8 +784,15 @@ void smca_feature_init(void)
 	for (bank = 0; bank < this_cpu_read(mce_num_banks); ++bank) {
 		rdmsrl(MSR_AMD64_SMCA_MCx_CONFIG(bank), mca_cfg);
 		this_cpu_ptr(mce_banks_array)[bank].lsb_in_status = !!(mca_cfg & BIT(8));
+		this_cpu_ptr(mce_banks_array)[bank].frutext_in_mca = !!(mca_cfg & BIT(9));
 	}
 }
+
+bool amd_frutext_in_mca(struct mce *m)
+{
+	return per_cpu(mce_banks_array, m->extcpu)[m->bank].frutext_in_mca;
+}
+EXPORT_SYMBOL_GPL(amd_frutext_in_mca);
 
 static void __log_error(unsigned int bank, u64 status, u64 addr, u64 misc)
 {
