@@ -177,7 +177,12 @@ struct mce_bank {
 	 * the LSB field is found in MCA_STATUS, when set.
 	 */
 	__u64 lsb_in_status		: 1,
-	      __reserved_1		: 63;
+	/*
+	 * (AMD) MCA_CONFIG[McaFruTextInMca]: This bit indicates if FRU info
+	 * can be found in MCA_SYND{1,2}.
+	 */
+	      frutext_in_mca		: 1,
+	      __reserved_1		: 62;
 };
 
 DECLARE_PER_CPU_READ_MOSTLY(struct mce_bank[MAX_NR_BANKS], mce_banks_array);
