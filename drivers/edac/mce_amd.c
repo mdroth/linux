@@ -1048,7 +1048,6 @@ static void decode_smca_error(struct mce *m)
 	enum smca_bank_types bank_type = smca_get_bank_type(m->bank);
 	const char *ip_name;
 	u8 xec = XEC(m->status, xec_mask);
-	u32 node_id = 0;
 
 	if (bank_type >= N_SMCA_BANK_TYPES)
 		return;
@@ -1070,14 +1069,18 @@ static void decode_smca_error(struct mce *m)
 	 * SMCA_UMC_V2 is used on the noncpu nodes, extract the node id
 	 * from the InstanceHI[47:44] of the IPID register.
 	 */
-	if (bank_type == SMCA_UMC_V2 && xec == 0)
-		node_id = ((m->ipid >> 44) & 0xF);
+	if (decode_dram_ecc && xec == 0) {
+		u16 node_id = 0;
 
-	if (bank_type == SMCA_UMC && xec == 0)
-		node_id = topology_die_id(m->extcpu);
+		if (bank_type == SMCA_UMC)
+			node_id = topology_die_id(m->extcpu);
+		else if (bank_type == SMCA_UMC_V2)
+			node_id = ((m->ipid >> 44) & 0xF);
+		else
+			return;
 
-	if (decode_dram_ecc)
 		decode_dram_ecc(node_id, m);
+	}
 }
 
 static inline void amd_decode_err_code(u16 ec)
