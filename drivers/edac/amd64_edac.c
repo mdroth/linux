@@ -3714,6 +3714,16 @@ static struct amd64_family_type family_types[] = {
 		.max_mcs = 8,
 		.ops = f17_ops,
 	},
+	[F19_M10H_CPUS] = {
+		.ctl_name = "F19h_M10h",
+		.f0_id = PCI_DEVICE_ID_AMD_19H_M10H_DF_F0,
+		.f6_id = PCI_DEVICE_ID_AMD_19H_M10H_DF_F6,
+		.max_mcs = 12,
+		.ops = {
+			.early_channel_count	= f17_early_channel_count,
+			.dbam_to_cs		= f17_addr_mask_to_cs_size,
+		}
+	},
 	[ALDEBARAN_GPUS] = {
 		.ctl_name = "ALDEBARAN",
 		.f0_id = PCI_DEVICE_ID_AMD_ALDEBARAN_DF_F0,
@@ -3721,7 +3731,6 @@ static struct amd64_family_type family_types[] = {
 		.max_mcs = 4,
 		.ops = gpu_ops,
 	},
-
 };
 
 /*
@@ -4860,7 +4869,12 @@ static struct amd64_family_type *per_family_init(struct amd64_pvt *pvt)
 		break;
 
 	case 0x19:
-		if (pvt->model >= 0x20 && pvt->model <= 0x2f) {
+		if (pvt->model >= 0x10 && pvt->model <= 0x1f) {
+			pvt->fam_type = &family_types[F19_M10H_CPUS];
+			pvt->ops = &family_types[F19_M10H_CPUS].ops;
+			pvt->fam_type->ctl_name = "F19h_M10h";
+			break;
+		} else if (pvt->model >= 0x20 && pvt->model <= 0x2f) {
 			pvt->fam_type = &family_types[F17_M70H_CPUS];
 			pvt->ops = &family_types[F17_M70H_CPUS].ops;
 			pvt->fam_type->ctl_name = "F19h_M20h";
@@ -4877,13 +4891,19 @@ static struct amd64_family_type *per_family_init(struct amd64_pvt *pvt)
 				family_types[F19_CPUS].ctl_name = "F19h_M30h";
 			}
 			df_ops	= &df3point5_ops;
+			break;
+		} else if (pvt->model >= 0xa0 && pvt->model <= 0xaf) {
+			pvt->fam_type = &family_types[F19_M10H_CPUS];
+			pvt->ops = &family_types[F19_M10H_CPUS].ops;
+			pvt->fam_type->ctl_name = "F19h_MA0h";
+			break;
 		} else {
 			pvt->fam_type	= &family_types[F19_CPUS];
 			pvt->ops	= &family_types[F19_CPUS].ops;
 			family_types[F19_CPUS].ctl_name = "F19h";
 			df_ops		= &df3_ops;
+			break;
 		}
-		break;
 
 	default:
 		amd64_err("Unsupported family!\n");
