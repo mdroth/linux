@@ -192,24 +192,24 @@ static const char * const smca_ls2_mce_desc[] = {
 	"A SystemReadDataError error was reported on read data returned from L2 for an SCB store",
 	"A SystemReadDataError error was reported on read data returned from L2 for a WCB store",
 	"A hardware assertion error was reported",
-	"A parity error was detected in an STLF, SCB EMEM entry or SRB store data by any access",
+	"A parity error was detected in an STLF, SCB EMEM entry, store data mask or SRB store data by any access",
 };
 
 static const char * const smca_if_mce_desc[] = {
-	"Op Cache Microtag Probe Port Parity Error",
+	"Op Cache Microtag Parity Error",
 	"IC Microtag or Full Tag Multi-hit Error",
 	"IC Full Tag Parity Error",
 	"IC Data Array Parity Error",
-	"Decoupling Queue PhysAddr Parity Error",
-	"L0 ITLB Parity Error",
-	"L1 ITLB Parity Error",
-	"L2 ITLB Parity Error",
-	"BPQ Thread 0 Snoop Parity Error",
+	"PRQ Parity Error",
+	"L0 ITLB Parity Error", //Reserved
+	"L1-TLB Parity Error",
+	"L2-TLB Parity Error",
+	"BPQ Thread 0 Snoop Parity Error", //Reserved
 	"BPQ Thread 1 Snoop Parity Error",
-	"L1 BTB Multi-Match Error",
-	"L2 BTB Multi-Match Error",
+	"BP L1-BTB Multi-Match Error",
+	"BP L2-BTB Multi-Match Error",
 	"L2 Cache Response Poison Error",
-	"System Read Data Error",
+	"L2 Cache Error Response",
 	"Hardware Assertion Error",
 	"L1-TLB Multi-Hit",
 	"L2-TLB Multi-Hit",
@@ -222,12 +222,13 @@ static const char * const smca_l2_mce_desc[] = {
 	"L2M Tag or State Array ECC Error",
 	"L2M Data Array ECC Error",
 	"Hardware Assert Error",
+	"SDP Read Response Parity Error",
 };
 
 static const char * const smca_de_mce_desc[] = {
 	"Micro-op cache tag parity error",
 	"Micro-op cache data parity error",
-	"Instruction buffer parity error",
+	"IBB Register File parity error",
 	"Micro-op queue parity error",
 	"Instruction dispatch queue parity error",
 	"Fetch address FIFO parity error",
@@ -262,6 +263,7 @@ static const char * const smca_fp_mce_desc[] = {
 	"Retire queue (RQ) parity error",
 	"Status register file (SRF) parity error",
 	"Hardware assertion",
+	"Physical K mask register file (KRF) parity error",
 };
 
 static const char * const smca_l3_mce_desc[] = {
