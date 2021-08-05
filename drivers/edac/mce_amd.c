@@ -274,8 +274,9 @@ static const char * const smca_l3_mce_desc[] = {
 	"L3M Tag Multi-way-hit Error",
 	"L3M Data ECC Error",
 	"SDP Parity Error or SystemReadDataError from XI",
-	"L3 Victim Queue Parity Error",
+	"L3 Victim Queue Data Fabric Error",
 	"L3 Hardware Assertion",
+	"XI WCB Parity Poison Creation Event",
 };
 
 static const char * const smca_cs_mce_desc[] = {
@@ -300,11 +301,15 @@ static const char * const smca_cs2_mce_desc[] = {
 	"Read Response Parity Error",
 	"Atomic Request Parity Error",
 	"SDP read response had no match in the CS queue",
-	"Probe Filter Protocol Error",
-	"Probe Filter ECC Error",
 	"SDP read response had an unexpected RETRY error",
 	"Counter overflow error",
 	"Counter underflow error",
+	"Probe Filter Protocol Error",
+	"Probe Filter ECC Error",
+	"Illegal Request",
+	"Address Violation",
+	"Security Violation",
+	"Hardware Assert Error",
 };
 
 static const char * const smca_pie_mce_desc[] = {
@@ -312,7 +317,9 @@ static const char * const smca_pie_mce_desc[] = {
 	"Register security violation",
 	"Link Error",
 	"Poison data consumption",
-	"A deferred error was detected in the DF"
+	"A deferred error was detected in the DF",
+	"Watch Dog Timer",
+	"Error is detected in CXL Link",
 };
 
 static const char * const smca_umc_mce_desc[] = {
@@ -324,6 +331,10 @@ static const char * const smca_umc_mce_desc[] = {
 	"Write data CRC error",
 	"DCQ SRAM ECC error",
 	"AES SRAM ECC error",
+	"ECS Row Error",
+	"ECS Error",
+	"UMC Throttling Error",
+	"Read CRC Error",
 };
 
 static const char * const smca_umc2_mce_desc[] = {
@@ -465,6 +476,7 @@ static const char * const smca_nbio_mce_desc[] = {
 	"SDP ErrEvent error",
 	"SDP Egress Poison Error",
 	"IOHC Internal Poison Error",
+	"Internal system fatal error event",
 };
 
 static const char * const smca_pcie_mce_desc[] = {
@@ -508,7 +520,7 @@ static const char * const smca_xgmipcs_mce_desc[] = {
 	"Rx Replay Timeout Error",
 	"LinkSub Tx Timeout Error",
 	"LinkSub Rx Timeout Error",
-	"Rx CMD Pocket Error",
+	"Rx CMD Pocket Error", // Pocket -> Packet ?
 };
 
 static const char * const smca_xgmiphy_mce_desc[] = {
@@ -574,7 +586,7 @@ static const char * const smca_gmipcs_mce_desc[] = {
 	"Rx LFDS Fifo Underflow Error",
 	"LinkSub Tx Timeout Error",
 	"LinkSub Rx Timeout Error",
-	"Rx CMD Pocket Error",
+	"Rx CMD Pocket Error", // Pocket -> Packet ?
 	"LFDS Training Timeout Error",
 	"LFDS FC Init Timeout Error",
 	"Data Loss Error",
