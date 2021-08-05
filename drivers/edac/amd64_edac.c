@@ -13,6 +13,36 @@ module_param(ecc_enable_override, int, 0644);
 
 static struct msr __percpu *msrs;
 
+/* Family flag helpers */
+static inline bool has_ddr5(struct amd64_pvt *pvt)
+{
+	return pvt->fam_type->flags.has_ddr5;
+}
+
+static inline u64 get_addr_cfg(struct amd64_pvt *pvt)
+{
+	if (has_ddr5(pvt))
+		return UMCCH_ADDR_CFG_DDR5;
+
+	return UMCCH_ADDR_CFG;
+}
+
+static inline u64 get_addr_mask_sec(struct amd64_pvt *pvt)
+{
+	if (has_ddr5(pvt))
+		return UMCCH_ADDR_MASK_SEC_DDR5;
+
+	return UMCCH_ADDR_MASK_SEC;
+}
+
+static inline u64 get_dimm_cfg(struct amd64_pvt *pvt)
+{
+	if (has_ddr5(pvt))
+		return UMCCH_DIMM_CFG_DDR5;
+
+	return UMCCH_DIMM_CFG;
+}
+
 /* Per-node stuff */
 static struct ecc_settings **ecc_stngs;
 
@@ -2082,8 +2112,10 @@ static void __dump_misc_regs_df(struct amd64_pvt *pvt)
 		edac_dbg(1, "UMC%d x16 DIMMs present: %s\n",
 				i, (umc->dimm_cfg & BIT(7)) ? "yes" : "no");
 
-		if (pvt->dram_type == MEM_LRDDR4) {
-			amd_smn_read(pvt->mc_node_id, umc_base + UMCCH_ADDR_CFG, &tmp);
+		if (pvt->dram_type == MEM_LRDDR4 || pvt->dram_type == MEM_LRDDR5) {
+			amd_smn_read(pvt->mc_node_id,
+				     umc_base + get_addr_cfg(pvt),
+				     &tmp);
 			edac_dbg(1, "UMC%d LRDIMM %dx rank multiply\n",
 					i, 1 << ((tmp >> 4) & 0x3));
 		}
@@ -2192,7 +2224,7 @@ static void f17_prep_chip_selects(struct amd64_pvt *pvt)
 
 	for_each_umc(umc) {
 		pvt->csels[umc].b_cnt = 4;
-		pvt->csels[umc].m_cnt = 2;
+		pvt->csels[umc].m_cnt = has_ddr5(pvt) ? 4 : 2;
 	}
 }
 
@@ -2264,7 +2296,7 @@ static void read_umc_base_mask(struct amd64_pvt *pvt)
 		}
 
 		umc_mask_reg = get_umc_base(umc) + UMCCH_ADDR_MASK;
-		umc_mask_reg_sec = get_umc_base(umc) + UMCCH_ADDR_MASK_SEC;
+		umc_mask_reg_sec = get_umc_base(umc) + get_addr_mask_sec(pvt);
 
 		for_each_chip_select_mask(cs, umc, pvt) {
 			mask = &pvt->csels[umc].csmasks[cs];
@@ -2335,9 +2367,27 @@ static void determine_memory_type(struct amd64_pvt *pvt)
 	u32 dram_ctrl, dcsm;
 
 	if (pvt->umc) {
-		if ((pvt->umc[0].dimm_cfg | pvt->umc[1].dimm_cfg) & BIT(5))
+		u32 umc_cfg = 0, dimm_cfg = 0, i = 0;
+
+		for_each_umc(i) {
+			umc_cfg  |= pvt->umc[i].umc_cfg;
+			dimm_cfg |= pvt->umc[i].dimm_cfg;
+		}
+
+		/* Check if system supports DDR5 and has DDR5 DIMMs in use. */
+		if (has_ddr5(pvt) && (umc_cfg & BIT(0))) {
+			if (dimm_cfg & BIT(5))
+				pvt->dram_type = MEM_LRDDR5;
+			else if (dimm_cfg & BIT(4))
+				pvt->dram_type = MEM_RDDR5;
+			else
+				pvt->dram_type = MEM_DDR5;
+			return;
+		}
+
+		if (dimm_cfg & BIT(5))
 			pvt->dram_type = MEM_LRDDR4;
-		else if ((pvt->umc[0].dimm_cfg | pvt->umc[1].dimm_cfg) & BIT(4))
+		else if (dimm_cfg & BIT(4))
 			pvt->dram_type = MEM_RDDR4;
 		else
 			pvt->dram_type = MEM_DDR4;
@@ -2929,8 +2979,13 @@ static int f17_addr_mask_to_cs_size(struct amd64_pvt *pvt, u8 umc,
 	 * There is one mask per DIMM, and two Chip Selects per DIMM.
 	 *	CS0 and CS1 -> DIMM0
 	 *	CS2 and CS3 -> DIMM1
+	 *
+	 *	Systems with DDR5 support have one mask per Chip Select.
 	 */
-	dimm = csrow_nr >> 1;
+	if (has_ddr5(pvt))
+		dimm = csrow_nr;
+	else
+		dimm = csrow_nr >> 1;
 
 	/* Asymmetric dual-rank DIMM support. */
 	if ((csrow_nr & 1) && (cs_mode & CS_ODD_SECONDARY))
@@ -3719,6 +3774,7 @@ static struct amd64_family_type family_types[] = {
 		.f0_id = PCI_DEVICE_ID_AMD_19H_M10H_DF_F0,
 		.f6_id = PCI_DEVICE_ID_AMD_19H_M10H_DF_F6,
 		.max_mcs = 12,
+		.flags.has_ddr5 = 1,
 		.ops = {
 			.early_channel_count	= f17_early_channel_count,
 			.dbam_to_cs		= f17_addr_mask_to_cs_size,
@@ -4191,7 +4247,7 @@ static void __read_mc_regs_df(struct amd64_pvt *pvt)
 		umc_base = get_umc_base(i);
 		umc = &pvt->umc[i];
 
-		amd_smn_read(nid, umc_base + UMCCH_DIMM_CFG, &umc->dimm_cfg);
+		amd_smn_read(nid, umc_base + get_dimm_cfg(pvt), &umc->dimm_cfg);
 		amd_smn_read(nid, umc_base + UMCCH_UMC_CFG, &umc->umc_cfg);
 		amd_smn_read(nid, umc_base + UMCCH_SDP_CTRL, &umc->sdp_ctrl);
 		amd_smn_read(nid, umc_base + UMCCH_ECC_CTRL, &umc->ecc_ctrl);
