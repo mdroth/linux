@@ -2119,6 +2119,7 @@ static void dump_umcch_regs(struct amd64_pvt *pvt, int i)
 
 	edac_dbg(1, "UMC%d DIMM cfg: 0x%x\n", i, umc->dimm_cfg);
 
+	// AMD: Register definition has changed, but no functional use.
 	amd_smn_read(pvt->mc_node_id, umc_base + UMCCH_ECC_BAD_SYMBOL, &tmp);
 	edac_dbg(1, "UMC%d ECC bad symbol: 0x%x\n", i, tmp);
 
@@ -2136,8 +2137,10 @@ static void dump_umcch_regs(struct amd64_pvt *pvt, int i)
 	edac_dbg(1, "UMC%d x16 DIMMs present: %s\n",
 		 i, (umc->dimm_cfg & BIT(7)) ? "yes" : "no");
 
-	if (pvt->dram_type == MEM_LRDDR4) {
-		amd_smn_read(pvt->mc_node_id, umc_base + UMCCH_ADDR_CFG, &tmp);
+	if (pvt->dram_type == MEM_LRDDR4 || pvt->dram_type == MEM_LRDDR5) {
+		amd_smn_read(pvt->mc_node_id,
+			     umc_base + (fam_type->is_stones ? UMCCH_ADDR_CFG_DDR5 : UMCCH_ADDR_CFG),
+			     &tmp);
 		edac_dbg(1, "UMC%d LRDIMM %dx rank multiply\n",
 			 i, 1 << ((tmp >> 4) & 0x3));
 	}
@@ -2222,7 +2225,7 @@ static void prep_chip_selects(struct amd64_pvt *pvt)
 				pvt->csels[umc].m_cnt = 8;
 			} else {
 				pvt->csels[umc].b_cnt = 4;
-				pvt->csels[umc].m_cnt = 2;
+				pvt->csels[umc].m_cnt = fam_type->is_stones ? 4 : 2;
 			}
 		}
 
@@ -2288,7 +2291,7 @@ static void read_umc_base_mask(struct amd64_pvt *pvt)
 		}
 
 		umc_mask_reg = get_umc_base(umc) + UMCCH_ADDR_MASK;
-		umc_mask_reg_sec = get_umc_base(umc) + UMCCH_ADDR_MASK_SEC;
+		umc_mask_reg_sec = get_umc_base(umc) + (fam_type->is_stones ? UMCCH_ADDR_MASK_SEC_DDR5 : UMCCH_ADDR_MASK_SEC);
 
 		for_each_chip_select_mask(cs, umc, pvt) {
 			mask = &pvt->csels[umc].csmasks[cs];
@@ -2368,17 +2371,36 @@ static void determine_memory_type(struct amd64_pvt *pvt)
 	u32 dram_ctrl, dcsm;
 
 	if (pvt->umc) {
+		u32 umc_cfg = 0, dimm_cfg = 0, i = 0;
+
 		if (pvt->is_noncpu) {
 			pvt->dram_type = MEM_HBM2;
 			return;
 		}
-		if ((pvt->umc[0].dimm_cfg | pvt->umc[1].dimm_cfg) & BIT(5))
-			pvt->dram_type = MEM_LRDDR4;
-		else if ((pvt->umc[0].dimm_cfg | pvt->umc[1].dimm_cfg) & BIT(4))
-			pvt->dram_type = MEM_RDDR4;
-		else
-			pvt->dram_type = MEM_DDR4;
-		return;
+
+		// TODO: Should we cover all UMCs? The 2 UMC thing is probably from ZP.
+		for_each_umc(i) {
+			umc_cfg  |= pvt->umc[i].umc_cfg;
+			dimm_cfg |= pvt->umc[i].dimm_cfg;
+		}
+
+		if (fam_type->is_stones && (umc_cfg & 0x1)) {
+			if (dimm_cfg & BIT(5))
+				pvt->dram_type = MEM_LRDDR5;
+			else if (dimm_cfg & BIT(4))
+				pvt->dram_type = MEM_RDDR5;
+			else
+				pvt->dram_type = MEM_DDR5;
+			return;
+		} else {
+			if (dimm_cfg & BIT(5))
+				pvt->dram_type = MEM_LRDDR4;
+			else if (dimm_cfg & BIT(4))
+				pvt->dram_type = MEM_RDDR4;
+			else
+				pvt->dram_type = MEM_DDR4;
+			return;
+		}
 	}
 
 	switch (pvt->fam) {
@@ -2927,8 +2949,13 @@ static int f17_addr_mask_to_cs_size(struct amd64_pvt *pvt, u8 umc,
 	 * There is one mask per DIMM, and two Chip Selects per DIMM.
 	 *	CS0 and CS1 -> DIMM0
 	 *	CS2 and CS3 -> DIMM1
+	 *
+	 *	Stones has one mask per Chip Select.
 	 */
-	dimm = csrow_nr >> 1;
+	if (fam_type->is_stones)
+		dimm = csrow_nr;
+	else
+		dimm = csrow_nr >> 1;
 
 	/* Asymmetric dual-rank DIMM support. */
 	if ((csrow_nr & 1) && (cs_mode & CS_ODD_SECONDARY))
@@ -3691,6 +3718,7 @@ static struct amd64_family_type family_types[] = {
 		.f0_id = PCI_DEVICE_ID_AMD_19H_M10H_DF_F0,
 		.f6_id = PCI_DEVICE_ID_AMD_19H_M10H_DF_F6,
 		.max_mcs = 12,
+		.is_stones = true,
 		.ops = {
 			.early_channel_count	= f17_early_channel_count,
 			.dbam_to_cs		= f17_addr_mask_to_cs_size,
@@ -4152,12 +4180,15 @@ static void __read_mc_regs_df(struct amd64_pvt *pvt)
 			umc_base = get_umc_base(i);
 
 		umc = &pvt->umc[i];
+
 		amd_smn_read(nid, umc_base + UMCCH_UMC_CFG, &umc->umc_cfg);
 		amd_smn_read(nid, umc_base + UMCCH_SDP_CTRL, &umc->sdp_ctrl);
 		amd_smn_read(nid, umc_base + UMCCH_ECC_CTRL, &umc->ecc_ctrl);
 
 		if (!pvt->is_noncpu) {
-			amd_smn_read(nid, umc_base + UMCCH_DIMM_CFG, &umc->dimm_cfg);
+			amd_smn_read(nid, umc_base +
+				     (fam_type->is_stones ? UMCCH_DIMM_CFG_DDR5 : UMCCH_DIMM_CFG),
+				     &umc->dimm_cfg);
 			amd_smn_read(nid, umc_base + UMCCH_UMC_CAP_HI, &umc->umc_cap_hi);
 		}
 	}
@@ -4823,6 +4854,7 @@ static struct amd64_family_type *per_family_init(struct amd64_pvt *pvt)
 		return NULL;
 	}
 
+	pr_err("AMD_DEBUG: is_stones = %d\n", fam_type->is_stones);
 	return fam_type;
 }
 
