@@ -3989,13 +3989,14 @@ static void decode_umc_error(int node_id, struct mce *m)
 		umc_num = err.csrow * 8 + err.channel;
 	} else {
 		err.channel = find_umc_channel(m);
+
+		if (!(m->status & MCI_STATUS_SYNDV)) {
+			err.err_code = ERR_SYND;
+			goto log_error;
+		}
+
 		err.csrow = m->synd & 0x7;
 		umc_num = err.channel;
-	}
-
-	if (!(m->status & MCI_STATUS_SYNDV)) {
-		err.err_code = ERR_SYND;
-		goto log_error;
 	}
 
 	if (ecc_type == 2) {
