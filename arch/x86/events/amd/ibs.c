@@ -29,6 +29,7 @@ static u32 ibs_caps;
 #include <linux/hardirq.h>
 
 #include <asm/nmi.h>
+#include <asm/amd-ibs.h>
 
 static bool ibs_no_nmi = 0;
 core_param(ibs_no_nmi, ibs_no_nmi, bool, 0);
@@ -103,15 +104,6 @@ struct perf_ibs {
 	const struct attribute_group	*attr_groups[2];
 
 	u64				(*get_count)(u64 config);
-};
-
-struct perf_ibs_data {
-	u32		size;
-	union {
-		u32	data[0];	/* data buffer starts here */
-		u32	caps;
-	};
-	u64		regs[MSR_AMD64_IBS_REG_COUNT_MAX];
 };
 
 static int
@@ -334,11 +326,14 @@ static int perf_ibs_set_period(struct perf_ibs *perf_ibs,
 
 static u64 get_ibs_fetch_count(u64 config)
 {
-	return (config & IBS_FETCH_CNT) >> 12;
+	union ibs_fetch_ctl fetch_ctl = (union ibs_fetch_ctl)config;
+
+	return fetch_ctl.fetch_cnt << 4;
 }
 
 static u64 get_ibs_op_count(u64 config)
 {
+	union ibs_op_ctl op_ctl = (union ibs_op_ctl)config;
 	u64 count = 0;
 
 	/*
@@ -346,12 +341,12 @@ static u64 get_ibs_op_count(u64 config)
 	 * and the lower 7 bits of CurCnt are randomized.
 	 * Otherwise CurCnt has the full 27-bit current counter value.
 	 */
-	if (config & IBS_OP_VAL) {
-		count = (config & IBS_OP_MAX_CNT) << 4;
+	if (op_ctl.op_val) {
+		count = op_ctl.opmaxcnt << 4;
 		if (ibs_caps & IBS_CAPS_OPCNTEXT)
-			count += config & IBS_OP_MAX_CNT_EXT_MASK;
+			count += op_ctl.opmaxcnt_ext << 20;
 	} else if (ibs_caps & IBS_CAPS_RDWROPCNT) {
-		count = (config & IBS_OP_CUR_CNT) >> 32;
+		count = op_ctl.opcurcnt;
 	}
 
 	return count;
