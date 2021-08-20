@@ -65,6 +65,22 @@ SYM_CODE_START_NOALIGN(startup_64)
 	leaq	(__end_init_task - FRAME_SIZE)(%rip), %rsp
 
 	leaq	_text(%rip), %rdi
+
+	/*
+	 * initial_gs points to initial fixed_per_cpu struct with storage for
+	 * the stack protector canary. Global pointer fixups are needed at this
+	 * stage, so apply them as is done in fixup_pointer(), and initialize %gs
+	 * such that the canary can be accessed at %gs:40 for subsequent C calls.
+	 */
+	movl	$MSR_GS_BASE, %ecx
+	movq	initial_gs(%rip), %rax
+	movq	$_text, %rdx
+	subq	%rdx, %rax
+	addq	%rdi, %rax
+	movq	%rax, %rdx
+	shrq	$32,  %rdx
+	wrmsr
+
 	pushq	%rsi
 	call	startup_64_setup_env
 	popq	%rsi
@@ -133,6 +149,14 @@ SYM_INNER_LABEL(secondary_startup_64_no_verify, SYM_L_GLOBAL)
 	 * added to the initial pgdir entry that will be programmed into CR3.
 	 */
 	pushq	%rsi
+	/*
+	 * NOTE: %gs at this point is a stale data segment left over from the
+	 * real-mode trampoline, so the default stack protector canary location
+	 * at %gs:40 does not yet coincide with the expected fixed_per_cpu struct
+	 * that contains storage for the stack canary. So take care not to add
+	 * anything to the C functions in this path that would result in stack
+	 * protected C code being generated.
+	 */
 	call	__startup_secondary_64
 	popq	%rsi
 
