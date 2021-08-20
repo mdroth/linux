@@ -15,6 +15,41 @@
 #endif
 
 /*
+ * Individual entries of the SEV-SNP CPUID table, as defined by the SEV-SNP
+ * Firmware ABI, Revision 0.9, Section 7.1, Table 14. Note that the XCR0_IN
+ * and XSS_IN are denoted here as __unused/__unused2, since they are not
+ * needed for the current guest implementation, where the size of the buffers
+ * needed to store enabled XSAVE-saved features are calculated rather than
+ * encoded in the CPUID table for each possible combination of XCR0_IN/XSS_IN
+ * to save space.
+ */
+struct snp_cpuid_fn {
+	u32 eax_in;
+	u32 ecx_in;
+	u64 __unused;
+	u64 __unused2;
+	u32 eax;
+	u32 ebx;
+	u32 ecx;
+	u32 edx;
+	u64 __reserved;
+} __packed;
+
+/*
+ * SEV-SNP CPUID table header, as defined by the SEV-SNP Firmware ABI,
+ * Revision 0.9, Section 8.14.2.6. Also noted there is the SEV-SNP
+ * firmware-enforced limit of 64 entries per CPUID table.
+ */
+#define SNP_CPUID_COUNT_MAX 64
+
+struct snp_cpuid_info {
+	u32 count;
+	u32 __reserved1;
+	u64 __reserved2;
+	struct snp_cpuid_fn fn[SNP_CPUID_COUNT_MAX];
+} __packed;
+
+/*
  * Since feature negotiation related variables are set early in the boot
  * process they must reside in the .data section so as not to be zeroed
  * out when the .bss section is later cleared.
@@ -25,6 +60,28 @@ static u16 __ro_after_init ghcb_version;
 
 /* Bitmap of SEV features supported by the hypervisor */
 static u64 __ro_after_init sev_hv_features;
+
+/*
+ * These are stored in .data section to avoid the need to re-parse boot_params
+ * and regenerate the CPUID table/pointer when .bss is cleared.
+ */
+
+/*
+ * The CPUID info can't always be referenced directly due to the need for
+ * pointer fixups during initial startup phase of kernel proper, so access must
+ * be done through this pointer, which will be fixed up as-needed during boot.
+ */
+static const struct snp_cpuid_info *cpuid_info __ro_after_init;
+
+/*
+ * These will be initialized based on CPUID table so that non-present
+ * all-zero leaves (for sparse tables) can be differentiated from
+ * invalid/out-of-range leaves. This is needed since all-zero leaves
+ * still need to be post-processed.
+ */
+u32 cpuid_std_range_max __ro_after_init;
+u32 cpuid_hyp_range_max __ro_after_init;
+u32 cpuid_ext_range_max __ro_after_init;
 
 static bool __init sev_es_check_cpu_features(void)
 {
@@ -243,6 +300,224 @@ static int sev_cpuid_hv(u32 func, u32 subfunc, u32 *eax, u32 *ebx,
 	return 0;
 }
 
+static inline bool snp_cpuid_active(void)
+{
+	return !!cpuid_info;
+}
+
+static int snp_cpuid_calc_xsave_size(u64 xfeatures_en, u32 base_size,
+				     u32 *xsave_size, bool compacted)
+{
+	u32 xsave_size_total = base_size;
+	u64 xfeatures_found = 0;
+	int i;
+
+	for (i = 0; i < cpuid_info->count; i++) {
+		const struct snp_cpuid_fn *fn = &cpuid_info->fn[i];
+
+		if (!(fn->eax_in == 0xD && fn->ecx_in > 1 && fn->ecx_in < 64))
+			continue;
+		if (!(xfeatures_en & (BIT_ULL(fn->ecx_in))))
+			continue;
+		if (xfeatures_found & (BIT_ULL(fn->ecx_in)))
+			continue;
+
+		xfeatures_found |= (BIT_ULL(fn->ecx_in));
+
+		if (compacted)
+			xsave_size_total += fn->eax;
+		else
+			xsave_size_total = max(xsave_size_total,
+					       fn->eax + fn->ebx);
+	}
+
+	/*
+	 * Either the guest set unsupported XCR0/XSS bits, or the corresponding
+	 * entries in the CPUID table were not present. This is not a valid
+	 * state to be in.
+	 */
+	if (xfeatures_found != (xfeatures_en & GENMASK_ULL(63, 2)))
+		return -EINVAL;
+
+	*xsave_size = xsave_size_total;
+
+	return 0;
+}
+
+static void snp_cpuid_hv(u32 func, u32 subfunc, u32 *eax, u32 *ebx, u32 *ecx,
+			 u32 *edx)
+{
+	/*
+	 * MSR protocol does not support fetching indexed subfunction, but is
+	 * sufficient to handle current fallback cases. Should that change,
+	 * make sure to terminate rather than ignoring the index and grabbing
+	 * random values. If this issue arises in the future, handling can be
+	 * added here to use GHCB-page protocol for cases that occur late
+	 * enough in boot that GHCB page is available.
+	 */
+	if (cpuid_function_is_indexed(func) && subfunc)
+		sev_es_terminate(1, GHCB_TERM_CPUID_HV);
+
+	if (sev_cpuid_hv(func, 0, eax, ebx, ecx, edx))
+		sev_es_terminate(1, GHCB_TERM_CPUID_HV);
+}
+
+static bool
+snp_cpuid_find_validated_func(u32 func, u32 subfunc, u32 *eax, u32 *ebx,
+			      u32 *ecx, u32 *edx)
+{
+	int i;
+
+	for (i = 0; i < cpuid_info->count; i++) {
+		const struct snp_cpuid_fn *fn = &cpuid_info->fn[i];
+
+		if (fn->eax_in != func)
+			continue;
+
+		if (cpuid_function_is_indexed(func) && fn->ecx_in != subfunc)
+			continue;
+
+		*eax = fn->eax;
+		*ebx = fn->ebx;
+		*ecx = fn->ecx;
+		*edx = fn->edx;
+
+		return true;
+	}
+
+	return false;
+}
+
+static bool snp_cpuid_check_range(u32 func)
+{
+	if (func <= cpuid_std_range_max ||
+	    (func >= 0x40000000 && func <= cpuid_hyp_range_max) ||
+	    (func >= 0x80000000 && func <= cpuid_ext_range_max))
+		return true;
+
+	return false;
+}
+
+static int snp_cpuid_postprocess(u32 func, u32 subfunc, u32 *eax, u32 *ebx,
+				 u32 *ecx, u32 *edx)
+{
+	u32 ebx2, ecx2, edx2;
+
+	switch (func) {
+	case 0x1:
+		snp_cpuid_hv(func, subfunc, NULL, &ebx2, NULL, &edx2);
+
+		/* initial APIC ID */
+		*ebx = (ebx2 & GENMASK(31, 24)) | (*ebx & GENMASK(23, 0));
+		/* APIC enabled bit */
+		*edx = (edx2 & BIT(9)) | (*edx & ~BIT(9));
+
+		/* OSXSAVE enabled bit */
+		if (native_read_cr4() & X86_CR4_OSXSAVE)
+			*ecx |= BIT(27);
+		break;
+	case 0x7:
+		/* OSPKE enabled bit */
+		*ecx &= ~BIT(4);
+		if (native_read_cr4() & X86_CR4_PKE)
+			*ecx |= BIT(4);
+		break;
+	case 0xB:
+		/* extended APIC ID */
+		snp_cpuid_hv(func, 0, NULL, NULL, NULL, edx);
+		break;
+	case 0xD: {
+		bool compacted = false;
+		u64 xcr0 = 1, xss = 0;
+		u32 xsave_size;
+
+		if (subfunc != 0 && subfunc != 1)
+			return 0;
+
+		if (native_read_cr4() & X86_CR4_OSXSAVE)
+			xcr0 = xgetbv(XCR_XFEATURE_ENABLED_MASK);
+		if (subfunc == 1) {
+			/* Get XSS value if XSAVES is enabled. */
+			if (*eax & BIT(3)) {
+				unsigned long lo, hi;
+
+				asm volatile("rdmsr" : "=a" (lo), "=d" (hi)
+						     : "c" (MSR_IA32_XSS));
+				xss = (hi << 32) | lo;
+			}
+
+			/*
+			 * The PPR and APM aren't clear on what size should be
+			 * encoded in 0xD:0x1:EBX when compaction is not enabled
+			 * by either XSAVEC (feature bit 1) or XSAVES (feature
+			 * bit 3) since SNP-capable hardware has these feature
+			 * bits fixed as 1. KVM sets it to 0 in this case, but
+			 * to avoid this becoming an issue it's safer to simply
+			 * treat this as unsupported for SEV-SNP guests.
+			 */
+			if (!(*eax & (BIT(1) | BIT(3))))
+				return -EINVAL;
+
+			compacted = true;
+		}
+
+		if (snp_cpuid_calc_xsave_size(xcr0 | xss, *ebx, &xsave_size,
+					      compacted))
+			return -EINVAL;
+
+		*ebx = xsave_size;
+		}
+		break;
+	case 0x8000001E:
+		/* extended APIC ID */
+		snp_cpuid_hv(func, subfunc, eax, &ebx2, &ecx2, NULL);
+		/* compute ID */
+		*ebx = (*ebx & GENMASK(31, 8)) | (ebx2 & GENMASK(7, 0));
+		/* node ID */
+		*ecx = (*ecx & GENMASK(31, 8)) | (ecx2 & GENMASK(7, 0));
+		break;
+	default:
+		/* No fix-ups needed, use values as-is. */
+		break;
+	}
+
+	return 0;
+}
+
+/*
+ * Returns -EOPNOTSUPP if feature not enabled. Any other return value should be
+ * treated as fatal by caller.
+ */
+static int snp_cpuid(u32 func, u32 subfunc, u32 *eax, u32 *ebx, u32 *ecx,
+		     u32 *edx)
+{
+	if (!snp_cpuid_active())
+		return -EOPNOTSUPP;
+
+	if (!snp_cpuid_find_validated_func(func, subfunc, eax, ebx, ecx, edx)) {
+		/*
+		 * Some hypervisors will avoid keeping track of CPUID entries
+		 * where all values are zero, since they can be handled the
+		 * same as out-of-range values (all-zero). This is useful here
+		 * as well as it allows virtually all guest configurations to
+		 * work using a single SEV-SNP CPUID table.
+		 *
+		 * To allow for this, there is a need to distinguish between
+		 * out-of-range entries and in-range zero entries, since the
+		 * CPUID table entries are only a template that may need to be
+		 * augmented with additional values for things like
+		 * CPU-specific information during post-processing. So if it's
+		 * not in the table, but is still in the valid range, proceed
+		 * with the post-processing. Otherwise, just return zeros.
+		 */
+		*eax = *ebx = *ecx = *edx = 0;
+		if (!snp_cpuid_check_range(func))
+			return 0;
+	}
+
+	return snp_cpuid_postprocess(func, subfunc, eax, ebx, ecx, edx);
+}
+
 /*
  * Boot VC Handler - This is the first VC handler during boot, there is no GHCB
  * page yet, so it only supports the MSR based communication with the
@@ -250,16 +525,26 @@ static int sev_cpuid_hv(u32 func, u32 subfunc, u32 *eax, u32 *ebx,
  */
 void __init do_vc_no_ghcb(struct pt_regs *regs, unsigned long exit_code)
 {
+	unsigned int subfn = lower_bits(regs->cx, 32);
 	unsigned int fn = lower_bits(regs->ax, 32);
 	u32 eax, ebx, ecx, edx;
+	int ret;
 
 	/* Only CPUID is supported via MSR protocol */
 	if (exit_code != SVM_EXIT_CPUID)
 		goto fail;
 
+	ret = snp_cpuid(fn, subfn, &eax, &ebx, &ecx, &edx);
+	if (ret == 0)
+		goto cpuid_done;
+
+	if (ret != -EOPNOTSUPP)
+		goto fail;
+
 	if (sev_cpuid_hv(fn, 0, &eax, &ebx, &ecx, &edx))
 		goto fail;
 
+cpuid_done:
 	regs->ax = eax;
 	regs->bx = ebx;
 	regs->cx = ecx;
@@ -553,12 +838,35 @@ static enum es_result vc_handle_ioio(struct ghcb *ghcb, struct es_em_ctxt *ctxt)
 	return ret;
 }
 
+static int vc_handle_cpuid_snp(struct pt_regs *regs)
+{
+	u32 eax, ebx, ecx, edx;
+	int ret;
+
+	ret = snp_cpuid(regs->ax, regs->cx, &eax, &ebx, &ecx, &edx);
+	if (ret == 0) {
+		regs->ax = eax;
+		regs->bx = ebx;
+		regs->cx = ecx;
+		regs->dx = edx;
+	}
+
+	return ret;
+}
+
 static enum es_result vc_handle_cpuid(struct ghcb *ghcb,
 				      struct es_em_ctxt *ctxt)
 {
 	struct pt_regs *regs = ctxt->regs;
 	u32 cr4 = native_read_cr4();
 	enum es_result ret;
+	int snp_cpuid_ret;
+
+	snp_cpuid_ret = vc_handle_cpuid_snp(regs);
+	if (snp_cpuid_ret == 0)
+		return ES_OK;
+	if (snp_cpuid_ret != -EOPNOTSUPP)
+		return ES_VMM_ERROR;
 
 	ghcb_set_rax(ghcb, regs->ax);
 	ghcb_set_rcx(ghcb, regs->cx);
