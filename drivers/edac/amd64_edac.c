@@ -1553,7 +1553,7 @@ u8 umc_to_cs_mapping_aldebaran_die1[] = { 19, 11, 15, 7, 3, 27, 31, 23,
 					28, 20, 24, 16, 12, 4, 8, 0,
 					6, 30, 2, 26, 22, 14, 18, 10};
 
-int get_umc_to_cs_mapping(struct addr_ctx *ctx)
+static int get_umc_to_cs_mapping(struct addr_ctx *ctx)
 {
 	if (ctx->inst_id >= sizeof(umc_to_cs_mapping_aldebaran_die0))
 		return -EINVAL;
@@ -2058,7 +2058,7 @@ static void debug_display_dimm_sizes_df(struct amd64_pvt *pvt, u8 ctrl)
 	edac_printk(KERN_DEBUG, EDAC_MC, "UMC%d chip selects:\n", ctrl);
 
 	if (pvt->is_noncpu) {
-		cs_mode = f17_get_cs_mode(cs0, ctrl, pvt);
+		cs_mode = f17_get_cs_mode(0, ctrl, pvt);
 		for_each_chip_select(cs0, ctrl, pvt) {
 			size0 = pvt->ops->dbam_to_cs(pvt, ctrl, cs_mode, cs0);
 			amd64_info(EDAC_MC ": %d: %5dMB\n", cs0, size0);
@@ -2901,7 +2901,7 @@ static int f17_addr_mask_to_cs_size(struct amd64_pvt *pvt, u8 umc,
 {
 	u32 addr_mask_orig, addr_mask_deinterleaved;
 	u32 msb, weight, num_zero_bits;
-	int dimm, size = 0;
+	int dimm = 0, size = 0;
 
 	if (pvt->is_noncpu) {
 		addr_mask_orig = pvt->csels[umc].csmasks[csrow_nr];
@@ -4302,9 +4302,9 @@ static int init_csrows_df(struct mem_ctl_info *mci)
 				dimm->edac_mode = EDAC_SECDED;
 				dimm->dtype = DEV_X16;
 			} else {
+				dimm = mci->csrows[cs]->channels[umc]->dimm;
 				dimm->edac_mode = edac_mode;
 				dimm->dtype = dev_type;
-				dimm = mci->csrows[cs]->channels[umc]->dimm;
 			}
 
 			edac_dbg(1, "MC node: %d, csrow: %d\n",
@@ -4789,7 +4789,6 @@ static struct amd64_family_type *per_family_init(struct amd64_pvt *pvt)
 		return NULL;
 	}
 
-	pr_err("AMD_DEBUG: is_stones = %d\n", fam_type->is_stones);
 	return fam_type;
 }
 
