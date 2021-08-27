@@ -782,6 +782,7 @@ struct x86_pmu {
 	const struct attribute_group **attr_update;
 
 	unsigned long	attr_freeze_on_smi;
+	unsigned long	attr_nmi_window_ms;
 
 	/*
 	 * CPU Hotplug hooks

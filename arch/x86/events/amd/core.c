@@ -907,6 +907,61 @@ static ssize_t amd_event_sysfs_show(char *page, u64 config)
 	return x86_event_sysfs_show(page, config, event);
 }
 
+static ssize_t nmi_window_ms_show(struct device *cdev,
+				  struct device_attribute *attr,
+				  char *buf)
+{
+	return sprintf(buf, "%lums (%lu jiffies)\n", x86_pmu.attr_nmi_window_ms, perf_nmi_window);
+}
+
+static DEFINE_MUTEX(nmi_window_ms_mutex);
+
+static ssize_t nmi_window_ms_store(struct device *cdev,
+				   struct device_attribute *attr,
+				   const char *buf, size_t count)
+{
+	unsigned long val;
+	ssize_t ret;
+
+	ret = kstrtoul(buf, 0, &val);
+	if (ret)
+		return ret;
+
+	mutex_lock(&nmi_window_ms_mutex);
+
+	x86_pmu.attr_nmi_window_ms = val;
+
+	perf_nmi_window	= msecs_to_jiffies(val);
+	smp_wmb();
+
+	mutex_unlock(&nmi_window_ms_mutex);
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(nmi_window_ms);
+
+static struct attribute *amd_pmu_attrs[] = {
+	&dev_attr_nmi_window_ms.attr,
+	NULL,
+};
+
+static umode_t
+default_is_visible(struct kobject *kobj, struct attribute *attr, int i)
+{
+	return attr->mode;
+}
+
+static struct attribute_group group_default = {
+	.attrs      = amd_pmu_attrs,
+	.is_visible = default_is_visible,
+};
+
+static const struct attribute_group *attr_update[] = {
+	&group_default,
+	NULL,
+};
+
 static __initconst const struct x86_pmu amd_pmu = {
 	.name			= "AMD",
 	.handle_irq		= amd_pmu_handle_irq,
@@ -949,7 +1004,10 @@ static int __init amd_core_pmu_init(void)
 		return 0;
 
 	/* Avoid calculating the value each time in the NMI handler */
-	perf_nmi_window = msecs_to_jiffies(100);
+	x86_pmu.attr_nmi_window_ms	= 100;
+	perf_nmi_window		= msecs_to_jiffies(x86_pmu.attr_nmi_window_ms);
+	x86_pmu.attr_update	= attr_update;
+	x86_pmu.eventsel	= MSR_F15H_PERF_CTL;
 
 	/*
 	 * If core performance counter extensions exists, we must use
