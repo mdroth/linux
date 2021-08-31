@@ -106,6 +106,11 @@ struct __packed rmpentry {
 
 #define rmpentry_assigned(x)	((x)->info.assigned)
 #define rmpentry_pagesize(x)	((x)->info.pagesize)
+#define rmpentry_vmsa(x)	((x)->info.vmsa)
+#define rmpentry_asid(x)	((x)->info.asid)
+#define rmpentry_validated(x)	((x)->info.validated)
+#define rmpentry_gpa(x)		((unsigned long)(x)->info.gpa)
+#define rmpentry_immutable(x)	((x)->info.immutable)
 
 #define RMPADJUST_VMSA_PAGE_BIT		BIT(16)
 
@@ -215,6 +220,7 @@ void snp_set_memory_private(unsigned long vaddr, unsigned int npages);
 void snp_set_wakeup_secondary_cpu(void);
 void snp_cpuid_init_startup(struct boot_params *bp, unsigned long physaddr);
 void snp_cpuid_init(void);
+void dump_rmpentry(u64 pfn);
 int snp_issue_guest_request(u64 exit_code, struct snp_guest_request_data *input,
 			    unsigned long *fw_err);
 u64 snp_get_msg_seqno(void);
@@ -241,6 +247,7 @@ static int snp_issue_guest_request(u64 exit_code, struct snp_guest_request_data 
 	return -ENOTTY;
 }
 static u64 snp_get_msg_seqno(void) { return 0; }
+static inline void dump_rmpentry(u64 pfn) {}
 #endif
 
 #endif
