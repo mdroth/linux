@@ -1479,7 +1479,11 @@ struct kvm_x86_ops {
 	void (*vcpu_deliver_sipi_vector)(struct kvm_vcpu *vcpu, u8 vector);
 
 	void *(*alloc_apic_backing_page)(struct kvm_vcpu *vcpu);
+
 	void (*rmp_page_level_adjust)(struct kvm *kvm, kvm_pfn_t pfn, int *level);
+
+	int (*post_map_gfn)(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn, int *token);
+	void (*post_unmap_gfn)(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn, int token);
 };
 
 struct kvm_x86_nested_ops {

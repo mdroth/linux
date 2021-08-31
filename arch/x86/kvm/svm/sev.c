@@ -334,6 +334,7 @@ static int sev_guest_init(struct kvm *kvm, struct kvm_sev_cmd *argp)
 		if (ret)
 			goto e_free;
 
+		init_srcu_struct(&sev->psc_srcu);
 		ret = sev_snp_init(&argp->error);
 	} else {
 		ret = sev_platform_init(&argp->error);
@@ -2328,6 +2329,7 @@ void sev_vm_destroy(struct kvm *kvm)
 			WARN_ONCE(1, "Failed to free SNP guest context, leaking asid!\n");
 			return;
 		}
+		cleanup_srcu_struct(&sev->psc_srcu);
 	} else {
 		sev_unbind_asid(kvm, sev->handle);
 	}
@@ -2534,23 +2536,32 @@ skip_vmsa_free:
 	kfree(svm->ghcb_sa);
 }
 
-static inline int svm_map_ghcb(struct vcpu_svm *svm, struct kvm_host_map *map)
+static inline int svm_map_ghcb(struct vcpu_svm *svm, struct kvm_host_map *map, int *token)
 {
 	struct vmcb_control_area *control = &svm->vmcb->control;
 	u64 gfn = gpa_to_gfn(control->ghcb_gpa);
+	struct kvm_vcpu *vcpu = &svm->vcpu;
 
-	if (kvm_vcpu_map(&svm->vcpu, gfn, map)) {
+	if (kvm_vcpu_map(vcpu, gfn, map)) {
 		/* Unable to map GHCB from guest */
 		pr_err("error mapping GHCB GFN [%#llx] from guest\n", gfn);
 		return -EFAULT;
 	}
 
+	if (sev_post_map_gfn(vcpu->kvm, map->gfn, map->pfn, token)) {
+		kvm_vcpu_unmap(vcpu, map, false);
+		return -EBUSY;
+	}
+
 	return 0;
 }
 
-static inline void svm_unmap_ghcb(struct vcpu_svm *svm, struct kvm_host_map *map)
+static inline void svm_unmap_ghcb(struct vcpu_svm *svm, struct kvm_host_map *map, int token)
 {
-	kvm_vcpu_unmap(&svm->vcpu, map, true);
+	struct kvm_vcpu *vcpu = &svm->vcpu;
+
+	kvm_vcpu_unmap(vcpu, map, true);
+	sev_post_unmap_gfn(vcpu->kvm, map->gfn, map->pfn, token);
 }
 
 static void dump_ghcb(struct vcpu_svm *svm)
@@ -2558,8 +2569,9 @@ static void dump_ghcb(struct vcpu_svm *svm)
 	struct kvm_host_map map;
 	unsigned int nbits;
 	struct ghcb *ghcb;
+	int token;
 
-	if (svm_map_ghcb(svm, &map))
+	if (svm_map_ghcb(svm, &map, &token))
 		return;
 
 	ghcb = map.hva;
@@ -2584,7 +2596,7 @@ static void dump_ghcb(struct vcpu_svm *svm)
 	pr_err("%-20s%*pb\n", "valid_bitmap", nbits, ghcb->save.valid_bitmap);
 
 e_unmap:
-	svm_unmap_ghcb(svm, &map);
+	svm_unmap_ghcb(svm, &map, token);
 }
 
 static bool sev_es_sync_to_ghcb(struct vcpu_svm *svm)
@@ -2592,8 +2604,9 @@ static bool sev_es_sync_to_ghcb(struct vcpu_svm *svm)
 	struct kvm_vcpu *vcpu = &svm->vcpu;
 	struct kvm_host_map map;
 	struct ghcb *ghcb;
+	int token;
 
-	if (svm_map_ghcb(svm, &map))
+	if (svm_map_ghcb(svm, &map, &token))
 		return false;
 
 	ghcb = map.hva;
@@ -2619,7 +2632,7 @@ static bool sev_es_sync_to_ghcb(struct vcpu_svm *svm)
 
 	trace_kvm_vmgexit_exit(svm->vcpu.vcpu_id, ghcb);
 
-	svm_unmap_ghcb(svm, &map);
+	svm_unmap_ghcb(svm, &map, token);
 
 	return true;
 }
@@ -2676,8 +2689,9 @@ static int sev_es_validate_vmgexit(struct vcpu_svm *svm, u64 *exit_code)
 	struct kvm_vcpu *vcpu = &svm->vcpu;
 	struct kvm_host_map map;
 	struct ghcb *ghcb;
+	int token;
 
-	if (svm_map_ghcb(svm, &map))
+	if (svm_map_ghcb(svm, &map, &token))
 		return -EFAULT;
 
 	ghcb = map.hva;
@@ -2779,7 +2793,7 @@ static int sev_es_validate_vmgexit(struct vcpu_svm *svm, u64 *exit_code)
 
 	sev_es_sync_from_ghcb(svm, ghcb);
 
-	svm_unmap_ghcb(svm, &map);
+	svm_unmap_ghcb(svm, &map, token);
 	return 0;
 
 vmgexit_err:
@@ -2800,7 +2814,7 @@ vmgexit_err:
 	vcpu->run->internal.data[0] = *exit_code;
 	vcpu->run->internal.data[1] = vcpu->arch.last_vmentry_cpu;
 
-	svm_unmap_ghcb(svm, &map);
+	svm_unmap_ghcb(svm, &map, token);
 	return -EINVAL;
 }
 
@@ -3075,6 +3089,9 @@ static int __snp_handle_page_state_change(struct kvm_vcpu *vcpu, enum psc_op op,
 			if (rc)
 				return PSC_UNDEF_ERR;
 		}
+
+		/* Wait for all the existing mapped gfn to unmap */
+		synchronize_srcu_expedited(&sev->psc_srcu);
 
 		write_lock(&kvm->mmu_lock);
 
@@ -3640,4 +3657,34 @@ void sev_rmp_page_level_adjust(struct kvm *kvm, kvm_pfn_t pfn, int *level)
 
 	/* Adjust the level to keep the NPT and RMP in sync */
 	*level = min_t(size_t, *level, rmp_level);
+}
+
+int sev_post_map_gfn(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn, int *token)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	int level;
+
+	if (!sev_snp_guest(kvm))
+		return 0;
+
+	*token = srcu_read_lock(&sev->psc_srcu);
+
+	/* If pfn is not added as private then fail */
+	if (snp_lookup_rmpentry(pfn, &level) == 1) {
+		srcu_read_unlock(&sev->psc_srcu, *token);
+		pr_err_ratelimited("failed to map private gfn 0x%llx pfn 0x%llx\n", gfn, pfn);
+		return -EBUSY;
+	}
+
+	return 0;
+}
+
+void sev_post_unmap_gfn(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn, int token)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+
+	if (!sev_snp_guest(kvm))
+		return;
+
+	srcu_read_unlock(&sev->psc_srcu, token);
 }

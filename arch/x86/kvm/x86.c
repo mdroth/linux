@@ -3100,6 +3100,65 @@ static inline bool kvm_pv_async_pf_enabled(struct kvm_vcpu *vcpu)
 	return (vcpu->arch.apf.msr_en_val & mask) == mask;
 }
 
+static int kvm_map_gfn_protected(struct kvm_vcpu *vcpu, gfn_t gfn, struct kvm_host_map *map,
+				 struct gfn_to_pfn_cache *cache, bool atomic, int *token)
+{
+	int ret;
+
+	ret = kvm_map_gfn(vcpu, gfn, map, cache, atomic);
+	if (ret)
+		return ret;
+
+	if (kvm_x86_ops.post_map_gfn) {
+		ret = static_call(kvm_x86_post_map_gfn)(vcpu->kvm, map->gfn, map->pfn, token);
+		if (ret)
+			kvm_unmap_gfn(vcpu, map, cache, false, atomic);
+	}
+
+	return ret;
+}
+
+static int kvm_unmap_gfn_protected(struct kvm_vcpu *vcpu, struct kvm_host_map *map,
+				   struct gfn_to_pfn_cache *cache, bool dirty,
+				   bool atomic, int token)
+{
+	int ret;
+
+	ret = kvm_unmap_gfn(vcpu, map, cache, dirty, atomic);
+
+	if (kvm_x86_ops.post_unmap_gfn)
+		static_call(kvm_x86_post_unmap_gfn)(vcpu->kvm, map->gfn, map->pfn, token);
+
+	return ret;
+}
+
+static int kvm_vcpu_map_protected(struct kvm_vcpu *vcpu, gpa_t gpa, struct kvm_host_map *map,
+				  int *token)
+{
+	int ret;
+
+	ret = kvm_vcpu_map(vcpu, gpa, map);
+	if (ret)
+		return ret;
+
+	if (kvm_x86_ops.post_map_gfn) {
+		ret = static_call(kvm_x86_post_map_gfn)(vcpu->kvm, map->gfn, map->pfn, token);
+		if (ret)
+			kvm_vcpu_unmap(vcpu, map, false);
+	}
+
+	return ret;
+}
+
+static void kvm_vcpu_unmap_protected(struct kvm_vcpu *vcpu, struct kvm_host_map *map,
+				     bool dirty, int token)
+{
+	kvm_vcpu_unmap(vcpu, map, dirty);
+
+	if (kvm_x86_ops.post_unmap_gfn)
+		static_call(kvm_x86_post_unmap_gfn)(vcpu->kvm, map->gfn, map->pfn, token);
+}
+
 static int kvm_pv_enable_async_pf(struct kvm_vcpu *vcpu, u64 data)
 {
 	gpa_t gpa = data & ~0x3f;
@@ -3190,6 +3249,7 @@ static void record_steal_time(struct kvm_vcpu *vcpu)
 {
 	struct kvm_host_map map;
 	struct kvm_steal_time *st;
+	int token;
 
 	if (kvm_xen_msr_enabled(vcpu->kvm)) {
 		kvm_xen_runstate_set_running(vcpu);
@@ -3200,8 +3260,8 @@ static void record_steal_time(struct kvm_vcpu *vcpu)
 		return;
 
 	/* -EAGAIN is returned in atomic context so we can just return. */
-	if (kvm_map_gfn(vcpu, vcpu->arch.st.msr_val >> PAGE_SHIFT,
-			&map, &vcpu->arch.st.cache, false))
+	if (kvm_map_gfn_protected(vcpu, vcpu->arch.st.msr_val >> PAGE_SHIFT,
+				  &map, &vcpu->arch.st.cache, false, &token))
 		return;
 
 	st = map.hva +
@@ -3239,7 +3299,7 @@ static void record_steal_time(struct kvm_vcpu *vcpu)
 
 	st->version += 1;
 
-	kvm_unmap_gfn(vcpu, &map, &vcpu->arch.st.cache, true, false);
+	kvm_unmap_gfn_protected(vcpu, &map, &vcpu->arch.st.cache, true, false, token);
 }
 
 int kvm_set_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
@@ -4276,6 +4336,7 @@ static void kvm_steal_time_set_preempted(struct kvm_vcpu *vcpu)
 {
 	struct kvm_host_map map;
 	struct kvm_steal_time *st;
+	int token;
 
 	if (!(vcpu->arch.st.msr_val & KVM_MSR_ENABLED))
 		return;
@@ -4283,8 +4344,8 @@ static void kvm_steal_time_set_preempted(struct kvm_vcpu *vcpu)
 	if (vcpu->arch.st.preempted)
 		return;
 
-	if (kvm_map_gfn(vcpu, vcpu->arch.st.msr_val >> PAGE_SHIFT, &map,
-			&vcpu->arch.st.cache, true))
+	if (kvm_map_gfn_protected(vcpu, vcpu->arch.st.msr_val >> PAGE_SHIFT,
+				  &map, &vcpu->arch.st.cache, true, &token))
 		return;
 
 	st = map.hva +
@@ -4292,7 +4353,7 @@ static void kvm_steal_time_set_preempted(struct kvm_vcpu *vcpu)
 
 	st->preempted = vcpu->arch.st.preempted = KVM_VCPU_PREEMPTED;
 
-	kvm_unmap_gfn(vcpu, &map, &vcpu->arch.st.cache, true, true);
+	kvm_unmap_gfn_protected(vcpu, &map, &vcpu->arch.st.cache, true, true, token);
 }
 
 void kvm_arch_vcpu_put(struct kvm_vcpu *vcpu)
@@ -6815,6 +6876,7 @@ static int emulator_cmpxchg_emulated(struct x86_emulate_ctxt *ctxt,
 	gpa_t gpa;
 	char *kaddr;
 	bool exchanged;
+	int token;
 
 	/* guests cmpxchg8b have to be emulated atomically */
 	if (bytes > 8 || (bytes & (bytes - 1)))
@@ -6838,7 +6900,7 @@ static int emulator_cmpxchg_emulated(struct x86_emulate_ctxt *ctxt,
 	if (((gpa + bytes - 1) & page_line_mask) != (gpa & page_line_mask))
 		goto emul_write;
 
-	if (kvm_vcpu_map(vcpu, gpa_to_gfn(gpa), &map))
+	if (kvm_vcpu_map_protected(vcpu, gpa_to_gfn(gpa), &map, &token))
 		goto emul_write;
 
 	kaddr = map.hva + offset_in_page(gpa);
@@ -6860,7 +6922,7 @@ static int emulator_cmpxchg_emulated(struct x86_emulate_ctxt *ctxt,
 		BUG();
 	}
 
-	kvm_vcpu_unmap(vcpu, &map, true);
+	kvm_vcpu_unmap_protected(vcpu, &map, true, token);
 
 	if (!exchanged)
 		return X86EMUL_CMPXCHG_FAILED;

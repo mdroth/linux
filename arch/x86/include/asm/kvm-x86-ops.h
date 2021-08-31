@@ -123,6 +123,8 @@ KVM_X86_OP(msr_filter_changed)
 KVM_X86_OP_NULL(complete_emulated_msr)
 KVM_X86_OP(alloc_apic_backing_page)
 KVM_X86_OP_NULL(rmp_page_level_adjust)
+KVM_X86_OP(post_map_gfn)
+KVM_X86_OP(post_unmap_gfn)
 
 #undef KVM_X86_OP
 #undef KVM_X86_OP_NULL
