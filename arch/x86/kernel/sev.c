@@ -19,6 +19,8 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/cpumask.h>
+#include <linux/platform_device.h>
+#include <linux/io.h>
 
 #include <asm/cpu_entry_area.h>
 #include <asm/stacktrace.h>
@@ -34,6 +36,7 @@
 #include <asm/cpu.h>
 #include <asm/apic.h>
 #include <asm/cpuid.h>
+#include <asm/setup.h>
 
 #define DR7_RESET_VALUE        0x400
 
@@ -2261,3 +2264,69 @@ e_restore_irq:
 	return ret;
 }
 EXPORT_SYMBOL_GPL(snp_issue_guest_request);
+
+static struct platform_device guest_req_device = {
+	.name		= "snp-guest",
+	.id		= -1,
+};
+
+static struct snp_secrets_page_layout *map_secrets_page(void)
+{
+	u64 pa_data = boot_params.cc_blob_address;
+	struct snp_secrets_page_layout *layout;
+	struct cc_blob_sev_info info;
+	void *map;
+
+	/*
+	 * The CC blob contains the address of the secrets page, check if the
+	 * blob is present.
+	 */
+	if (!pa_data)
+		return 0;
+
+	map = early_memremap(pa_data, sizeof(info));
+	memcpy(&info, map, sizeof(info));
+	early_memunmap(map, sizeof(info));
+
+	/* Verify that secrets page address is passed */
+	if (!info.secrets_phys || info.secrets_len != PAGE_SIZE)
+		return NULL;
+
+	layout = (__force void *)ioremap_encrypted(info.secrets_phys, PAGE_SIZE);
+	return layout;
+}
+
+static int __init add_snp_guest_request(void)
+{
+	struct snp_guest_platform_data data;
+
+	if (!sev_feature_enabled(SEV_SNP))
+		return -ENODEV;
+
+	secrets_layout = map_secrets_page();
+	if (!secrets_layout)
+		return -ENODEV;
+
+	/*
+	 * The secrets page contains three VMPCK that can be used for
+	 * communicating with the PSP. We choose the VMPCK0 to encrypt guest
+	 * messages send and receive by the Linux. Provide the key and
+	 * id through the platform data to the driver.
+	 */
+	data.vmpck_id = 0;
+	memcpy_fromio(data.vmpck, secrets_layout->vmpck0, sizeof(data.vmpck));
+
+	platform_device_add_data(&guest_req_device, &data, sizeof(data));
+
+	if (platform_device_register(&guest_req_device))
+		goto e_fail;
+
+	return 0;
+
+e_fail:
+	pr_err("Failed to register SNP guest device\n");
+	iounmap(secrets_layout);
+	secrets_layout = NULL;
+	return 0;
+}
+device_initcall(add_snp_guest_request);

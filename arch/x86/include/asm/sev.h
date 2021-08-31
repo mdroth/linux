@@ -123,6 +123,11 @@ struct snp_secrets_page_layout {
 	u8 rsvd3[3840];
 } __packed;
 
+struct snp_guest_platform_data {
+	u8 vmpck_id;
+	u8 vmpck[VMPCK_KEY_LEN];
+};
+
 #ifdef CONFIG_AMD_MEM_ENCRYPT
 extern struct static_key_false sev_es_enable_key;
 extern void __sev_es_ist_enter(struct pt_regs *regs);
