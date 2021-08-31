@@ -2530,8 +2530,7 @@ void sev_free_vcpu(struct kvm_vcpu *vcpu)
 	__free_page(virt_to_page(svm->vmsa));
 
 skip_vmsa_free:
-	if (svm->ghcb_sa_free)
-		kfree(svm->ghcb_sa);
+	kfree(svm->ghcb_sa);
 }
 
 static void dump_ghcb(struct vcpu_svm *svm)
@@ -2618,6 +2617,9 @@ static void sev_es_sync_from_ghcb(struct vcpu_svm *svm)
 	control->exit_code_hi = upper_32_bits(exit_code);
 	control->exit_info_1 = ghcb_get_sw_exit_info_1(ghcb);
 	control->exit_info_2 = ghcb_get_sw_exit_info_2(ghcb);
+
+	/* Copy the GHCB scratch area GPA */
+	svm->ghcb_sa_gpa = ghcb_get_sw_scratch(ghcb);
 
 	/* Clear the valid entries fields */
 	memset(ghcb->save.valid_bitmap, 0, sizeof(ghcb->save.valid_bitmap));
@@ -2754,22 +2756,12 @@ void sev_es_unmap_ghcb(struct vcpu_svm *svm)
 	if (!svm->ghcb)
 		return;
 
-	if (svm->ghcb_sa_free) {
-		/*
-		 * The scratch area lives outside the GHCB, so there is a
-		 * buffer that, depending on the operation performed, may
-		 * need to be synced, then freed.
-		 */
-		if (svm->ghcb_sa_sync) {
-			kvm_write_guest(svm->vcpu.kvm,
-					ghcb_get_sw_scratch(svm->ghcb),
-					svm->ghcb_sa, svm->ghcb_sa_len);
-			svm->ghcb_sa_sync = false;
-		}
-
-		kfree(svm->ghcb_sa);
-		svm->ghcb_sa = NULL;
-		svm->ghcb_sa_free = false;
+	 /* Sync the scratch buffer area. */
+	if (svm->ghcb_sa_sync) {
+		kvm_write_guest(svm->vcpu.kvm,
+				ghcb_get_sw_scratch(svm->ghcb),
+				svm->ghcb_sa, svm->ghcb_sa_len);
+		svm->ghcb_sa_sync = false;
 	}
 
 	trace_kvm_vmgexit_exit(svm->vcpu.vcpu_id, svm->ghcb);
@@ -2807,12 +2799,11 @@ void pre_sev_run(struct vcpu_svm *svm, int cpu)
 static bool setup_vmgexit_scratch(struct vcpu_svm *svm, bool sync, u64 len)
 {
 	struct vmcb_control_area *control = &svm->vmcb->control;
-	struct ghcb *ghcb = svm->ghcb;
 	u64 ghcb_scratch_beg, ghcb_scratch_end;
 	u64 scratch_gpa_beg, scratch_gpa_end;
 	void *scratch_va;
 
-	scratch_gpa_beg = ghcb_get_sw_scratch(ghcb);
+	scratch_gpa_beg = svm->ghcb_sa_gpa;
 	if (!scratch_gpa_beg) {
 		pr_err("vmgexit: scratch gpa not provided\n");
 		return false;
@@ -2842,9 +2833,6 @@ static bool setup_vmgexit_scratch(struct vcpu_svm *svm, bool sync, u64 len)
 			       scratch_gpa_beg, scratch_gpa_end);
 			return false;
 		}
-
-		scratch_va = (void *)svm->ghcb;
-		scratch_va += (scratch_gpa_beg - control->ghcb_gpa);
 	} else {
 		/*
 		 * The guest memory must be read into a kernel buffer, so
@@ -2855,29 +2843,35 @@ static bool setup_vmgexit_scratch(struct vcpu_svm *svm, bool sync, u64 len)
 			       len, GHCB_SCRATCH_AREA_LIMIT);
 			return false;
 		}
+	}
+
+	if (svm->ghcb_sa_alloc_len < len) {
 		scratch_va = kzalloc(len, GFP_KERNEL_ACCOUNT);
 		if (!scratch_va)
 			return false;
 
-		if (kvm_read_guest(svm->vcpu.kvm, scratch_gpa_beg, scratch_va, len)) {
-			/* Unable to copy scratch area from guest */
-			pr_err("vmgexit: kvm_read_guest for scratch area failed\n");
-
-			kfree(scratch_va);
-			return false;
-		}
-
 		/*
-		 * The scratch area is outside the GHCB. The operation will
-		 * dictate whether the buffer needs to be synced before running
-		 * the vCPU next time (i.e. a read was requested so the data
-		 * must be written back to the guest memory).
+		 * Free the old scratch area and switch to using newly
+		 * allocated.
 		 */
-		svm->ghcb_sa_sync = sync;
-		svm->ghcb_sa_free = true;
+		kfree(svm->ghcb_sa);
+
+		svm->ghcb_sa_alloc_len = len;
+		svm->ghcb_sa = scratch_va;
 	}
 
-	svm->ghcb_sa = scratch_va;
+	if (kvm_read_guest(svm->vcpu.kvm, scratch_gpa_beg, svm->ghcb_sa, len)) {
+		/* Unable to copy scratch area from guest */
+		pr_err("vmgexit: kvm_read_guest for scratch area failed\n");
+		return false;
+	}
+
+	/*
+	 * The operation will dictate whether the buffer needs to be synced
+	 * before running the vCPU next time (i.e. a read was requested so
+	 * the data must be written back to the guest memory).
+	 */
+	svm->ghcb_sa_sync = sync;
 	svm->ghcb_sa_len = len;
 
 	return true;
