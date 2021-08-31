@@ -92,6 +92,8 @@ struct kvm_sev_info {
 	u64 snp_init_flags;
 	void *snp_context;      /* SNP guest context page */
 	struct srcu_struct psc_srcu;
+	void *snp_certs_data;
+	struct mutex guest_req_lock;
 };
 
 struct kvm_svm {
