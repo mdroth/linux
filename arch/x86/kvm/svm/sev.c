@@ -2533,15 +2533,40 @@ skip_vmsa_free:
 	kfree(svm->ghcb_sa);
 }
 
+static inline int svm_map_ghcb(struct vcpu_svm *svm, struct kvm_host_map *map)
+{
+	struct vmcb_control_area *control = &svm->vmcb->control;
+	u64 gfn = gpa_to_gfn(control->ghcb_gpa);
+
+	if (kvm_vcpu_map(&svm->vcpu, gfn, map)) {
+		/* Unable to map GHCB from guest */
+		pr_err("error mapping GHCB GFN [%#llx] from guest\n", gfn);
+		return -EFAULT;
+	}
+
+	return 0;
+}
+
+static inline void svm_unmap_ghcb(struct vcpu_svm *svm, struct kvm_host_map *map)
+{
+	kvm_vcpu_unmap(&svm->vcpu, map, true);
+}
+
 static void dump_ghcb(struct vcpu_svm *svm)
 {
-	struct ghcb *ghcb = svm->ghcb;
+	struct kvm_host_map map;
 	unsigned int nbits;
+	struct ghcb *ghcb;
+
+	if (svm_map_ghcb(svm, &map))
+		return;
+
+	ghcb = map.hva;
 
 	/* Re-use the dump_invalid_vmcb module parameter */
 	if (!dump_invalid_vmcb) {
 		pr_warn_ratelimited("set kvm_amd.dump_invalid_vmcb=1 to dump internal KVM state.\n");
-		return;
+		goto e_unmap;
 	}
 
 	nbits = sizeof(ghcb->save.valid_bitmap) * 8;
@@ -2556,12 +2581,21 @@ static void dump_ghcb(struct vcpu_svm *svm)
 	pr_err("%-20s%016llx is_valid: %u\n", "sw_scratch",
 	       ghcb->save.sw_scratch, ghcb_sw_scratch_is_valid(ghcb));
 	pr_err("%-20s%*pb\n", "valid_bitmap", nbits, ghcb->save.valid_bitmap);
+
+e_unmap:
+	svm_unmap_ghcb(svm, &map);
 }
 
-static void sev_es_sync_to_ghcb(struct vcpu_svm *svm)
+static bool sev_es_sync_to_ghcb(struct vcpu_svm *svm)
 {
 	struct kvm_vcpu *vcpu = &svm->vcpu;
-	struct ghcb *ghcb = svm->ghcb;
+	struct kvm_host_map map;
+	struct ghcb *ghcb;
+
+	if (svm_map_ghcb(svm, &map))
+		return false;
+
+	ghcb = map.hva;
 
 	/*
 	 * The GHCB protocol so far allows for the following data
@@ -2575,13 +2609,24 @@ static void sev_es_sync_to_ghcb(struct vcpu_svm *svm)
 	ghcb_set_rbx(ghcb, vcpu->arch.regs[VCPU_REGS_RBX]);
 	ghcb_set_rcx(ghcb, vcpu->arch.regs[VCPU_REGS_RCX]);
 	ghcb_set_rdx(ghcb, vcpu->arch.regs[VCPU_REGS_RDX]);
+
+	/*
+	 * Copy the return values from the exit_info_{1,2}.
+	 */
+	ghcb_set_sw_exit_info_1(ghcb, svm->ghcb_sw_exit_info_1);
+	ghcb_set_sw_exit_info_2(ghcb, svm->ghcb_sw_exit_info_2);
+
+	trace_kvm_vmgexit_exit(svm->vcpu.vcpu_id, ghcb);
+
+	svm_unmap_ghcb(svm, &map);
+
+	return true;
 }
 
-static void sev_es_sync_from_ghcb(struct vcpu_svm *svm)
+static void sev_es_sync_from_ghcb(struct vcpu_svm *svm, struct ghcb *ghcb)
 {
 	struct vmcb_control_area *control = &svm->vmcb->control;
 	struct kvm_vcpu *vcpu = &svm->vcpu;
-	struct ghcb *ghcb = svm->ghcb;
 	u64 exit_code;
 
 	/*
@@ -2625,13 +2670,18 @@ static void sev_es_sync_from_ghcb(struct vcpu_svm *svm)
 	memset(ghcb->save.valid_bitmap, 0, sizeof(ghcb->save.valid_bitmap));
 }
 
-static int sev_es_validate_vmgexit(struct vcpu_svm *svm)
+static int sev_es_validate_vmgexit(struct vcpu_svm *svm, u64 *exit_code)
 {
-	struct kvm_vcpu *vcpu;
+	struct kvm_vcpu *vcpu = &svm->vcpu;
+	struct kvm_host_map map;
 	struct ghcb *ghcb;
-	u64 exit_code = 0;
 
-	ghcb = svm->ghcb;
+	if (svm_map_ghcb(svm, &map))
+		return -EFAULT;
+
+	ghcb = map.hva;
+
+	trace_kvm_vmgexit_enter(vcpu->vcpu_id, ghcb);
 
 	/* Only GHCB Usage code 0 is supported */
 	if (ghcb->ghcb_usage)
@@ -2641,7 +2691,7 @@ static int sev_es_validate_vmgexit(struct vcpu_svm *svm)
 	 * Retrieve the exit code now even though is may not be marked valid
 	 * as it could help with debugging.
 	 */
-	exit_code = ghcb_get_sw_exit_code(ghcb);
+	*exit_code = ghcb_get_sw_exit_code(ghcb);
 
 	if (!ghcb_sw_exit_code_is_valid(ghcb) ||
 	    !ghcb_sw_exit_info_1_is_valid(ghcb) ||
@@ -2725,6 +2775,9 @@ static int sev_es_validate_vmgexit(struct vcpu_svm *svm)
 		goto vmgexit_err;
 	}
 
+	sev_es_sync_from_ghcb(svm, ghcb);
+
+	svm_unmap_ghcb(svm, &map);
 	return 0;
 
 vmgexit_err:
@@ -2735,16 +2788,17 @@ vmgexit_err:
 			    ghcb->ghcb_usage);
 	} else {
 		vcpu_unimpl(vcpu, "vmgexit: exit reason %#llx is not valid\n",
-			    exit_code);
+			    *exit_code);
 		dump_ghcb(svm);
 	}
 
 	vcpu->run->exit_reason = KVM_EXIT_INTERNAL_ERROR;
 	vcpu->run->internal.suberror = KVM_INTERNAL_ERROR_UNEXPECTED_EXIT_REASON;
 	vcpu->run->internal.ndata = 2;
-	vcpu->run->internal.data[0] = exit_code;
+	vcpu->run->internal.data[0] = *exit_code;
 	vcpu->run->internal.data[1] = vcpu->arch.last_vmentry_cpu;
 
+	svm_unmap_ghcb(svm, &map);
 	return -EINVAL;
 }
 
@@ -2753,23 +2807,20 @@ void sev_es_unmap_ghcb(struct vcpu_svm *svm)
 	/* Clear any indication that the vCPU is in a type of AP Reset Hold */
 	svm->ap_reset_hold_type = AP_RESET_HOLD_NONE;
 
-	if (!svm->ghcb)
+	if (!svm->ghcb_in_use)
 		return;
 
 	 /* Sync the scratch buffer area. */
 	if (svm->ghcb_sa_sync) {
 		kvm_write_guest(svm->vcpu.kvm,
-				ghcb_get_sw_scratch(svm->ghcb),
+				svm->ghcb_sa_gpa,
 				svm->ghcb_sa, svm->ghcb_sa_len);
 		svm->ghcb_sa_sync = false;
 	}
 
-	trace_kvm_vmgexit_exit(svm->vcpu.vcpu_id, svm->ghcb);
-
 	sev_es_sync_to_ghcb(svm);
 
-	kvm_vcpu_unmap(&svm->vcpu, &svm->ghcb_map, true);
-	svm->ghcb = NULL;
+	svm->ghcb_in_use = false;
 }
 
 void pre_sev_run(struct vcpu_svm *svm, int cpu)
@@ -3001,7 +3052,6 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 	struct vcpu_svm *svm = to_svm(vcpu);
 	struct vmcb_control_area *control = &svm->vmcb->control;
 	u64 ghcb_gpa, exit_code;
-	struct ghcb *ghcb;
 	int ret;
 
 	/* Validate the GHCB */
@@ -3014,27 +3064,14 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 		return -EINVAL;
 	}
 
-	if (kvm_vcpu_map(vcpu, ghcb_gpa >> PAGE_SHIFT, &svm->ghcb_map)) {
-		/* Unable to map GHCB from guest */
-		vcpu_unimpl(vcpu, "vmgexit: error mapping GHCB [%#llx] from guest\n",
-			    ghcb_gpa);
-		return -EINVAL;
-	}
-
-	svm->ghcb = svm->ghcb_map.hva;
-	ghcb = svm->ghcb_map.hva;
-
-	trace_kvm_vmgexit_enter(vcpu->vcpu_id, ghcb);
-
-	exit_code = ghcb_get_sw_exit_code(ghcb);
-
-	ret = sev_es_validate_vmgexit(svm);
+	ret = sev_es_validate_vmgexit(svm, &exit_code);
 	if (ret)
 		return ret;
 
-	sev_es_sync_from_ghcb(svm);
-	ghcb_set_sw_exit_info_1(ghcb, 0);
-	ghcb_set_sw_exit_info_2(ghcb, 0);
+	svm->ghcb_in_use = true;
+
+	svm_set_ghcb_sw_exit_info_1(vcpu, 0);
+	svm_set_ghcb_sw_exit_info_2(vcpu, 0);
 
 	ret = -EINVAL;
 	switch (exit_code) {
@@ -3073,23 +3110,23 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 			break;
 		case 1:
 			/* Get AP jump table address */
-			ghcb_set_sw_exit_info_2(ghcb, sev->ap_jump_table);
+			svm_set_ghcb_sw_exit_info_2(vcpu, sev->ap_jump_table);
 			break;
 		default:
 			pr_err("svm: vmgexit: unsupported AP jump table request - exit_info_1=%#llx\n",
 			       control->exit_info_1);
-			ghcb_set_sw_exit_info_1(ghcb, 1);
-			ghcb_set_sw_exit_info_2(ghcb,
-						X86_TRAP_UD |
-						SVM_EVTINJ_TYPE_EXEPT |
-						SVM_EVTINJ_VALID);
+			svm_set_ghcb_sw_exit_info_1(vcpu, 1);
+			svm_set_ghcb_sw_exit_info_2(vcpu,
+						    X86_TRAP_UD |
+						    SVM_EVTINJ_TYPE_EXEPT |
+						    SVM_EVTINJ_VALID);
 		}
 
 		ret = 1;
 		break;
 	}
 	case SVM_VMGEXIT_HV_FEATURES: {
-		ghcb_set_sw_exit_info_2(ghcb, GHCB_HV_FT_SUPPORTED);
+		svm_set_ghcb_sw_exit_info_2(vcpu, GHCB_HV_FT_SUPPORTED);
 
 		ret = 1;
 		break;
@@ -3211,7 +3248,7 @@ void sev_vcpu_deliver_sipi_vector(struct kvm_vcpu *vcpu, u8 vector)
 		 * Return from an AP Reset Hold VMGEXIT, where the guest will
 		 * set the CS and RIP. Set SW_EXIT_INFO_2 to a non-zero value.
 		 */
-		ghcb_set_sw_exit_info_2(svm->ghcb, 1);
+		svm_set_ghcb_sw_exit_info_2(vcpu, 1);
 		break;
 	case AP_RESET_HOLD_MSR_PROTO:
 		/*
