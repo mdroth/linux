@@ -91,6 +91,7 @@
 #define KVM_REQ_MSR_FILTER_CHANGED	KVM_ARCH_REQ(29)
 #define KVM_REQ_UPDATE_CPU_DIRTY_LOGGING \
 	KVM_ARCH_REQ_FLAGS(30, KVM_REQUEST_WAIT | KVM_REQUEST_NO_WAKEUP)
+#define KVM_REQ_UPDATE_PROTECTED_GUEST_STATE	KVM_ARCH_REQ(31)
 
 #define CR0_RESERVED_BITS                                               \
 	(~(unsigned long)(X86_CR0_PE | X86_CR0_MP | X86_CR0_EM | X86_CR0_TS \
@@ -1484,6 +1485,8 @@ struct kvm_x86_ops {
 
 	int (*post_map_gfn)(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn, int *token);
 	void (*post_unmap_gfn)(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn, int token);
+
+	int (*update_protected_guest_state)(struct kvm_vcpu *vcpu);
 };
 
 struct kvm_x86_nested_ops {

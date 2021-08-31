@@ -1310,6 +1310,9 @@ static void svm_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event)
 	svm->spec_ctrl = 0;
 	svm->virt_spec_ctrl = 0;
 
+	if (init_event)
+		sev_snp_init_protected_guest_state(vcpu);
+
 	init_vmcb(vcpu);
 }
 
@@ -4664,6 +4667,8 @@ static struct kvm_x86_ops svm_x86_ops __initdata = {
 
 	.post_map_gfn = sev_post_map_gfn,
 	.post_unmap_gfn = sev_post_unmap_gfn,
+
+	.update_protected_guest_state = sev_snp_update_protected_guest_state,
 };
 
 static struct kvm_x86_init_ops svm_init_ops __initdata = {

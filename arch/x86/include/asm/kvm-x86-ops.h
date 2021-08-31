@@ -125,6 +125,7 @@ KVM_X86_OP(alloc_apic_backing_page)
 KVM_X86_OP_NULL(rmp_page_level_adjust)
 KVM_X86_OP(post_map_gfn)
 KVM_X86_OP(post_unmap_gfn)
+KVM_X86_OP(update_protected_guest_state)
 
 #undef KVM_X86_OP
 #undef KVM_X86_OP_NULL
