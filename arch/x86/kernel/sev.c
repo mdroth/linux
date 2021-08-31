@@ -46,6 +46,9 @@ static struct ghcb boot_ghcb_page __bss_decrypted __aligned(PAGE_SIZE);
  */
 static struct ghcb __initdata *boot_ghcb;
 
+/* Secrets page used to get keys for communicating with SNP FW. */
+struct snp_secrets_page_layout *secrets_layout;
+
 /* #VC handler runtime per-CPU data */
 struct sev_es_runtime_data {
 	struct ghcb ghcb_page;
@@ -2154,6 +2157,56 @@ static int __init snp_cpuid_check_status(void)
 
 arch_initcall(snp_cpuid_check_status);
 
+static inline u64 __snp_get_msg_seqno(void)
+{
+	u64 count;
+
+	if (!secrets_layout)
+		return 0;
+
+	/* Read the current message sequence counter from secrets pages */
+	count = secrets_layout->os_area.msg_seqno_0;
+
+	/* The sequence counter must begin with 1 */
+	if (!count)
+		return 1;
+
+	return count + 1;
+}
+
+/* Return a non-zero on success */
+u64 snp_get_msg_seqno(void)
+{
+	u64 count = __snp_get_msg_seqno();
+
+	/*
+	 * The message sequence counter for the SNP guest request is a  64-bit value
+	 * but the version 2 of GHCB specification defines a 32-bit storage for the
+	 * it. If the counter exceeds the 32-bit value then return zero. The PSP
+	 * firmware treats zero as an invalid number and will fail the message
+	 * request.
+	 */
+	if (count >= UINT_MAX) {
+		pr_err_ratelimited("SNP guest request message sequence counter overflow\n");
+		return 0;
+	}
+
+	return count;
+}
+EXPORT_SYMBOL_GPL(snp_get_msg_seqno);
+
+static void snp_inc_msg_seqno(void)
+{
+	if (!secrets_layout)
+		return;
+
+	/*
+	 * The counter is also incremented by the PSP, so increment it by 2
+	 * and save in secrets page.
+	 */
+	secrets_layout->os_area.msg_seqno_0 += 2;
+}
+
 int snp_issue_guest_request(u64 exit_code, struct snp_guest_request_data *input,
 			    unsigned long *fw_err)
 {
@@ -2194,7 +2247,11 @@ int snp_issue_guest_request(u64 exit_code, struct snp_guest_request_data *input,
 			*fw_err = ghcb->save.sw_exit_info_2;
 
 		ret = -EIO;
+		goto e_put;
 	}
+
+	/* The command was successful, increment the sequence counter */
+	snp_inc_msg_seqno();
 
 e_put:
 	__sev_put_ghcb(&state);
