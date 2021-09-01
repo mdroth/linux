@@ -17,6 +17,7 @@
 #include <linux/misc_cgroup.h>
 #include <linux/processor.h>
 #include <linux/trace_events.h>
+#include <linux/hugetlb.h>
 #include <asm/fpu/internal.h>
 
 #include <asm/pkru.h>
@@ -1723,6 +1724,35 @@ out:
 	return r;
 }
 
+static bool is_range_hugetlb(struct kvm *kvm, struct kvm_enc_region *range)
+{
+	struct vm_area_struct *vma;
+	u64 start, end;
+	bool ret = true;
+
+	start = range->addr;
+	end = start + range->size;
+
+	mmap_read_lock(kvm->mm);
+
+	do {
+		vma = find_vma_intersection(kvm->mm, start, end);
+		if (!vma)
+			goto unlock;
+
+		if (is_vm_hugetlb_page(vma))
+			goto unlock;
+
+		start = vma->vm_end;
+	} while (end > vma->vm_end);
+
+	ret = false;
+
+unlock:
+	mmap_read_unlock(kvm->mm);
+	return ret;
+}
+
 int svm_register_enc_region(struct kvm *kvm,
 			    struct kvm_enc_region *range)
 {
@@ -1738,6 +1768,13 @@ int svm_register_enc_region(struct kvm *kvm,
 		return -EINVAL;
 
 	if (range->addr > ULONG_MAX || range->size > ULONG_MAX)
+		return -EINVAL;
+
+	/*
+	 * SEV-SNP does not support the backing pages from the HugeTLB. Verify
+	 * that the registered memory range is not from the HugeTLB.
+	 */
+	if (sev_snp_guest(kvm) && is_range_hugetlb(kvm, range))
 		return -EINVAL;
 
 	region = kzalloc(sizeof(*region), GFP_KERNEL_ACCOUNT);
