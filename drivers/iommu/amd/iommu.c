@@ -182,10 +182,11 @@ static struct amd_iommu *rlookup_amd_iommu(struct device *dev)
 	return __rlookup_amd_iommu(seg, (devid & 0xffff));
 }
 
-static struct protection_domain *to_pdomain(struct iommu_domain *dom)
+struct protection_domain *to_pdomain(struct iommu_domain *dom)
 {
 	return container_of(dom, struct protection_domain, domain);
 }
+EXPORT_SYMBOL_GPL(to_pdomain);
 
 static struct iommu_dev_data *alloc_dev_data(struct amd_iommu *iommu, u16 devid)
 {
@@ -1549,7 +1550,11 @@ static void set_dte_entry(struct amd_iommu *iommu, u16 devid,
 
 	pte_root |= (domain->iop.mode & DEV_ENTRY_MODE_MASK)
 		    << DEV_ENTRY_MODE_SHIFT;
-	pte_root |= DTE_FLAG_IR | DTE_FLAG_IW | DTE_FLAG_V | DTE_FLAG_TV;
+	
+	pte_root |= DTE_FLAG_IR | DTE_FLAG_IW | DTE_FLAG_V;
+
+	if (domain->iop.mode != PAGE_MODE_NONE)
+		pte_root |= DTE_FLAG_TV;
 
 	flags = dev_table[devid].data[1];
 
@@ -1609,7 +1614,8 @@ static void clear_dte_entry(struct amd_iommu *iommu, u16 devid)
 	struct dev_table_entry *dev_table = get_dev_table(iommu);
 
 	/* remove entry from the device table seen by the hardware */
-	dev_table[devid].data[0]  = DTE_FLAG_V | DTE_FLAG_TV;
+	//dev_table[devid].data[0]  = DTE_FLAG_V | DTE_FLAG_TV;
+	dev_table[devid].data[0]  = DTE_FLAG_V;
 	dev_table[devid].data[1] &= DTE_FLAG_MASK;
 
 	amd_iommu_apply_erratum_63(iommu, devid);
@@ -3663,3 +3669,27 @@ int amd_iommu_update_ga(int cpu, bool is_run, void *data)
 }
 EXPORT_SYMBOL(amd_iommu_update_ga);
 #endif
+
+/* --------------------------------------------------------------------------*/
+/* AMD INTERNAL ONLY */
+
+extern u64 *fetch_pte(struct amd_io_pgtable *pgtable,
+		      unsigned long address,
+		      unsigned long *page_size);
+
+u64 *amd_iommu_fetch_pte(struct iommu_domain *dom,
+				unsigned long iova,
+				unsigned long *size)
+{
+	struct protection_domain *pdom = to_pdomain(dom);
+	struct io_pgtable_ops *ops = &pdom->iop.iop.ops;
+	struct amd_io_pgtable *pgtable = io_pgtable_ops_to_data(ops);
+	u64 *pte;
+
+	pte = fetch_pte(pgtable, iova, size);
+	if (!pte || !IOMMU_PTE_PRESENT(*pte))
+		return 0;
+
+	return pte;
+}
+EXPORT_SYMBOL_GPL(amd_iommu_fetch_pte);

@@ -528,7 +528,17 @@ struct protection_domain {
 	unsigned long flags;	/* flags to find out type of domain */
 	unsigned dev_cnt;	/* devices assigned to this domain */
 	unsigned dev_iommu[MAX_IOMMUS]; /* per-IOMMU reference count */
+#ifdef CONFIG_AMD_IOMMU_DEBUGFS
+	struct amd_iommu_debug *dbg;
+#endif
 };
+
+#ifdef CONFIG_AMD_IOMMU_DEBUGFS
+struct amd_iommu_debug {
+	u16 devid;
+	u16 domid;
+};
+#endif
 
 /*
  * This structure contains information about one PCI segment in the system.
@@ -716,7 +726,7 @@ struct amd_iommu {
 
 #ifdef CONFIG_AMD_IOMMU_DEBUGFS
 	/* DebugFS Info */
-	struct dentry *debugfs;
+	struct amd_iommu_debug dbg;
 #endif
 };
 
