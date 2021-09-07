@@ -182,10 +182,11 @@ static struct amd_iommu *rlookup_amd_iommu(struct device *dev)
 	return __rlookup_amd_iommu(seg, (devid & 0xffff));
 }
 
-static struct protection_domain *to_pdomain(struct iommu_domain *dom)
+struct protection_domain *to_pdomain(struct iommu_domain *dom)
 {
 	return container_of(dom, struct protection_domain, domain);
 }
+EXPORT_SYMBOL_GPL(to_pdomain);
 
 static struct iommu_dev_data *alloc_dev_data(struct amd_iommu *iommu, u16 devid)
 {
@@ -3674,3 +3675,27 @@ int amd_iommu_update_ga(int cpu, bool is_run, void *data)
 }
 EXPORT_SYMBOL(amd_iommu_update_ga);
 #endif
+
+/* --------------------------------------------------------------------------*/
+/* AMD INTERNAL ONLY */
+
+extern u64 *fetch_pte(struct amd_io_pgtable *pgtable,
+		      unsigned long address,
+		      unsigned long *page_size);
+
+u64 *amd_iommu_fetch_pte(struct iommu_domain *dom,
+				unsigned long iova,
+				unsigned long *size)
+{
+	struct protection_domain *pdom = to_pdomain(dom);
+	struct io_pgtable_ops *ops = &pdom->iop.iop.ops;
+	struct amd_io_pgtable *pgtable = io_pgtable_ops_to_data(ops);
+	u64 *pte;
+
+	pte = fetch_pte(pgtable, iova, size);
+	if (!pte || !IOMMU_PTE_PRESENT(*pte))
+		return 0;
+
+	return pte;
+}
+EXPORT_SYMBOL_GPL(amd_iommu_fetch_pte);
