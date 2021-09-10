@@ -783,6 +783,8 @@ struct x86_pmu {
 
 	unsigned long	attr_freeze_on_smi;
 	unsigned long	attr_nmi_window_ms;
+	unsigned long	attr_oflow_wait_count;
+	unsigned long	attr_oflow_wait_us;
 
 	/*
 	 * CPU Hotplug hooks

@@ -583,8 +583,6 @@ static void amd_pmu_cpu_dead(int cpu)
  * NMIs. This function is intended to wait for the NMI to run and reset
  * the counter to avoid possible unhandled NMI messages.
  */
-#define OVERFLOW_WAIT_COUNT	50
-
 static void amd_pmu_wait_on_overflow(int idx)
 {
 	struct cpu_hw_events *cpuc = this_cpu_ptr(&cpu_hw_events);
@@ -597,13 +595,13 @@ static void amd_pmu_wait_on_overflow(int idx)
 	 * should exit very, very quickly, but just in case, don't wait
 	 * forever...
 	 */
-	for (i = 0; i < OVERFLOW_WAIT_COUNT; i++) {
+	for (i = 0; i < x86_pmu.attr_oflow_wait_count; i++) {
 		rdpmcl(hwc->event_base_rdpmc, counter);
 		if (counter & (1ULL << (x86_pmu.cntval_bits - 1)))
 			break;
 
 		/* Might be in IRQ context, so can't sleep */
-		udelay(1);
+		udelay(x86_pmu.attr_oflow_wait_us);
 	}
 }
 
@@ -941,8 +939,74 @@ static ssize_t nmi_window_ms_store(struct device *cdev,
 
 static DEVICE_ATTR_RW(nmi_window_ms);
 
+
+static ssize_t oflow_wait_count_show(struct device *cdev,
+				  struct device_attribute *attr,
+				  char *buf)
+{
+	return sprintf(buf, "%lu\n", x86_pmu.attr_oflow_wait_count);
+}
+
+static DEFINE_MUTEX(oflow_wait_count_mutex);
+
+static ssize_t oflow_wait_count_store(struct device *cdev,
+				   struct device_attribute *attr,
+				   const char *buf, size_t count)
+{
+	unsigned long val;
+	ssize_t ret;
+
+	ret = kstrtoul(buf, 0, &val);
+	if (ret)
+		return ret;
+
+	mutex_lock(&oflow_wait_count_mutex);
+
+	x86_pmu.attr_oflow_wait_count = val;
+
+	mutex_unlock(&oflow_wait_count_mutex);
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(oflow_wait_count);
+
+
+static ssize_t oflow_wait_us_show(struct device *cdev,
+				  struct device_attribute *attr,
+				  char *buf)
+{
+	return sprintf(buf, "%lu\n", x86_pmu.attr_oflow_wait_us);
+}
+
+static DEFINE_MUTEX(oflow_wait_us_mutex);
+
+static ssize_t oflow_wait_us_store(struct device *cdev,
+				   struct device_attribute *attr,
+				   const char *buf, size_t count)
+{
+	unsigned long val;
+	ssize_t ret;
+
+	ret = kstrtoul(buf, 0, &val);
+	if (ret)
+		return ret;
+
+	mutex_lock(&oflow_wait_us_mutex);
+
+	x86_pmu.attr_oflow_wait_us = val;
+
+	mutex_unlock(&oflow_wait_us_mutex);
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(oflow_wait_us);
+
 static struct attribute *amd_pmu_attrs[] = {
 	&dev_attr_nmi_window_ms.attr,
+	&dev_attr_oflow_wait_count.attr,
+	&dev_attr_oflow_wait_us.attr,
 	NULL,
 };
 
@@ -1006,6 +1070,8 @@ static int __init amd_core_pmu_init(void)
 	/* Avoid calculating the value each time in the NMI handler */
 	x86_pmu.attr_nmi_window_ms	= 100;
 	perf_nmi_window		= msecs_to_jiffies(x86_pmu.attr_nmi_window_ms);
+	x86_pmu.attr_oflow_wait_count	= 50;
+	x86_pmu.attr_oflow_wait_us	= 1;
 	x86_pmu.attr_update	= attr_update;
 	x86_pmu.eventsel	= MSR_F15H_PERF_CTL;
 
