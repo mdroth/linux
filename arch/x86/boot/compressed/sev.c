@@ -385,4 +385,11 @@ void snp_cpuid_init_boot(struct boot_params *bp)
 	/* It should be safe to read SEV MSR and check features now. */
 	if (!sev_snp_enabled())
 		sev_es_terminate(1, GHCB_TERM_CPUID);
+
+	/*
+	 * Pass run-time kernel a pointer to CC info via boot_params so EFI
+	 * config table doesn't need to be searched again during early startup
+	 * phase.
+	 */
+	bp->cc_blob_address = (u32)(unsigned long)cc_info;
 }
