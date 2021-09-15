@@ -553,6 +553,20 @@ void __init do_vc_no_ghcb(struct pt_regs *regs, unsigned long exit_code)
 	if (exit_code != SVM_EXIT_CPUID)
 		goto fail;
 
+	/*
+	 * A #VC implies that either SEV-ES or SEV-SNP are enabled, so the SEV
+	 * MSR is also available. Go ahead and initialize sev_status here to
+	 * allow SEV features to be checked without relying solely on the SEV
+	 * cpuid bit to indicate whether it is safe to do so.
+	 */
+	if (!sev_status) {
+		unsigned long lo, hi;
+
+		asm volatile("rdmsr" : "=a" (lo), "=d" (hi)
+				     : "c" (MSR_AMD64_SEV));
+		sev_status = (hi << 32) | lo;
+	}
+
 	ret = snp_cpuid(fn, subfn, &eax, &ebx, &ecx, &edx);
 	if (ret == 0)
 		goto cpuid_done;
