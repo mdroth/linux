@@ -104,3 +104,68 @@ int efi_get_conf_table(struct boot_params *boot_params, unsigned long *cfg_tbl_p
 
 	return 0;
 }
+
+/* Get vendor table address/guid from EFI config table at the given index */
+static int get_vendor_table(void *cfg_tbl, unsigned int idx,
+			    unsigned long *vendor_tbl_pa,
+			    efi_guid_t *vendor_tbl_guid,
+			    bool efi_64)
+{
+	if (efi_64) {
+		efi_config_table_64_t *tbl_entry =
+			(efi_config_table_64_t *)cfg_tbl + idx;
+
+		if (!IS_ENABLED(CONFIG_X86_64) && tbl_entry->table >> 32) {
+			debug_putstr("Error: EFI config table entry located above 4GB.\n");
+			return -EINVAL;
+		}
+
+		*vendor_tbl_pa		= tbl_entry->table;
+		*vendor_tbl_guid	= tbl_entry->guid;
+
+	} else {
+		efi_config_table_32_t *tbl_entry =
+			(efi_config_table_32_t *)cfg_tbl + idx;
+
+		*vendor_tbl_pa		= tbl_entry->table;
+		*vendor_tbl_guid	= tbl_entry->guid;
+	}
+
+	return 0;
+}
+
+/**
+ * Given EFI config table, search it for the physical address of the vendor
+ * table associated with GUID.
+ *
+ * @cfg_tbl_pa:        pointer to EFI configuration table
+ * @cfg_tbl_len:       number of entries in EFI configuration table
+ * @guid:              GUID of vendor table
+ * @efi_64:            true if using 64-bit EFI
+ * @vendor_tbl_pa:     location to store physical address of vendor table
+ *
+ * Returns 0 on success. On error, return params are left unchanged.
+ */
+int efi_find_vendor_table(unsigned long cfg_tbl_pa, unsigned int cfg_tbl_len,
+			  efi_guid_t guid, bool efi_64, unsigned long *vendor_tbl_pa)
+{
+	unsigned int i;
+
+	for (i = 0; i < cfg_tbl_len; i++) {
+		unsigned long vendor_tbl_pa_tmp;
+		efi_guid_t vendor_tbl_guid;
+		int ret;
+
+		if (get_vendor_table((void *)cfg_tbl_pa, i,
+				     &vendor_tbl_pa_tmp,
+				     &vendor_tbl_guid, efi_64))
+			return -EINVAL;
+
+		if (!efi_guidcmp(guid, vendor_tbl_guid)) {
+			*vendor_tbl_pa = vendor_tbl_pa_tmp;
+			return 0;
+		}
+	}
+
+	return -ENOENT;
+}

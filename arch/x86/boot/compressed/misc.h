@@ -181,6 +181,8 @@ int efi_get_system_table(struct boot_params *boot_params,
 			 unsigned long *sys_tbl_pa, bool *is_efi_64);
 int efi_get_conf_table(struct boot_params *boot_params, unsigned long *cfg_tbl_pa,
 			unsigned int *cfg_tbl_len, bool *is_efi_64);
+int efi_find_vendor_table(unsigned long cfg_tbl_pa, unsigned int cfg_tbl_len,
+			  efi_guid_t guid, bool efi_64, unsigned long *vendor_tbl_pa);
 #else
 static inline int
 efi_get_system_table(struct boot_params *boot_params,
@@ -192,6 +194,13 @@ efi_get_system_table(struct boot_params *boot_params,
 static inline int
 efi_get_conf_table(struct boot_params *boot_params, unsigned long *cfg_tbl_pa,
 		   unsigned int *cfg_tbl_len, bool *is_efi_64)
+{
+	return -ENOENT;
+}
+
+static inline int
+efi_find_vendor_table(unsigned long cfg_tbl_pa, unsigned int cfg_tbl_len,
+		      efi_guid_t guid, bool efi_64, unsigned long *vendor_tbl_pa)
 {
 	return -ENOENT;
 }
