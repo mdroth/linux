@@ -179,10 +179,19 @@ unsigned long sev_verify_cbit(unsigned long cr3);
 /* helpers for early EFI config table access */
 int efi_get_system_table(struct boot_params *boot_params,
 			 unsigned long *sys_tbl_pa, bool *is_efi_64);
+int efi_get_conf_table(struct boot_params *boot_params, unsigned long *cfg_tbl_pa,
+			unsigned int *cfg_tbl_len, bool *is_efi_64);
 #else
 static inline int
 efi_get_system_table(struct boot_params *boot_params,
 		     unsigned long *sys_tbl_pa, bool *is_efi_64)
+{
+	return -ENOENT;
+}
+
+static inline int
+efi_get_conf_table(struct boot_params *boot_params, unsigned long *cfg_tbl_pa,
+		   unsigned int *cfg_tbl_len, bool *is_efi_64)
 {
 	return -ENOENT;
 }

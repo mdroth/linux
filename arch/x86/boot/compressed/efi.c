@@ -62,3 +62,45 @@ int efi_get_system_table(struct boot_params *boot_params, unsigned long *sys_tbl
 	*is_efi_64 = efi_64;
 	return 0;
 }
+
+/**
+ * Given boot_params, locate EFI system table from it and return the physical
+ * address EFI configuration table.
+ *
+ * @boot_params:        pointer to boot_params
+ * @cfg_tbl_pa:         location to store physical address of config table
+ * @cfg_tbl_len:        location to store number of config table entries
+ * @is_efi_64:          location to store whether using 64-bit EFI or not
+ *
+ * Returns 0 on success. On error, return params are left unchanged.
+ */
+int efi_get_conf_table(struct boot_params *boot_params, unsigned long *cfg_tbl_pa,
+		       unsigned int *cfg_tbl_len, bool *is_efi_64)
+{
+	unsigned long sys_tbl_pa = 0;
+	int ret;
+
+	if (!cfg_tbl_pa || !cfg_tbl_len || !is_efi_64)
+		return -EINVAL;
+
+	ret = efi_get_system_table(boot_params, &sys_tbl_pa, is_efi_64);
+	if (ret)
+		return ret;
+
+	/* Handle EFI bitness properly */
+	if (*is_efi_64) {
+		efi_system_table_64_t *stbl =
+			(efi_system_table_64_t *)sys_tbl_pa;
+
+		*cfg_tbl_pa	= stbl->tables;
+		*cfg_tbl_len	= stbl->nr_tables;
+	} else {
+		efi_system_table_32_t *stbl =
+			(efi_system_table_32_t *)sys_tbl_pa;
+
+		*cfg_tbl_pa	= stbl->tables;
+		*cfg_tbl_len	= stbl->nr_tables;
+	}
+
+	return 0;
+}
