@@ -220,7 +220,6 @@ void snp_set_memory_private(unsigned long vaddr, unsigned int npages);
 void snp_set_wakeup_secondary_cpu(void);
 void snp_cpuid_init_startup(struct boot_params *bp, unsigned long physaddr);
 void snp_cpuid_init(void);
-void dump_rmpentry(u64 pfn);
 int snp_issue_guest_request(u64 exit_code, struct snp_guest_request_data *input,
 			    unsigned long *fw_err);
 u64 snp_get_msg_seqno(void);
@@ -241,13 +240,12 @@ static inline void snp_set_memory_private(unsigned long vaddr, unsigned int npag
 static inline void snp_set_wakeup_secondary_cpu(void) { }
 static inline void snp_cpuid_startup(struct boot_params *bp, unsigned long physbase) { }
 static inline void snp_cpuid_init(void) { }
-static int snp_issue_guest_request(u64 exit_code, struct snp_guest_request_data *input,
-				   unsigned long *fw_err)
+static inline int snp_issue_guest_request(u64 exit_code, struct snp_guest_request_data *input,
+					  unsigned long *fw_err)
 {
 	return -ENOTTY;
 }
-static u64 snp_get_msg_seqno(void) { return 0; }
-static inline void dump_rmpentry(u64 pfn) {}
+static inline u64 snp_get_msg_seqno(void) { return 0; }
 #endif
 
 #endif
