@@ -92,7 +92,8 @@ static inline int __init
 early_set_memory_encrypted(unsigned long vaddr, unsigned long size) { return 0; }
 
 static inline void mem_encrypt_free_decrypted_mem(void) { }
-static bool sev_feature_enabled(unsigned int feature_type) { return false; }
+static inline bool
+sev_feature_enabled(unsigned int feature_type) { return false; }
 
 #define __bss_decrypted
 
