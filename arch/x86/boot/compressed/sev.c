@@ -307,3 +307,82 @@ finish:
 	else if (result != ES_RETRY)
 		sev_es_terminate(SEV_TERM_SET_GEN, GHCB_SEV_ES_GEN_REQ);
 }
+
+/* Search for Confidential Computing blob in the EFI config table. */
+static struct cc_blob_sev_info *snp_find_cc_blob_efi(struct boot_params *bp)
+{
+	struct cc_blob_sev_info *cc_info;
+	unsigned long conf_table_pa;
+	unsigned int conf_table_len;
+	bool efi_64;
+	int ret;
+
+	ret = efi_get_conf_table(bp, &conf_table_pa, &conf_table_len, &efi_64);
+	if (ret)
+		return NULL;
+
+	ret = efi_find_vendor_table(conf_table_pa, conf_table_len,
+				    EFI_CC_BLOB_GUID, efi_64,
+				    (unsigned long *)&cc_info);
+	if (ret)
+		return NULL;
+
+	return cc_info;
+}
+
+/*
+ * Initial set up of SEV-SNP CPUID table relies on information provided
+ * by the Confidential Computing blob, which can be passed to the boot kernel
+ * by firmware/bootloader in the following ways:
+ *
+ * - via an entry in the EFI config table
+ * - via a setup_data structure, as defined by the Linux Boot Protocol
+ *
+ * Scan for the blob in that order.
+ */
+struct cc_blob_sev_info *snp_find_cc_blob(struct boot_params *bp)
+{
+	struct cc_blob_sev_info *cc_info;
+
+	cc_info = snp_find_cc_blob_efi(bp);
+	if (cc_info)
+		goto found_cc_info;
+
+	cc_info = snp_find_cc_blob_setup_data(bp);
+	if (!cc_info)
+		return NULL;
+
+found_cc_info:
+	if (cc_info->magic != CC_BLOB_SEV_HDR_MAGIC)
+		sev_es_terminate(0, GHCB_SNP_UNSUPPORTED);
+
+	return cc_info;
+}
+
+void snp_cpuid_init_boot(struct boot_params *bp)
+{
+	struct cc_blob_sev_info *cc_info;
+	u32 eax;
+
+	if (!bp)
+		return;
+
+	cc_info = snp_find_cc_blob(bp);
+	if (!cc_info)
+		return;
+
+	snp_cpuid_info_create(cc_info);
+
+	/* SEV-SNP CPUID table is set up now. Do some sanity checks. */
+	if (!snp_cpuid_active())
+		sev_es_terminate(1, GHCB_TERM_CPUID);
+
+	/* CPUID bits for SEV (bit 1) and SEV-SNP (bit 4) should be enabled. */
+	eax = native_cpuid_eax(0x8000001f);
+	if (!(eax & (BIT(4) | BIT(1))))
+		sev_es_terminate(1, GHCB_TERM_CPUID);
+
+	/* It should be safe to read SEV MSR and check features now. */
+	if (!sev_snp_enabled())
+		sev_es_terminate(1, GHCB_TERM_CPUID);
+}

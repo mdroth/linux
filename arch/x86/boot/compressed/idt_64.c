@@ -28,7 +28,7 @@ static void load_boot_idt(const struct desc_ptr *dtr)
 }
 
 /* Setup IDT before kernel jumping to  .Lrelocated */
-void load_stage1_idt(void)
+void load_stage1_idt(void *rmode)
 {
 	boot_idt_desc.address = (unsigned long)boot_idt;
 
@@ -37,6 +37,9 @@ void load_stage1_idt(void)
 		set_idt_entry(X86_TRAP_VC, boot_stage1_vc);
 
 	load_boot_idt(&boot_idt_desc);
+
+	if (IS_ENABLED(CONFIG_AMD_MEM_ENCRYPT))
+		snp_cpuid_init_boot(rmode);
 }
 
 /* Setup IDT after kernel jumping to  .Lrelocated */

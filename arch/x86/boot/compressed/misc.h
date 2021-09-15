@@ -124,6 +124,7 @@ void sev_es_shutdown_ghcb(void);
 extern bool sev_es_check_ghcb_fault(unsigned long address);
 void snp_set_page_private(unsigned long paddr);
 void snp_set_page_shared(unsigned long paddr);
+void snp_cpuid_init_boot(struct boot_params *bp);
 
 #else
 static inline void sev_es_shutdown_ghcb(void) { }
@@ -133,6 +134,7 @@ static inline bool sev_es_check_ghcb_fault(unsigned long address)
 }
 static inline void snp_set_page_private(unsigned long paddr) { }
 static inline void snp_set_page_shared(unsigned long paddr) { }
+static inline void snp_cpuid_init_boot(struct boot_params *bp) { }
 
 #endif
 
