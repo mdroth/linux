@@ -571,7 +571,7 @@ static void set_bringup_idt_handler(gate_desc *idt, int n, void *handler)
 }
 
 /* This runs while still in the direct mapping */
-static void startup_64_load_idt(unsigned long physbase)
+static void startup_64_load_idt(unsigned long physbase, struct boot_params *bp)
 {
 	struct desc_ptr *desc = fixup_pointer(&bringup_idt_descr, physbase);
 	gate_desc *idt = fixup_pointer(bringup_idt_table, physbase);
@@ -587,6 +587,9 @@ static void startup_64_load_idt(unsigned long physbase)
 
 	desc->address = (unsigned long)idt;
 	native_load_idt(desc);
+
+	if (IS_ENABLED(CONFIG_AMD_MEM_ENCRYPT))
+		snp_cpuid_init_startup(bp, physbase);
 }
 
 /* This is used when running on kernel addresses */
@@ -598,12 +601,15 @@ void early_setup_idt(void)
 
 	bringup_idt_descr.address = (unsigned long)bringup_idt_table;
 	native_load_idt(&bringup_idt_descr);
+
+	if (IS_ENABLED(CONFIG_AMD_MEM_ENCRYPT))
+		snp_cpuid_init();
 }
 
 /*
  * Setup boot CPU state needed before kernel switches to virtual addresses.
  */
-void __head startup_64_setup_env(unsigned long physbase)
+void __head startup_64_setup_env(unsigned long physbase, struct boot_params *bp)
 {
 	/* Load GDT */
 	startup_gdt_descr.address = (unsigned long)fixup_pointer(startup_gdt, physbase);
@@ -614,5 +620,5 @@ void __head startup_64_setup_env(unsigned long physbase)
 		     "movl %%eax, %%ss\n"
 		     "movl %%eax, %%es\n" : : "a"(__KERNEL_DS) : "memory");
 
-	startup_64_load_idt(physbase);
+	startup_64_load_idt(physbase, bp);
 }

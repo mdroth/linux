@@ -371,7 +371,7 @@ void snp_cpuid_init_boot(struct boot_params *bp)
 	if (!cc_info)
 		return;
 
-	snp_cpuid_info_create(cc_info);
+	snp_cpuid_info_create(cc_info, 0);
 
 	/* SEV-SNP CPUID table is set up now. Do some sanity checks. */
 	if (!snp_cpuid_active())

@@ -974,7 +974,7 @@ static struct cc_setup_data *get_cc_setup_data(struct boot_params *bp)
  * Search for a Confidential Computing blob passed in as a setup_data entry
  * via the Linux Boot Protocol.
  */
-struct cc_blob_sev_info *
+static struct cc_blob_sev_info *
 snp_find_cc_blob_setup_data(struct boot_params *bp)
 {
 	struct cc_setup_data *sd;
@@ -986,6 +986,22 @@ snp_find_cc_blob_setup_data(struct boot_params *bp)
 	return (struct cc_blob_sev_info *)(unsigned long)sd->cc_blob_address;
 }
 
+static const struct snp_cpuid_info *
+snp_cpuid_info_get_ptr(unsigned long physbase)
+{
+	void *ptr = &cpuid_info_copy;
+
+	/* physbase is only 0 when the caller doesn't need adjustments */
+	if (!physbase)
+		return ptr;
+
+	/*
+	 * Handle relocation adjustments for global pointers, as done by
+	 * fixup_pointer() in __startup64().
+	 */
+	return ptr - (void *)_text + (void *)physbase;
+}
+
 /*
  * Initialize the kernel's copy of the SEV-SNP CPUID table, and set up the
  * pointer that will be used to access it.
@@ -995,7 +1011,8 @@ snp_find_cc_blob_setup_data(struct boot_params *bp)
  * mapping needs to be updated in sync with all the changes to virtual memory
  * layout and related mapping facilities throughout the boot process.
  */
-void __init snp_cpuid_info_create(const struct cc_blob_sev_info *cc_info)
+static void __init snp_cpuid_info_create(const struct cc_blob_sev_info *cc_info,
+					 unsigned long physbase)
 {
 	const struct snp_cpuid_info *cpuid_info_fw;
 
@@ -1006,7 +1023,7 @@ void __init snp_cpuid_info_create(const struct cc_blob_sev_info *cc_info)
 	if (!cpuid_info_fw->count || cpuid_info_fw->count > SNP_CPUID_COUNT_MAX)
 		sev_es_terminate(1, GHCB_TERM_CPUID);
 
-	cpuid_info = &cpuid_info_copy;
+	cpuid_info = snp_cpuid_info_get_ptr(physbase);
 	memcpy((void *)cpuid_info, cpuid_info_fw, sizeof(*cpuid_info));
 	snp_cpuid_set_ranges();
 }

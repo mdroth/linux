@@ -127,17 +127,8 @@ void __init snp_prep_memory(unsigned long paddr, unsigned int sz, enum psc_op op
 void snp_set_memory_shared(unsigned long vaddr, unsigned int npages);
 void snp_set_memory_private(unsigned long vaddr, unsigned int npages);
 void snp_set_wakeup_secondary_cpu(void);
-/*
- * TODO: These are exported only temporarily while boot/compressed/sev.c is
- * the only user. This is to avoid unused function warnings for kernel/sev.c
- * during the build of kernel proper.
- *
- * Once the code is added to consume these in kernel proper these functions
- * can be moved back to being statically-scoped to units that pull in
- * sev-shared.c via #include and these declarations can be dropped.
- */
-void __init snp_cpuid_info_create(const struct cc_blob_sev_info *cc_info);
-struct cc_blob_sev_info *snp_find_cc_blob_setup_data(struct boot_params *bp);
+void snp_cpuid_init_startup(struct boot_params *bp, unsigned long physaddr);
+void snp_cpuid_init(void);
 #else
 static inline void sev_es_ist_enter(struct pt_regs *regs) { }
 static inline void sev_es_ist_exit(void) { }
@@ -153,8 +144,8 @@ static inline void __init snp_prep_memory(unsigned long paddr, unsigned int sz, 
 static inline void snp_set_memory_shared(unsigned long vaddr, unsigned int npages) { }
 static inline void snp_set_memory_private(unsigned long vaddr, unsigned int npages) { }
 static inline void snp_set_wakeup_secondary_cpu(void) { }
-void snp_cpuid_info_create(const struct cc_blob_sev_info *cc_info) { }
-struct cc_blob_sev_info *snp_find_cc_blob_setup_data(struct boot_params *bp) { }
+static inline void snp_cpuid_startup(struct boot_params *bp, unsigned long physbase) { }
+static inline void snp_cpuid_init(void) { }
 #endif
 
 #endif
