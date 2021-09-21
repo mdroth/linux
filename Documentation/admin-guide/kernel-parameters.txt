@@ -4141,6 +4141,29 @@
 			Format: {"off"}
 			Disable Hardware Transactional Memory
 
+	predictive_store_fwd_disable=
+			[X86] This option controls Predictive Store Forwarding (PSF).
+			PSF is a hardware-based micro-architectural optimization
+			designed to improve the performance of code execution by
+			predicting dependencies between loads and stores. Like
+			technologies such as branch prediction, with PSF the
+			processor “guesses” what the result of a load is likely
+			to be, and speculatively executes subsequent instructions.
+			In the event that the processor incorrectly speculated on
+			the result of the load, it is designed to detect this and
+			flush the incorrect results from the CPU pipeline.
+
+			Security research in recent years has examined the security
+			implications of incorrect CPU speculation and how in some
+			cases it may lead to side channel attacks. This parameter
+			provides the mechanism to disable the PSF when needed for
+			security reasons.
+
+			The options are:
+			on  - Disable Predictive Store Forwarding
+			off - Enable Predictive Store Forwarding
+			default - off.
+
 	preempt=	[KNL]
 			Select preemption mode if you have CONFIG_PREEMPT_DYNAMIC
 			none - Limited to cond_resched() calls
