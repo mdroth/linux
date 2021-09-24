@@ -36,6 +36,8 @@
 #define CREATE_TRACE_POINTS
 #include <asm/trace/exceptions.h>
 
+#include "amd_hw_pf_trace.c"
+
 /*
  * Returns 0 if mmiotrace is disabled, or if the fault is not
  * handled by mmiotrace:
@@ -765,6 +767,8 @@ show_signal_msg(struct pt_regs *regs, unsigned long error_code,
 {
 	const char *loglvl = task_pid_nr(tsk) > 1 ? KERN_INFO : KERN_EMERG;
 
+	hw_pf_tracing_exit(-1);
+
 	if (!unhandled_signal(tsk, SIGSEGV))
 		return;
 
@@ -1223,7 +1227,11 @@ void do_user_addr_fault(struct pt_regs *regs,
 	tsk = current;
 	mm = tsk->mm;
 
+	hw_pf_tracing_enter();
+
 	if (unlikely((error_code & (X86_PF_USER | X86_PF_INSTR)) == X86_PF_INSTR)) {
+		hw_pf_tracing_exit(0);
+
 		/*
 		 * Whoops, this is kernel mode code trying to execute from
 		 * user memory.  Unless this is AMD erratum #93, which
@@ -1239,8 +1247,10 @@ void do_user_addr_fault(struct pt_regs *regs,
 	}
 
 	/* kprobes don't want to hook the spurious faults: */
-	if (WARN_ON_ONCE(kprobe_page_fault(regs, X86_TRAP_PF)))
+	if (WARN_ON_ONCE(kprobe_page_fault(regs, X86_TRAP_PF))) {
+		hw_pf_tracing_exit(0);
 		return;
+	}
 
 	/*
 	 * Reserved bits are never expected to be set on
@@ -1264,6 +1274,7 @@ void do_user_addr_fault(struct pt_regs *regs,
 		 * invalid pointer.  get_kernel_nofault() will not get here.
 		 */
 		page_fault_oops(regs, error_code, address);
+		hw_pf_tracing_exit(0);
 		return;
 	}
 
@@ -1273,6 +1284,7 @@ void do_user_addr_fault(struct pt_regs *regs,
 	 */
 	if (unlikely(faulthandler_disabled() || !mm)) {
 		bad_area_nosemaphore(regs, error_code, address);
+		hw_pf_tracing_exit(0);
 		return;
 	}
 
@@ -1311,8 +1323,10 @@ void do_user_addr_fault(struct pt_regs *regs,
 	 * to consider the PF_PK bit.
 	 */
 	if (is_vsyscall_vaddr(address)) {
-		if (emulate_vsyscall(error_code, regs, address))
+		if (emulate_vsyscall(error_code, regs, address)) {
+			hw_pf_tracing_exit(0);
 			return;
+		}
 	}
 #endif
 
@@ -1335,6 +1349,7 @@ void do_user_addr_fault(struct pt_regs *regs,
 			 * which we do not expect faults.
 			 */
 			bad_area_nosemaphore(regs, error_code, address);
+			hw_pf_tracing_exit(0);
 			return;
 		}
 retry:
@@ -1351,16 +1366,19 @@ retry:
 	vma = find_vma(mm, address);
 	if (unlikely(!vma)) {
 		bad_area(regs, error_code, address);
+		hw_pf_tracing_exit(0);
 		return;
 	}
 	if (likely(vma->vm_start <= address))
 		goto good_area;
 	if (unlikely(!(vma->vm_flags & VM_GROWSDOWN))) {
 		bad_area(regs, error_code, address);
+		hw_pf_tracing_exit(-1);
 		return;
 	}
 	if (unlikely(expand_stack(vma, address))) {
 		bad_area(regs, error_code, address);
+		hw_pf_tracing_exit(-1);
 		return;
 	}
 
@@ -1371,6 +1389,7 @@ retry:
 good_area:
 	if (unlikely(access_error(error_code, vma))) {
 		bad_area_access_error(regs, error_code, address, vma);
+		hw_pf_tracing_exit(0);
 		return;
 	}
 
@@ -1394,9 +1413,14 @@ good_area:
 		 * Quick path to respond to signals.  The core mm code
 		 * has unlocked the mm for us if we get here.
 		 */
-		if (!user_mode(regs))
+		if (!user_mode(regs)) {
 			kernelmode_fixup_or_oops(regs, error_code, address,
 						 SIGBUS, BUS_ADRERR);
+			hw_pf_tracing_exit(0);
+		} else {
+			hw_pf_tracing_exit(-1);
+		}
+
 		return;
 	}
 
@@ -1412,11 +1436,14 @@ good_area:
 	}
 
 	mmap_read_unlock(mm);
-	if (likely(!(fault & VM_FAULT_ERROR)))
+	if (likely(!(fault & VM_FAULT_ERROR))) {
+		hw_pf_tracing_exit(0);
 		return;
+	}
 
 	if (fatal_signal_pending(current) && !user_mode(regs)) {
 		kernelmode_fixup_or_oops(regs, error_code, address, 0, 0);
+		hw_pf_tracing_exit(0);
 		return;
 	}
 
@@ -1425,6 +1452,7 @@ good_area:
 		if (!user_mode(regs)) {
 			kernelmode_fixup_or_oops(regs, error_code, address,
 						 SIGSEGV, SEGV_MAPERR);
+			hw_pf_tracing_exit(0);
 			return;
 		}
 
@@ -1443,6 +1471,7 @@ good_area:
 		else
 			BUG();
 	}
+	hw_pf_tracing_exit(0);
 }
 NOKPROBE_SYMBOL(do_user_addr_fault);
 
