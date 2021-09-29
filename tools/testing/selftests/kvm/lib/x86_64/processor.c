@@ -181,7 +181,7 @@ void virt_pgd_alloc(struct kvm_vm *vm)
 
 	/* If needed, create page map l4 table. */
 	if (!vm->pgd_created) {
-		vm->pgd = vm_alloc_page_table(vm);
+		vm->pgd = addr_gpa2raw(vm, vm_alloc_page_table(vm));
 		vm->pgd_created = true;
 	}
 }
@@ -203,15 +203,15 @@ static struct pageUpperEntry *virt_create_upper_pte(struct kvm_vm *vm,
 						    enum x86_page_size page_size)
 {
 	struct pageUpperEntry *pte = virt_get_pte(vm, pt_pfn, vaddr, level);
+	uint64_t paddr_raw = addr_gpa2raw(vm, paddr);
 
 	if (!pte->present) {
 		pte->writable = true;
 		pte->present = true;
 		pte->page_size = (level == page_size);
-		if (pte->page_size)
-			pte->pfn = paddr >> vm->page_shift;
-		else
-			pte->pfn = vm_alloc_page_table(vm) >> vm->page_shift;
+		if (!pte->page_size)
+			paddr_raw = addr_gpa2raw(vm, vm_alloc_page_table(vm));
+		pte->pfn = paddr_raw >> vm->page_shift;
 	} else {
 		/*
 		 * Entry already present.  Assert that the caller doesn't want
@@ -250,6 +250,8 @@ void __virt_pg_map(struct kvm_vm *vm, uint64_t vaddr, uint64_t paddr,
 		    "Physical address beyond maximum supported,\n"
 		    "  paddr: 0x%lx vm->max_gfn: 0x%lx vm->page_size: 0x%x",
 		    paddr, vm->max_gfn, vm->page_size);
+	TEST_ASSERT(addr_raw2gpa(vm, paddr) == paddr,
+		    "Unexpected bits in paddr: %lx", paddr);
 
 	/*
 	 * Allocate upper level page tables, if not already present.  Return
@@ -272,7 +274,7 @@ void __virt_pg_map(struct kvm_vm *vm, uint64_t vaddr, uint64_t paddr,
 	pte = virt_get_pte(vm, pde->pfn, vaddr, 0);
 	TEST_ASSERT(!pte->present,
 		    "PTE already present for 4k page at vaddr: 0x%lx\n", vaddr);
-	pte->pfn = paddr >> vm->page_shift;
+	pte->pfn = addr_gpa2raw(vm, paddr) >> vm->page_shift;
 	pte->writable = true;
 	pte->present = 1;
 }
@@ -587,7 +589,7 @@ vm_paddr_t addr_gva2gpa(struct kvm_vm *vm, vm_vaddr_t gva)
 	if (!pte[index[0]].present)
 		goto unmapped_gva;
 
-	return (pte[index[0]].pfn * vm->page_size) + (gva & 0xfffu);
+	return addr_raw2gpa(vm, ((uint64_t)pte[index[0]].pfn * vm->page_size)) + (gva & 0xfffu);
 
 unmapped_gva:
 	TEST_FAIL("No mapping for vm virtual address, gva: 0x%lx", gva);
