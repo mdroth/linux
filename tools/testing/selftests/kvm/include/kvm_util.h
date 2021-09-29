@@ -348,6 +348,12 @@ int vm_create_device(struct kvm_vm *vm, struct kvm_create_device *cd);
 
 void assert_on_unhandled_exception(struct kvm_vm *vm, uint32_t vcpuid);
 
+void vm_set_memory_encryption(struct kvm_vm *vm, bool enc_by_default, bool has_enc_bit,
+			      uint8_t enc_bit);
+struct sparsebit *vm_get_encrypted_phy_pages(struct kvm_vm *vm, int slot,
+					     vm_paddr_t *gpa_start,
+					     uint64_t *size);
+
 /* Common ucalls */
 enum {
 	UCALL_NONE,
