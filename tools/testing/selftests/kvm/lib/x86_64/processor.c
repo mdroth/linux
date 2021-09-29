@@ -198,7 +198,7 @@ static void *virt_get_pte(struct kvm_vm *vm, uint64_t pt_pfn, uint64_t vaddr,
 static struct pageUpperEntry *virt_create_upper_pte(struct kvm_vm *vm,
 						    uint64_t pt_pfn,
 						    uint64_t vaddr,
-						    uint64_t paddr,
+						    uint64_t paddr_raw,
 						    int level,
 						    enum x86_page_size page_size)
 {
@@ -208,10 +208,9 @@ static struct pageUpperEntry *virt_create_upper_pte(struct kvm_vm *vm,
 		pte->writable = true;
 		pte->present = true;
 		pte->page_size = (level == page_size);
-		if (pte->page_size)
-			pte->pfn = paddr >> vm->page_shift;
-		else
-			pte->pfn = vm_alloc_page_table(vm) >> vm->page_shift;
+		if (!pte->page_size)
+			paddr_raw = vm_alloc_page_table(vm);
+		pte->pfn = paddr_raw >> vm->page_shift;
 	} else {
 		/*
 		 * Entry already present.  Assert that the caller doesn't want
@@ -228,12 +227,13 @@ static struct pageUpperEntry *virt_create_upper_pte(struct kvm_vm *vm,
 	return pte;
 }
 
-void __virt_pg_map(struct kvm_vm *vm, uint64_t vaddr, uint64_t paddr,
+void __virt_pg_map(struct kvm_vm *vm, uint64_t vaddr, uint64_t paddr_raw,
 		   enum x86_page_size page_size)
 {
 	const uint64_t pg_size = 1ull << ((page_size * 9) + 12);
 	struct pageUpperEntry *pml4e, *pdpe, *pde;
 	struct pageTableEntry *pte;
+	uint64_t paddr = addr_raw2gpa(vm, paddr_raw);
 
 	TEST_ASSERT(vm->mode == VM_MODE_PXXV48_4K,
 		    "Unknown or unsupported guest mode, mode: 0x%x", vm->mode);
@@ -256,15 +256,15 @@ void __virt_pg_map(struct kvm_vm *vm, uint64_t vaddr, uint64_t paddr,
 	 * early if a hugepage was created.
 	 */
 	pml4e = virt_create_upper_pte(vm, vm->pgd >> vm->page_shift,
-				      vaddr, paddr, 3, page_size);
+				      vaddr, paddr_raw, 3, page_size);
 	if (pml4e->page_size)
 		return;
 
-	pdpe = virt_create_upper_pte(vm, pml4e->pfn, vaddr, paddr, 2, page_size);
+	pdpe = virt_create_upper_pte(vm, pml4e->pfn, vaddr, paddr_raw, 2, page_size);
 	if (pdpe->page_size)
 		return;
 
-	pde = virt_create_upper_pte(vm, pdpe->pfn, vaddr, paddr, 1, page_size);
+	pde = virt_create_upper_pte(vm, pdpe->pfn, vaddr, paddr_raw, 1, page_size);
 	if (pde->page_size)
 		return;
 
@@ -272,14 +272,14 @@ void __virt_pg_map(struct kvm_vm *vm, uint64_t vaddr, uint64_t paddr,
 	pte = virt_get_pte(vm, pde->pfn, vaddr, 0);
 	TEST_ASSERT(!pte->present,
 		    "PTE already present for 4k page at vaddr: 0x%lx\n", vaddr);
-	pte->pfn = paddr >> vm->page_shift;
+	pte->pfn = paddr_raw >> vm->page_shift;
 	pte->writable = true;
 	pte->present = 1;
 }
 
-void virt_pg_map(struct kvm_vm *vm, uint64_t vaddr, uint64_t paddr)
+void virt_pg_map(struct kvm_vm *vm, uint64_t vaddr, uint64_t paddr_raw)
 {
-	__virt_pg_map(vm, vaddr, paddr, X86_PAGE_SIZE_4K);
+	__virt_pg_map(vm, vaddr, paddr_raw, X86_PAGE_SIZE_4K);
 }
 
 static struct pageTableEntry *_vm_get_page_table_entry(struct kvm_vm *vm, int vcpuid,
@@ -587,7 +587,7 @@ vm_paddr_t addr_gva2gpa(struct kvm_vm *vm, vm_vaddr_t gva)
 	if (!pte[index[0]].present)
 		goto unmapped_gva;
 
-	return (pte[index[0]].pfn * vm->page_size) + (gva & 0xfffu);
+	return addr_raw2gpa(vm, ((uint64_t)pte[index[0]].pfn * vm->page_size)) + (gva & 0xfffu);
 
 unmapped_gva:
 	TEST_FAIL("No mapping for vm virtual address, gva: 0x%lx", gva);
