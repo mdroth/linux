@@ -18,6 +18,7 @@
 
 #define SVM_EXIT_CPUID		0x072
 #define SVM_EXIT_VMMCALL	0x081
+#define SVM_EXIT_NOT_VALIDATED	0x404
 
 struct svm_test_data {
 	/* VMCB */
