@@ -211,6 +211,48 @@ again:
 	guest_test_done(uc);
 }
 
+static void __attribute__((__flatten__))
+guest_sev_snp_code(struct sev_sync_data *sync, uint8_t *shared_buf,
+		   uint8_t *private_buf, uint64_t ghcb_gpa, void *ghcb_gva)
+{
+	uint32_t eax, ebx, ecx, edx, token = 1;
+	uint64_t sev_status;
+	int ret;
+
+	guest_test_start(sync);
+
+again:
+	/* Check CPUID values via GHCB MSR protocol. */
+	eax = 0x8000001f;
+	ecx = 0;
+	cpuid(&eax, &ebx, &ecx, &edx);
+
+	/* Check SEV bit. */
+	SEV_GUEST_ASSERT(sync, token++, eax & (1 << 1));
+	/* Check SEV-ES bit. */
+	SEV_GUEST_ASSERT(sync, token++, eax & (1 << 3));
+
+	if (!ghcb0_gva) {
+		ghcb0_gva = ghcb_gva;
+		ghcb0_gpa = ghcb_gpa;
+		snp_register_ghcb(ghcb0_gpa);
+		/* Check CPUID bits again using GHCB-based protocol. */
+		goto again;
+	}
+
+	/* Check SEV/SEV-ES/SEV-SNP enabled bits (bits 0, 1, and 3, respectively). */
+	sev_status = rdmsr(MSR_AMD64_SEV);
+	SEV_GUEST_ASSERT(sync, token++, (sev_status & 0x7) == 7);
+
+	/* Confirm private data was validated by FW prior to boot. */
+	ret = snp_pvalidate(private_buf, 0, true);
+	SEV_GUEST_ASSERT(sync, token++, ret == PVALIDATE_NO_UPDATE);
+
+	guest_test_common(sync, shared_buf, private_buf);
+
+	guest_test_done(sync);
+}
+
 static void
 setup_test_common(struct sev_vm *sev, void *guest_code, vm_vaddr_t *uc_vaddr,
 		  vm_vaddr_t *shared_vaddr, vm_vaddr_t *private_vaddr)
@@ -238,7 +280,7 @@ setup_test_common(struct sev_vm *sev, void *guest_code, vm_vaddr_t *uc_vaddr,
 	fill_buf(private_buf, PRIVATE_PAGES, PAGE_STRIDE, 0x42);
 }
 
-static void test_sev(void *guest_code, uint64_t policy)
+static void test_sev(void *guest_code, bool snp, uint64_t policy)
 {
 	vm_vaddr_t uc_vaddr, shared_vaddr, private_vaddr;
 	uint8_t *shared_buf, *private_buf;
@@ -248,7 +290,8 @@ static void test_sev(void *guest_code, uint64_t policy)
 	struct kvm_vm *vm;
 	int i;
 
-	sev = sev_vm_create(policy, TOTAL_PAGES);
+	sev = snp ? sev_snp_vm_create(policy, TOTAL_PAGES)
+		  : sev_vm_create(policy, TOTAL_PAGES);
 	if (!sev)
 		return;
 	vm = sev_get_vm(sev);
@@ -256,7 +299,7 @@ static void test_sev(void *guest_code, uint64_t policy)
 	setup_test_common(sev, guest_code, &uc_vaddr, &shared_vaddr, &private_vaddr);
 
 	/* Set up guest params. */
-	if (policy & SEV_POLICY_ES) {
+	if (snp || (policy & SEV_POLICY_ES)) {
 		vm_vaddr_t ghcb_vaddr = vm_vaddr_alloc_shared(vm, PAGE_SIZE, 0);
 
 		vcpu_args_set(vm, VCPU_ID, 6, uc_vaddr, shared_vaddr, private_vaddr,
@@ -275,34 +318,45 @@ static void test_sev(void *guest_code, uint64_t policy)
 	private_buf = addr_gva2hva(vm, private_vaddr);
 
 	/* Allocations/setup done. Encrypt initial guest payload. */
-	sev_vm_launch(sev);
+	if (snp) {
+		sev_snp_vm_launch(sev);
+	} else {
+		sev_vm_launch(sev);
 
-	/* Dump the initial measurement. A test to actually verify it would be nice. */
-	sev_vm_measure(sev, measurement);
-	pr_info("guest measurement: ");
-	for (i = 0; i < 32; ++i)
-		pr_info("%02x", measurement[i]);
-	pr_info("\n");
+		/* Dump the initial measurement. A test to actually verify it would be nice. */
+		sev_vm_measure(sev, measurement);
+		pr_info("guest measurement: ");
+		for (i = 0; i < 32; ++i)
+			pr_info("%02x", measurement[i]);
+		pr_info("\n");
 
-	sev_vm_launch_finish(sev);
+		sev_vm_launch_finish(sev);
+	}
 
 	/* Guest is ready to run. Do the tests. */
 	check_test_start(vm, uc);
 	check_test_common(vm, uc, shared_buf, private_buf);
 	check_test_done(vm, uc);
 
-	sev_vm_free(sev);
+	if (snp)
+		sev_snp_vm_free(sev);
+	else
+		sev_vm_free(sev);
 }
 
 int main(int argc, char *argv[])
 {
 	/* SEV tests */
-	test_sev(guest_sev_code, SEV_POLICY_NO_DBG);
-	test_sev(guest_sev_code, 0);
+	test_sev(guest_sev_code, false, SEV_POLICY_NO_DBG);
+	test_sev(guest_sev_code, false, 0);
 
 	/* SEV-ES tests */
-	test_sev(guest_sev_es_code, SEV_POLICY_ES | SEV_POLICY_NO_DBG);
-	test_sev(guest_sev_es_code, SEV_POLICY_ES);
+	test_sev(guest_sev_es_code, false, SEV_POLICY_ES | SEV_POLICY_NO_DBG);
+	test_sev(guest_sev_es_code, false, SEV_POLICY_ES);
+
+	/* SEV-SNP tests */
+	test_sev(guest_sev_snp_code, true, SNP_POLICY_SMT);
+	test_sev(guest_sev_snp_code, true, SNP_POLICY_SMT | SNP_POLICY_DBG);
 
 	return 0;
 }
