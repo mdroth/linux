@@ -182,14 +182,18 @@ struct sev_vm *sev_vm_create(uint32_t policy, uint64_t npages)
 		return NULL;
 	sev->sev_policy = policy;
 
-	kvm_sev_ioctl(sev, KVM_SEV_INIT, NULL);
+	if (sev->sev_policy & SEV_POLICY_ES)
+		kvm_sev_ioctl(sev, KVM_SEV_ES_INIT, NULL);
+	else
+		kvm_sev_ioctl(sev, KVM_SEV_INIT, NULL);
 
 	vm_set_memory_encryption(vm, true, true, sev->enc_bit);
 	vm_userspace_mem_region_add(vm, VM_MEM_SRC_ANONYMOUS, 0, 0, npages, 0);
 	sev_register_user_region(sev, addr_gpa2hva(vm, 0),
 				 npages * vm_get_page_size(vm));
 
-	pr_info("SEV guest created, policy: 0x%x, size: %lu KB\n",
+	pr_info("%s guest created, policy: 0x%x, size: %lu KB\n",
+		(sev->sev_policy & SEV_POLICY_ES) ? "SEV-ES" : "SEV",
 		sev->sev_policy, npages * vm_get_page_size(vm) / 1024);
 
 	return sev;
@@ -211,6 +215,9 @@ void sev_vm_launch(struct sev_vm *sev)
 		    "Unexpected guest state: %d", ksev_status.state);
 
 	sev_encrypt(sev);
+
+	if (sev->sev_policy & SEV_POLICY_ES)
+		kvm_sev_ioctl(sev, KVM_SEV_LAUNCH_UPDATE_VMSA, NULL);
 }
 
 void sev_vm_launch_measure(struct sev_vm *sev, uint8_t *measurement)
