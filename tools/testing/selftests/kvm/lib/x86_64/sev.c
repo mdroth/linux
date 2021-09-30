@@ -20,6 +20,7 @@ struct sev_vm {
 	int fd;
 	int enc_bit;
 	uint32_t sev_policy;
+	uint64_t snp_policy;
 };
 
 /* Helpers for coordinating between guests and test harness. */
@@ -119,6 +120,12 @@ void kvm_sev_ioctl(struct sev_vm *sev, int cmd, void *data)
 
 /* Local helpers. */
 
+static bool sev_snp_enabled(struct sev_vm *sev)
+{
+	/* RSVD is always 1 for SNP guests. */
+	return sev->snp_policy & SNP_POLICY_RSVD;
+}
+
 static void
 sev_register_user_range(struct sev_vm *sev, void *hva, uint64_t size)
 {
@@ -147,6 +154,21 @@ sev_encrypt_phy_range(struct sev_vm *sev, vm_paddr_t gpa, uint64_t size)
 	kvm_sev_ioctl(sev, KVM_SEV_LAUNCH_UPDATE_DATA, &ksev_update_data);
 }
 
+static void
+sev_snp_encrypt_phy_range(struct sev_vm *sev, vm_paddr_t gpa, uint64_t size)
+{
+	struct kvm_sev_snp_launch_update update_data = {0};
+
+	pr_debug("encrypt_phy_range: addr: 0x%lx, size: %lu\n", gpa, size);
+
+	update_data.uaddr = (__u64)addr_gpa2hva(sev->vm, gpa);
+	update_data.start_gfn = gpa >> PAGE_SHIFT;
+	update_data.len = size;
+	update_data.page_type = KVM_SEV_SNP_PAGE_TYPE_NORMAL;
+
+	kvm_sev_ioctl(sev, KVM_SEV_SNP_LAUNCH_UPDATE, &update_data);
+}
+
 static void sev_encrypt(struct sev_vm *sev)
 {
 	struct sparsebit *enc_phy_pages;
@@ -171,9 +193,14 @@ static void sev_encrypt(struct sev_vm *sev)
 		if (pg_cnt <= 0)
 			pg_cnt = 1;
 
-		sev_encrypt_phy_range(sev,
-				      gpa_start + pg * vm_get_page_size(vm),
-				      pg_cnt * vm_get_page_size(vm));
+		if (sev_snp_enabled(sev))
+			sev_snp_encrypt_phy_range(sev,
+						  gpa_start + pg * vm_get_page_size(vm),
+						  pg_cnt * vm_get_page_size(vm));
+		else
+			sev_encrypt_phy_range(sev,
+					      gpa_start + pg * vm_get_page_size(vm),
+					      pg_cnt * vm_get_page_size(vm));
 		pg += pg_cnt;
 	}
 
@@ -310,4 +337,48 @@ void sev_vm_launch_finish(struct sev_vm *sev)
 	kvm_sev_ioctl(sev, KVM_SEV_GUEST_STATUS, &ksev_status);
 	TEST_ASSERT(ksev_status.state == SEV_GSTATE_RUNNING,
 		    "Unexpected guest state: %d", ksev_status.state);
+}
+
+/* SEV-SNP VM implementation. */
+
+struct sev_vm *sev_snp_vm_create(uint64_t policy, uint64_t npages)
+{
+	struct kvm_snp_init init = {0};
+	struct sev_vm *sev;
+	struct kvm_vm *vm;
+
+	vm = vm_create(VM_MODE_DEFAULT, 0, O_RDWR);
+	sev = sev_common_create(vm);
+	if (!sev)
+		return NULL;
+	sev->snp_policy = policy | SNP_POLICY_RSVD;
+
+	kvm_sev_ioctl(sev, KVM_SEV_SNP_INIT, &init);
+	vm_set_memory_encryption(vm, true, true, sev->enc_bit);
+	vm_userspace_mem_region_add(vm, VM_MEM_SRC_ANONYMOUS, 0, 0, npages, 0);
+	sev_register_user_range(sev, addr_gpa2hva(vm, 0), npages * vm_get_page_size(vm));
+
+	pr_info("SEV-SNP guest created, policy: 0x%lx, size: %lu KB\n",
+		sev->snp_policy, npages * vm_get_page_size(vm) / 1024);
+
+	return sev;
+}
+
+void sev_snp_vm_free(struct sev_vm *sev)
+{
+	kvm_vm_free(sev->vm);
+	sev_common_free(sev);
+}
+
+void sev_snp_vm_launch(struct sev_vm *sev)
+{
+	struct kvm_sev_snp_launch_start launch_start = {0};
+	struct kvm_sev_snp_launch_update launch_finish = {0};
+
+	launch_start.policy = sev->snp_policy;
+	kvm_sev_ioctl(sev, KVM_SEV_SNP_LAUNCH_START, &launch_start);
+
+	sev_encrypt(sev);
+
+	kvm_sev_ioctl(sev, KVM_SEV_SNP_LAUNCH_FINISH, &launch_finish);
 }

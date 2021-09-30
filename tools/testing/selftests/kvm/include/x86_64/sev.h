@@ -18,6 +18,10 @@
 #define SEV_POLICY_NO_DBG	(1UL << 0)
 #define SEV_POLICY_ES		(1UL << 2)
 
+#define SNP_POLICY_SMT		(1ULL << 16)
+#define SNP_POLICY_RSVD		(1ULL << 17)
+#define SNP_POLICY_DBG		(1ULL << 19)
+
 #define SEV_GUEST_ASSERT(sync, token, _cond) do {	\
 	if (!(_cond))					\
 		sev_guest_abort(sync, token, 0);	\
@@ -58,5 +62,9 @@ void sev_vm_free(struct sev_vm *sev);
 void sev_vm_launch(struct sev_vm *sev);
 void sev_vm_measure(struct sev_vm *sev, uint8_t *measurement);
 void sev_vm_launch_finish(struct sev_vm *sev);
+
+struct sev_vm *sev_snp_vm_create(uint64_t policy, uint64_t npages);
+void sev_snp_vm_free(struct sev_vm *sev);
+void sev_snp_vm_launch(struct sev_vm *sev);
 
 #endif /* SELFTEST_KVM_SEV_H */
