@@ -51,6 +51,19 @@
 #define GHCB_REG_GPA_RESP(resp) ((resp) & GENMASK_ULL(11, 0))
 #define GHCB_REG_GPA_RESP_VAL(resp) ((resp) >> 12)
 
+/* GHCB MSR protocol for Page State Change */
+#define GHCB_PSC_REQ_PRIVATE		1
+#define GHCB_PSC_REQ_SHARED		2
+#define GHCB_PSC_REQ_PSMASH		3
+#define GHCB_PSC_REQ_UNSMASH		4
+#define GHCB_PSC_REQ_CODE		0x14UL
+#define GHCB_PSC_REQ(gfn, op)		\
+	(((unsigned long)((op) & 0xf) << 52) |  \
+	 ((unsigned long)((gfn) & ~(1ULL << 40)) << 12) | \
+	 GHCB_PSC_REQ_CODE)
+#define GHCB_PSC_RESP_CODE		0x15UL
+#define GHCB_PSC_RESP(resp)		((resp) & GENMASK_ULL(11, 0))
+
 /* GHCB format/accessors */
 
 struct ghcb {
@@ -246,4 +259,68 @@ int sev_es_handle_vc(void *ghcb, u64 ghcb_gpa, struct ex_regs *regs)
 		return handle_msr_vc_cpuid(regs);
 
 	return handle_vc_cpuid(ghcb, ghcb_gpa, regs);
+}
+
+void snp_register_ghcb(u64 ghcb_gpa)
+{
+	u64 gfn = ghcb_gpa >> PAGE_SHIFT;
+	u64 resp;
+
+	sev_es_wrmsr_ghcb(GHCB_REG_GPA_REQ(gfn));
+	VMGEXIT();
+
+	resp = sev_es_rdmsr_ghcb();
+	if (GHCB_REG_GPA_RESP(resp) != GHCB_REG_GPA_RESP_CODE ||
+	    GHCB_REG_GPA_RESP_VAL(resp) != gfn)
+		sev_es_terminate(GHCB_TERMINATE_REASON_UNSPEC);
+}
+
+static void snp_psc_request(u64 gfn, int op)
+{
+	u64 resp;
+
+	sev_es_wrmsr_ghcb(GHCB_PSC_REQ(gfn, op));
+	VMGEXIT();
+
+	resp = sev_es_rdmsr_ghcb();
+	if (GHCB_PSC_RESP(resp) != GHCB_PSC_RESP_CODE)
+		sev_es_terminate(GHCB_TERMINATE_REASON_UNSPEC);
+}
+
+void snp_psc_set_shared(u64 gpa)
+{
+	snp_psc_request(gpa >> PAGE_SHIFT, GHCB_PSC_REQ_SHARED);
+}
+
+void snp_psc_set_private(u64 gpa)
+{
+	snp_psc_request(gpa >> PAGE_SHIFT, GHCB_PSC_REQ_PRIVATE);
+}
+
+/* From arch/x86/include/asm/asm.h */
+#ifdef __GCC_ASM_FLAG_OUTPUTS__
+# define CC_SET(c) "\n\t/* output condition code " #c "*/\n"
+# define CC_OUT(c) "=@cc" #c
+#else
+# define CC_SET(c) "\n\tset" #c " %[_cc_" #c "]\n"
+# define CC_OUT(c) [_cc_ ## c] "=qm"
+#endif
+
+int snp_pvalidate(void *ptr, bool rmp_psize, bool validate)
+{
+	uint64_t gva = (uint64_t)ptr;
+	bool no_rmpupdate;
+	int rc;
+
+	/* "pvalidate" mnemonic support in binutils 2.36 and newer */
+	asm volatile(".byte 0xF2, 0x0F, 0x01, 0xFF\n\t"
+		     CC_SET(c)
+		     : CC_OUT(c) (no_rmpupdate), "=a"(rc)
+		     : "a"(gva), "c"(rmp_psize), "d"(validate)
+		     : "memory", "cc");
+
+	if (no_rmpupdate)
+		return PVALIDATE_NO_UPDATE;
+
+	return rc;
 }
