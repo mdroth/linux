@@ -150,7 +150,7 @@ enum smca_bank_types smca_get_bank_type(unsigned int cpu, unsigned int bank)
 	if (bank >= MAX_NR_BANKS)
 		return N_SMCA_BANK_TYPES;
 
-	b = &this_cpu_ptr(smca_banks)[bank];
+	b = &per_cpu(smca_banks, cpu)[bank];
 	if (!b->hwid)
 		return N_SMCA_BANK_TYPES;
 
