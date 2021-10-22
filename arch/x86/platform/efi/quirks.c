@@ -277,7 +277,19 @@ void __init efi_arch_mem_reserve(phys_addr_t addr, u64 size)
 		return;
 	}
 
-	new = early_memremap(data.phys_map, data.size);
+	/*
+	 * When SME is active, early_memremap() can map the memory unencrypted
+	 * if the allocation came from EFI_BOOT_SERVICES_DATA (see
+	 * memremap_is_efi_data() and the call to efi_mem_type()). However,
+	 * when efi_memmap_install() is called to replace the memory map,
+	 * efi_mem_type() is "disabled" and so the memory will always be mapped
+	 * encrypted. To avoid this possible mismatch between the mappings,
+	 * always map the newly allocated memmap memory as encrypted.
+	 *
+	 * When SME is not active, this behaves just like early_memremap().
+	 */
+	new = early_memremap_prot(data.phys_map, data.size,
+				  pgprot_val(pgprot_encrypted(FIXMAP_PAGE_NORMAL)));
 	if (!new) {
 		pr_err("Failed to map new boot services memmap\n");
 		return;
