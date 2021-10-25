@@ -389,6 +389,8 @@ struct amd64_pvt {
 	enum mem_type dram_type;
 
 	struct amd64_umc *umc;	/* UMC registers */
+
+	struct amd64_family_type *fam_type;
 };
 
 enum err_codes {
