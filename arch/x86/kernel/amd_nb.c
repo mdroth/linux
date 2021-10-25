@@ -19,6 +19,7 @@
 #define PCI_DEVICE_ID_AMD_17H_M10H_ROOT	0x15d0
 #define PCI_DEVICE_ID_AMD_17H_M30H_ROOT	0x1480
 #define PCI_DEVICE_ID_AMD_17H_M60H_ROOT	0x1630
+#define PCI_DEVICE_ID_AMD_ALDEBARAN_ROOT 0x14bb
 #define PCI_DEVICE_ID_AMD_17H_DF_F4	0x1464
 #define PCI_DEVICE_ID_AMD_17H_M10H_DF_F4 0x15ec
 #define PCI_DEVICE_ID_AMD_17H_M30H_DF_F4 0x1494
@@ -28,6 +29,7 @@
 #define PCI_DEVICE_ID_AMD_19H_M40H_ROOT	0x14b5
 #define PCI_DEVICE_ID_AMD_19H_M40H_DF_F4 0x167d
 #define PCI_DEVICE_ID_AMD_19H_M50H_DF_F4 0x166e
+#define PCI_DEVICE_ID_AMD_ALDEBARAN_DF_F4 0x14d4
 
 /* Protect the PCI config register pairs used for SMN. */
 static DEFINE_MUTEX(smn_mutex);
@@ -40,6 +42,7 @@ static const struct pci_device_id amd_root_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_17H_M30H_ROOT) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_17H_M60H_ROOT) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_19H_M40H_ROOT) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_ALDEBARAN_ROOT) },
 	{}
 };
 
@@ -63,6 +66,7 @@ static const struct pci_device_id amd_nb_misc_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_19H_DF_F3) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_19H_M40H_DF_F3) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_19H_M50H_DF_F3) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_ALDEBARAN_DF_F3) },
 	{}
 };
 
@@ -81,6 +85,7 @@ static const struct pci_device_id amd_nb_link_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_19H_M40H_DF_F4) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_19H_M50H_DF_F4) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_CNB17H_F4) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_ALDEBARAN_DF_F4) },
 	{}
 };
 
@@ -125,6 +130,66 @@ struct amd_northbridge *node_to_amd_nb(int node)
 	return (node < amd_northbridges.num) ? &amd_northbridges.nb[node] : NULL;
 }
 EXPORT_SYMBOL_GPL(node_to_amd_nb);
+
+/*
+ * GPU start index and CPU count values on an heterogeneous system,
+ * these values will be used by the AMD EDAC and MCE modules.
+ */
+u16 amd_gpu_node_start_id(void)
+{
+	return (amd_northbridges.nodemap) ?
+		amd_northbridges.nodemap->gpu_node_start_id : 0;
+}
+EXPORT_SYMBOL_GPL(amd_gpu_node_start_id);
+
+u16 amd_cpu_node_count(void)
+{
+	return (amd_northbridges.nodemap) ?
+		amd_northbridges.nodemap->cpu_node_count : amd_northbridges.num;
+}
+EXPORT_SYMBOL_GPL(amd_cpu_node_count);
+
+/* GPU Data Fabric ID Device 24 Function 1 */
+#define PCI_DEVICE_ID_AMD_ALDEBARAN_DF_F1 0x14d1
+
+static struct pci_dev *get_gpu_df_f1(void)
+{
+	return pci_get_device(PCI_VENDOR_ID_AMD,
+			      PCI_DEVICE_ID_AMD_ALDEBARAN_DF_F1, NULL);
+}
+
+/* DF18xF1 registers on Aldebaran GPU */
+#define REG_LOCAL_NODE_TYPE_MAP		0x144
+#define REG_RMT_NODE_TYPE_MAP		0x148
+
+/*
+ * Newer AMD CPUs and GPUs whose data fabrics can be connected via custom xGMI
+ * links, comes with registers to gather local and remote node type map info.
+ *
+ * "Local Node Type" refers to nodes with the same type as that from which the
+ * register is read, and "Remote Node Type" refers to nodes with a different type.
+ *
+ * This function, reads the registers from GPU DF function 1.
+ * Hence, local nodes are GPU and remote nodes are CPUs.
+ */
+static int amd_get_node_map(struct pci_dev *pdev)
+{
+	struct amd_node_map *nodemap;
+	u32 tmp;
+
+	nodemap = kmalloc(sizeof(*nodemap), GFP_KERNEL);
+	if (!nodemap)
+		return -ENOMEM;
+
+	pci_read_config_dword(pdev, REG_LOCAL_NODE_TYPE_MAP, &tmp);
+	nodemap->gpu_node_start_id = tmp & 0xFFF;
+
+	pci_read_config_dword(pdev, REG_RMT_NODE_TYPE_MAP, &tmp);
+	nodemap->cpu_node_count = tmp >> 16 & 0xFFF;
+
+	amd_northbridges.nodemap = nodemap;
+	return 0;
+}
 
 static struct pci_dev *next_northbridge(struct pci_dev *dev,
 					const struct pci_device_id *ids)
@@ -183,17 +248,38 @@ int amd_smn_write(u16 node, u32 address, u32 value)
 EXPORT_SYMBOL_GPL(amd_smn_write);
 
 
+struct pci_dev *get_root_devs(struct pci_dev *root,
+			      const struct pci_device_id *root_ids,
+			      u16 roots_per_misc)
+{
+	u16 j;
+
+	/*
+	 * If there are more PCI root devices than data fabric/
+	 * system management network interfaces, then the (N)
+	 * PCI roots per DF/SMN interface are functionally the
+	 * same (for DF/SMN access) and N-1 are redundant.  N-1
+	 * PCI roots should be skipped per DF/SMN interface so
+	 * the following DF/SMN interfaces get mapped to
+	 * correct PCI roots.
+	 */
+	for (j = 0; j < roots_per_misc; j++)
+		root = next_northbridge(root, root_ids);
+
+	return root;
+}
+
 int amd_cache_northbridges(void)
 {
 	const struct pci_device_id *misc_ids = amd_nb_misc_ids;
 	const struct pci_device_id *link_ids = amd_nb_link_ids;
 	const struct pci_device_id *root_ids = amd_root_ids;
-	struct pci_dev *root, *misc, *link;
+	struct pci_dev *root, *misc, *link, *dff1;
 	struct amd_northbridge *nb;
-	u16 roots_per_misc = 0;
-	u16 misc_count = 0;
-	u16 root_count = 0;
-	u16 i, j;
+	u16 roots_per_misc = 0, gpu_roots_per_misc = 0;
+	u16 misc_count = 0, gpu_misc_count = 0;
+	u16 root_count = 0, gpu_root_count = 0;
+	u16 i;
 
 	if (amd_northbridges.num)
 		return 0;
@@ -205,15 +291,23 @@ int amd_cache_northbridges(void)
 	}
 
 	misc = NULL;
-	while ((misc = next_northbridge(misc, misc_ids)) != NULL)
-		misc_count++;
+	while ((misc = next_northbridge(misc, misc_ids)) != NULL) {
+		if (misc->device == PCI_DEVICE_ID_AMD_ALDEBARAN_DF_F3)
+			gpu_misc_count++;
+		else
+			misc_count++;
+	}
 
 	if (!misc_count)
 		return -ENODEV;
 
 	root = NULL;
-	while ((root = next_northbridge(root, root_ids)) != NULL)
-		root_count++;
+	while ((root = next_northbridge(root, root_ids)) != NULL) {
+		if (root->device == PCI_DEVICE_ID_AMD_ALDEBARAN_ROOT)
+			gpu_root_count++;
+		else
+			root_count++;
+	}
 
 	if (root_count) {
 		roots_per_misc = root_count / misc_count;
@@ -228,33 +322,41 @@ int amd_cache_northbridges(void)
 		}
 	}
 
-	nb = kcalloc(misc_count, sizeof(struct amd_northbridge), GFP_KERNEL);
+	/*
+	 * The number of miscs, roots and roots_per_misc might vary on different
+	 * nodes of a heterogeneous system.
+	 * Calculate roots_per_misc accordingly in order to skip the redundant
+	 * roots and map the DF/SMN interfaces to correct PCI roots.
+	 */
+	if (gpu_root_count && gpu_misc_count) {
+		dff1 = get_gpu_df_f1();
+		if (!dff1) {
+			pr_debug("Failed to gather GPU node info.\n");
+			return -ENODEV;
+		}
+
+		if (amd_get_node_map(dff1))
+			return -ENOMEM;
+
+		gpu_roots_per_misc = gpu_root_count / gpu_misc_count;
+	}
+
+	amd_northbridges.num = misc_count + gpu_misc_count;
+	nb = kcalloc(amd_northbridges.num, sizeof(struct amd_northbridge), GFP_KERNEL);
 	if (!nb)
 		return -ENOMEM;
 
 	amd_northbridges.nb = nb;
-	amd_northbridges.num = misc_count;
 
 	link = misc = root = NULL;
 	for (i = 0; i < amd_northbridges.num; i++) {
+		u16 misc_roots = i < misc_count ? roots_per_misc : gpu_roots_per_misc;
 		node_to_amd_nb(i)->root = root =
-			next_northbridge(root, root_ids);
+			get_root_devs(root, root_ids, misc_roots);
 		node_to_amd_nb(i)->misc = misc =
 			next_northbridge(misc, misc_ids);
 		node_to_amd_nb(i)->link = link =
 			next_northbridge(link, link_ids);
-
-		/*
-		 * If there are more PCI root devices than data fabric/
-		 * system management network interfaces, then the (N)
-		 * PCI roots per DF/SMN interface are functionally the
-		 * same (for DF/SMN access) and N-1 are redundant.  N-1
-		 * PCI roots should be skipped per DF/SMN interface so
-		 * the following DF/SMN interfaces get mapped to
-		 * correct PCI roots.
-		 */
-		for (j = 1; j < roots_per_misc; j++)
-			root = next_northbridge(root, root_ids);
 	}
 
 	if (amd_gart_present())

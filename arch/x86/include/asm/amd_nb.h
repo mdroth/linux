@@ -67,10 +67,17 @@ struct amd_northbridge {
 	struct threshold_bank *bank4;
 };
 
+/* heterogeneous system node type map variables */
+struct amd_node_map {
+	u16 gpu_node_start_id;
+	u16 cpu_node_count;
+};
+
 struct amd_northbridge_info {
 	u16 num;
 	u64 flags;
 	struct amd_northbridge *nb;
+	struct amd_node_map *nodemap;
 };
 
 #define AMD_NB_GART			BIT(0)
@@ -82,6 +89,8 @@ struct amd_northbridge_info {
 u16 amd_nb_num(void);
 bool amd_nb_has_feature(unsigned int feature);
 struct amd_northbridge *node_to_amd_nb(int node);
+u16 amd_gpu_node_start_id(void);
+u16 amd_cpu_node_count(void);
 
 static inline u16 amd_pci_dev_to_node_id(struct pci_dev *pdev)
 {
