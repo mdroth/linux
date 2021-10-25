@@ -467,11 +467,17 @@ struct ecc_settings {
  * functions and per device encoding/decoding logic.
  */
 struct low_ops {
-	int (*early_channel_count)	(struct amd64_pvt *pvt);
+	int  (*early_channel_count)	(struct amd64_pvt *pvt);
 	void (*map_sysaddr_to_csrow)	(struct mem_ctl_info *mci, u64 sys_addr,
 					 struct err_info *);
-	int (*dbam_to_cs)		(struct amd64_pvt *pvt, u8 dct,
+	int  (*dbam_to_cs)		(struct amd64_pvt *pvt, u8 dct,
 					 unsigned cs_mode, int cs_mask_nr);
+	void (*prep_chip_select)	(struct amd64_pvt *pvt);
+	void (*get_base_mask)		(struct amd64_pvt *pvt);
+	void (*display_misc_regs)	(struct amd64_pvt *pvt);
+	void (*get_mc_regs)		(struct amd64_pvt *pvt);
+	int  (*populate_csrows)		(struct mem_ctl_info *mci);
+	void (*get_umc_err_info)	(struct mce *m, struct err_info *err);
 };
 
 struct amd64_family_type {
