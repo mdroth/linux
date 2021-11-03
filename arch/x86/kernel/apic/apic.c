@@ -2361,6 +2361,12 @@ bool apic_id_is_primary_thread(unsigned int apicid)
 }
 #endif
 
+u32 apic_get_max_phys_apicid(void)
+{
+	return max_physical_apicid;
+}
+EXPORT_SYMBOL_GPL(apic_get_max_phys_apicid);
+
 /*
  * Should use this API to allocate logical CPU IDs to keep nr_logical_cpuids
  * and cpuid_to_apicid[] synchronized.
