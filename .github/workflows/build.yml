@@ -1,0 +1,56 @@
+on: [push]
+name: build
+jobs:
+  main:
+    name: build
+    runs-on: ubuntu-latest
+    container: debian:latest
+    steps:
+      - run: apt update
+      - run: apt install -y build-essential git linux-image-generic flex bison libelf-dev libssl-dev bc python3 dwarves
+
+      # Check out the code
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      # Base this kernel config off of the OS's config
+      - run: cp /boot/config-* .config
+
+      # Don't use the OS's trusted keys
+      - run: sed -i 's|^CONFIG_SYSTEM_TRUSTED_KEYS|#CONFIG_SYSTEM_TRUSTED_KEYS|' .config
+
+      # Use the defaults for all new values
+      - run: bash -c 'yes "" | make oldconfig' # Work around -o pipefail
+
+      # However, unconditionally enable SGX and SEV
+      - run: sed -i 's|^.*AMD_MEM_ENCRYPT.*$||' .config
+      - run: sed -i 's|^.*AMD_SEV.*$||' .config
+      - run: sed -i 's|^.*SGX.*$||' .config
+      - run: bash -c 'yes | make oldconfig' # Work around -o pipefail
+
+      # Build the kernel
+      - run: make EXTRAVERSION=-$GITHUB_REF_NAME -j 5
+
+      # Install the kernel
+      - run: mkdir -p foo/boot
+      - run: make EXTRAVERSION=-$GITHUB_REF_NAME INSTALL_PATH=`pwd`/foo/boot install
+      - run: make EXTRAVERSION=-$GITHUB_REF_NAME INSTALL_MOD_PATH=`pwd`/foo INSTALL_MOD_STRIP=1 modules_install
+
+      # Package the kernel
+      - run: rm -f foo/lib/modules/*/source
+      - run: rm -f foo/lib/modules/*/build
+      - run: tar -C foo -cvjf linux.tar.bz2 .
+      - run: git diff -p --stat v5.19..v5.19-enarx-3^ > patch-5.19-enarx.patch
+
+      # Upload the results
+      - uses: actions/upload-artifact@v2
+        with:
+          name: linux.tar.bz2
+          path:
+            linux.tar.bz2
+      - uses: actions/upload-artifact@v2
+        with:
+          name: patch-5.19-enarx.patch
+          path:
+            patch-5.19-enarx.patch
