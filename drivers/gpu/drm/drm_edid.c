@@ -97,7 +97,7 @@ static int oui(u8 first, u8 second, u8 third)
 
 struct detailed_mode_closure {
 	struct drm_connector *connector;
-	struct edid *edid;
+	const struct edid *edid;
 	bool preferred;
 	u32 quirks;
 	int modes;
@@ -2150,7 +2150,7 @@ static u32 edid_extract_panel_id(const struct edid *edid)
 
 u32 drm_edid_get_panel_id(struct i2c_adapter *adapter)
 {
-	struct edid *edid;
+	const struct edid *edid;
 	u32 panel_id;
 
 	edid = drm_do_get_edid_base_block(NULL, drm_do_probe_ddc_edid, adapter);
@@ -2331,52 +2331,58 @@ struct drm_display_mode *drm_mode_find_dmt(struct drm_device *dev,
 }
 EXPORT_SYMBOL(drm_mode_find_dmt);
 
-static bool is_display_descriptor(const u8 d[18], u8 tag)
+static bool is_display_descriptor(const struct detailed_timing *descriptor, u8 type)
 {
-	return d[0] == 0x00 && d[1] == 0x00 &&
-		d[2] == 0x00 && d[3] == tag;
+	BUILD_BUG_ON(offsetof(typeof(*descriptor), pixel_clock) != 0);
+	BUILD_BUG_ON(offsetof(typeof(*descriptor), data.other_data.pad1) != 2);
+	BUILD_BUG_ON(offsetof(typeof(*descriptor), data.other_data.type) != 3);
+
+	return descriptor->pixel_clock == 0 &&
+		descriptor->data.other_data.pad1 == 0 &&
+		descriptor->data.other_data.type == type;
 }
 
-static bool is_detailed_timing_descriptor(const u8 d[18])
+static bool is_detailed_timing_descriptor(const struct detailed_timing *descriptor)
 {
-	return d[0] != 0x00 || d[1] != 0x00;
+	BUILD_BUG_ON(offsetof(typeof(*descriptor), pixel_clock) != 0);
+
+	return descriptor->pixel_clock != 0;
 }
 
-typedef void detailed_cb(struct detailed_timing *timing, void *closure);
+typedef void detailed_cb(const struct detailed_timing *timing, void *closure);
 
 static void
-cea_for_each_detailed_block(u8 *ext, detailed_cb *cb, void *closure)
+cea_for_each_detailed_block(const u8 *ext, detailed_cb *cb, void *closure)
 {
 	int i, n;
 	u8 d = ext[0x02];
-	u8 *det_base = ext + d;
+	const u8 *det_base = ext + d;
 
 	if (d < 4 || d > 127)
 		return;
 
 	n = (127 - d) / 18;
 	for (i = 0; i < n; i++)
-		cb((struct detailed_timing *)(det_base + 18 * i), closure);
+		cb((const struct detailed_timing *)(det_base + 18 * i), closure);
 }
 
 static void
-vtb_for_each_detailed_block(u8 *ext, detailed_cb *cb, void *closure)
+vtb_for_each_detailed_block(const u8 *ext, detailed_cb *cb, void *closure)
 {
 	unsigned int i, n = min((int)ext[0x02], 6);
-	u8 *det_base = ext + 5;
+	const u8 *det_base = ext + 5;
 
 	if (ext[0x01] != 1)
 		return; /* unknown version */
 
 	for (i = 0; i < n; i++)
-		cb((struct detailed_timing *)(det_base + 18 * i), closure);
+		cb((const struct detailed_timing *)(det_base + 18 * i), closure);
 }
 
 static void
-drm_for_each_detailed_block(u8 *raw_edid, detailed_cb *cb, void *closure)
+drm_for_each_detailed_block(const struct edid *edid, detailed_cb *cb, void *closure)
 {
 	int i;
-	struct edid *edid = (struct edid *)raw_edid;
 
 	if (edid == NULL)
 		return;
@@ -2384,8 +2390,8 @@ drm_for_each_detailed_block(u8 *raw_edid, detailed_cb *cb, void *closure)
 	for (i = 0; i < EDID_DETAILED_TIMINGS; i++)
 		cb(&(edid->detailed_timings[i]), closure);
 
-	for (i = 1; i <= raw_edid[0x7e]; i++) {
-		u8 *ext = raw_edid + (i * EDID_LENGTH);
+	for (i = 1; i <= edid->extensions; i++) {
+		const u8 *ext = (const u8 *)edid + (i * EDID_LENGTH);
 
 		switch (*ext) {
 		case CEA_EXT:
@@ -2401,25 +2407,29 @@ drm_for_each_detailed_block(u8 *raw_edid, detailed_cb *cb, void *closure)
 }
 
 static void
-is_rb(struct detailed_timing *t, void *data)
+is_rb(const struct detailed_timing *descriptor, void *data)
 {
-	u8 *r = (u8 *)t;
+	bool *res = data;
 
-	if (!is_display_descriptor(r, EDID_DETAIL_MONITOR_RANGE))
+	if (!is_display_descriptor(descriptor, EDID_DETAIL_MONITOR_RANGE))
 		return;
 
-	if (r[15] & 0x10)
-		*(bool *)data = true;
+	BUILD_BUG_ON(offsetof(typeof(*descriptor), data.other_data.data.range.flags) != 10);
+	BUILD_BUG_ON(offsetof(typeof(*descriptor), data.other_data.data.range.formula.cvt.flags) != 15);
+
+	if (descriptor->data.other_data.data.range.flags == DRM_EDID_CVT_SUPPORT_FLAG &&
+	    descriptor->data.other_data.data.range.formula.cvt.flags & 0x10)
+		*res = true;
 }
 
 /* EDID 1.4 defines this explicitly.  For EDID 1.3, we guess, badly. */
 static bool
-drm_monitor_supports_rb(struct edid *edid)
+drm_monitor_supports_rb(const struct edid *edid)
 {
 	if (edid->revision >= 4) {
 		bool ret = false;
 
-		drm_for_each_detailed_block((u8 *)edid, is_rb, &ret);
+		drm_for_each_detailed_block(edid, is_rb, &ret);
 		return ret;
 	}
 
@@ -2427,68 +2437,85 @@ drm_monitor_supports_rb(struct edid *edid)
 }
 
 static void
-find_gtf2(struct detailed_timing *t, void *data)
+find_gtf2(const struct detailed_timing *descriptor, void *data)
 {
-	u8 *r = (u8 *)t;
+	const struct detailed_timing **res = data;
 
-	if (!is_display_descriptor(r, EDID_DETAIL_MONITOR_RANGE))
+	if (!is_display_descriptor(descriptor, EDID_DETAIL_MONITOR_RANGE))
 		return;
 
-	if (r[10] == 0x02)
-		*(u8 **)data = r;
+	BUILD_BUG_ON(offsetof(typeof(*descriptor), data.other_data.data.range.flags) != 10);
+
+	if (descriptor->data.other_data.data.range.flags == 0x02)
+		*res = descriptor;
 }
 
 /* Secondary GTF curve kicks in above some break frequency */
 static int
-drm_gtf2_hbreak(struct edid *edid)
+drm_gtf2_hbreak(const struct edid *edid)
 {
-	u8 *r = NULL;
+	const struct detailed_timing *descriptor = NULL;
 
-	drm_for_each_detailed_block((u8 *)edid, find_gtf2, &r);
-	return r ? (r[12] * 2) : 0;
+	drm_for_each_detailed_block(edid, find_gtf2, &descriptor);
+
+	BUILD_BUG_ON(offsetof(typeof(*descriptor), data.other_data.data.range.formula.gtf2.hfreq_start_khz) != 12);
+
+	return descriptor ? descriptor->data.other_data.data.range.formula.gtf2.hfreq_start_khz * 2 : 0;
 }
 
 static int
-drm_gtf2_2c(struct edid *edid)
+drm_gtf2_2c(const struct edid *edid)
 {
-	u8 *r = NULL;
+	const struct detailed_timing *descriptor = NULL;
 
-	drm_for_each_detailed_block((u8 *)edid, find_gtf2, &r);
-	return r ? r[13] : 0;
+	drm_for_each_detailed_block(edid, find_gtf2, &descriptor);
+
+	BUILD_BUG_ON(offsetof(typeof(*descriptor), data.other_data.data.range.formula.gtf2.c) != 13);
+
+	return descriptor ? descriptor->data.other_data.data.range.formula.gtf2.c : 0;
 }
 
 static int
-drm_gtf2_m(struct edid *edid)
+drm_gtf2_m(const struct edid *edid)
 {
-	u8 *r = NULL;
+	const struct detailed_timing *descriptor = NULL;
 
-	drm_for_each_detailed_block((u8 *)edid, find_gtf2, &r);
-	return r ? (r[15] << 8) + r[14] : 0;
+	drm_for_each_detailed_block(edid, find_gtf2, &descriptor);
+
+	BUILD_BUG_ON(offsetof(typeof(*descriptor), data.other_data.data.range.formula.gtf2.m) != 14);
+
+	return descriptor ? le16_to_cpu(descriptor->data.other_data.data.range.formula.gtf2.m) : 0;
 }
 
 static int
-drm_gtf2_k(struct edid *edid)
+drm_gtf2_k(const struct edid *edid)
 {
-	u8 *r = NULL;
+	const struct detailed_timing *descriptor = NULL;
 
-	drm_for_each_detailed_block((u8 *)edid, find_gtf2, &r);
-	return r ? r[16] : 0;
+	drm_for_each_detailed_block(edid, find_gtf2, &descriptor);
+
+	BUILD_BUG_ON(offsetof(typeof(*descriptor), data.other_data.data.range.formula.gtf2.k) != 16);
+
+	return descriptor ? descriptor->data.other_data.data.range.formula.gtf2.k : 0;
 }
 
 static int
-drm_gtf2_2j(struct edid *edid)
+drm_gtf2_2j(const struct edid *edid)
 {
-	u8 *r = NULL;
+	const struct detailed_timing *descriptor = NULL;
 
-	drm_for_each_detailed_block((u8 *)edid, find_gtf2, &r);
-	return r ? r[17] : 0;
+	drm_for_each_detailed_block(edid, find_gtf2, &descriptor);
+
+	BUILD_BUG_ON(offsetof(typeof(*descriptor), data.other_data.data.range.formula.gtf2.j) != 17);
+
+	return descriptor ? descriptor->data.other_data.data.range.formula.gtf2.j : 0;
 }
 
 /**
  * standard_timing_level - get std. timing level(CVT/GTF/DMT)
  * @edid: EDID block to scan
  */
-static int standard_timing_level(struct edid *edid)
+static int standard_timing_level(const struct edid *edid)
 {
 	if (edid->revision >= 2) {
 		if (edid->revision >= 4 && (edid->features & DRM_EDID_FEATURE_DEFAULT_GTF))
@@ -2531,8 +2558,8 @@ static int drm_mode_hsync(const struct drm_display_mode *mode)
  * and convert them into a real mode using CVT/GTF/DMT.
  */
 static struct drm_display_mode *
-drm_mode_std(struct drm_connector *connector, struct edid *edid,
-	     struct std_timing *t)
+drm_mode_std(struct drm_connector *connector, const struct edid *edid,
+	     const struct std_timing *t)
 {
 	struct drm_device *dev = connector->dev;
 	struct drm_display_mode *m, *mode = NULL;
@@ -2650,7 +2677,7 @@ drm_mode_std(struct drm_connector *connector, struct edid *edid,
  */
 static void
 drm_mode_do_interlace_quirk(struct drm_display_mode *mode,
-			    struct detailed_pixel_timing *pt)
+			    const struct detailed_pixel_timing *pt)
 {
 	int i;
 	static const struct {
@@ -2693,12 +2720,12 @@ drm_mode_do_interlace_quirk(struct drm_display_mode *mode,
  * return a new struct drm_display_mode.
  */
 static struct drm_display_mode *drm_mode_detailed(struct drm_device *dev,
-						  struct edid *edid,
-						  struct detailed_timing *timing,
+						  const struct edid *edid,
+						  const struct detailed_timing *timing,
 						  u32 quirks)
 {
 	struct drm_display_mode *mode;
-	struct detailed_pixel_timing *pt = &timing->data.pixel_data;
+	const struct detailed_pixel_timing *pt = &timing->data.pixel_data;
 	unsigned hactive = (pt->hactive_hblank_hi & 0xf0) << 4 | pt->hactive_lo;
 	unsigned vactive = (pt->vactive_vblank_hi & 0xf0) << 4 | pt->vactive_lo;
 	unsigned hblank = (pt->hactive_hblank_hi & 0xf) << 8 | pt->hblank_lo;
@@ -2740,9 +2767,9 @@ static struct drm_display_mode *drm_mode_detailed(struct drm_device *dev,
 		return NULL;
 
 	if (quirks & EDID_QUIRK_135_CLOCK_TOO_HIGH)
-		timing->pixel_clock = cpu_to_le16(1088);
-
-	mode->clock = le16_to_cpu(timing->pixel_clock) * 10;
+		mode->clock = 1088 * 10;
+	else
+		mode->clock = le16_to_cpu(timing->pixel_clock) * 10;
 
 	mode->hdisplay = hactive;
 	mode->hsync_start = mode->hdisplay + hsync_offset;
@@ -2763,13 +2790,13 @@ static struct drm_display_mode *drm_mode_detailed(struct drm_device *dev,
 	drm_mode_do_interlace_quirk(mode, pt);
 
 	if (quirks & EDID_QUIRK_DETAILED_SYNC_PP) {
-		pt->misc |= DRM_EDID_PT_HSYNC_POSITIVE | DRM_EDID_PT_VSYNC_POSITIVE;
+		mode->flags |= DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC;
+	} else {
+		mode->flags |= (pt->misc & DRM_EDID_PT_HSYNC_POSITIVE) ?
+			DRM_MODE_FLAG_PHSYNC : DRM_MODE_FLAG_NHSYNC;
+		mode->flags |= (pt->misc & DRM_EDID_PT_VSYNC_POSITIVE) ?
+			DRM_MODE_FLAG_PVSYNC : DRM_MODE_FLAG_NVSYNC;
 	}
-
-	mode->flags |= (pt->misc & DRM_EDID_PT_HSYNC_POSITIVE) ?
-		DRM_MODE_FLAG_PHSYNC : DRM_MODE_FLAG_NHSYNC;
-	mode->flags |= (pt->misc & DRM_EDID_PT_VSYNC_POSITIVE) ?
-		DRM_MODE_FLAG_PVSYNC : DRM_MODE_FLAG_NVSYNC;
 
 set_size:
 	mode->width_mm = pt->width_mm_lo | (pt->width_height_mm_hi & 0xf0) << 4;
@@ -2793,7 +2820,7 @@ set_size:
 
 static bool
 mode_in_hsync_range(const struct drm_display_mode *mode,
-		    struct edid *edid, u8 *t)
+		    const struct edid *edid, const u8 *t)
 {
 	int hsync, hmin, hmax;
 
@@ -2810,7 +2837,7 @@ mode_in_hsync_range(const struct drm_display_mode *mode,
 
 static bool
 mode_in_vsync_range(const struct drm_display_mode *mode,
-		    struct edid *edid, u8 *t)
+		    const struct edid *edid, const u8 *t)
 {
 	int vsync, vmin, vmax;
 
@@ -2826,7 +2853,7 @@ mode_in_vsync_range(const struct drm_display_mode *mode,
 }
 
 static u32
-range_pixel_clock(struct edid *edid, u8 *t)
+range_pixel_clock(const struct edid *edid, const u8 *t)
 {
 	/* unspecified */
 	if (t[9] == 0 || t[9] == 255)
@@ -2841,11 +2868,11 @@ range_pixel_clock(struct edid *edid, u8 *t)
 }
 
 static bool
-mode_in_range(const struct drm_display_mode *mode, struct edid *edid,
-	      struct detailed_timing *timing)
+mode_in_range(const struct drm_display_mode *mode, const struct edid *edid,
+	      const struct detailed_timing *timing)
 {
 	u32 max_clock;
-	u8 *t = (u8 *)timing;
+	const u8 *t = (const u8 *)timing;
 
 	if (!mode_in_hsync_range(mode, edid, t))
 		return false;
@@ -2887,8 +2914,8 @@ static bool valid_inferred_mode(const struct drm_connector *connector,
 }
 
 static int
-drm_dmt_modes_for_range(struct drm_connector *connector, struct edid *edid,
-			struct detailed_timing *timing)
+drm_dmt_modes_for_range(struct drm_connector *connector, const struct edid *edid,
+			const struct detailed_timing *timing)
 {
 	int i, modes = 0;
 	struct drm_display_mode *newmode;
@@ -2922,8 +2949,8 @@ void drm_mode_fixup_1366x768(struct drm_display_mode *mode)
 }
 
 static int
-drm_gtf_modes_for_range(struct drm_connector *connector, struct edid *edid,
-			struct detailed_timing *timing)
+drm_gtf_modes_for_range(struct drm_connector *connector, const struct edid *edid,
+			const struct detailed_timing *timing)
 {
 	int i, modes = 0;
 	struct drm_display_mode *newmode;
@@ -2951,8 +2978,8 @@ drm_gtf_modes_for_range(struct drm_connector *connector, struct edid *edid,
 }
 
 static int
-drm_cvt_modes_for_range(struct drm_connector *connector, struct edid *edid,
-			struct detailed_timing *timing)
+drm_cvt_modes_for_range(struct drm_connector *connector, const struct edid *edid,
+			const struct detailed_timing *timing)
 {
 	int i, modes = 0;
 	struct drm_display_mode *newmode;
@@ -2981,13 +3008,13 @@ drm_cvt_modes_for_range(struct drm_connector *connector, struct edid *edid,
 }
 
 static void
-do_inferred_modes(struct detailed_timing *timing, void *c)
+do_inferred_modes(const struct detailed_timing *timing, void *c)
 {
 	struct detailed_mode_closure *closure = c;
-	struct detailed_non_pixel *data = &timing->data.other_data;
-	struct detailed_data_monitor_range *range = &data->data.range;
+	const struct detailed_non_pixel *data = &timing->data.other_data;
+	const struct detailed_data_monitor_range *range = &data->data.range;
 
-	if (!is_display_descriptor((const u8 *)timing, EDID_DETAIL_MONITOR_RANGE))
+	if (!is_display_descriptor(timing, EDID_DETAIL_MONITOR_RANGE))
 		return;
 
 	closure->modes += drm_dmt_modes_for_range(closure->connector,
@@ -3019,7 +3046,7 @@ do_inferred_modes(struct detailed_timing *timing, void *c)
 }
 
 static int
-add_inferred_modes(struct drm_connector *connector, struct edid *edid)
+add_inferred_modes(struct drm_connector *connector, const struct edid *edid)
 {
 	struct detailed_mode_closure closure = {
 		.connector = connector,
@@ -3027,18 +3054,17 @@ add_inferred_modes(struct drm_connector *connector, struct edid *edid)
 	};
 
 	if (version_greater(edid, 1, 0))
-		drm_for_each_detailed_block((u8 *)edid, do_inferred_modes,
-					    &closure);
+		drm_for_each_detailed_block(edid, do_inferred_modes, &closure);
 
 	return closure.modes;
 }
 
 static int
-drm_est3_modes(struct drm_connector *connector, struct detailed_timing *timing)
+drm_est3_modes(struct drm_connector *connector, const struct detailed_timing *timing)
 {
 	int i, j, m, modes = 0;
 	struct drm_display_mode *mode;
-	u8 *est = ((u8 *)timing) + 6;
+	const u8 *est = ((const u8 *)timing) + 6;
 
 	for (i = 0; i < 6; i++) {
 		for (j = 7; j >= 0; j--) {
@@ -3063,11 +3089,11 @@ drm_est3_modes(struct drm_connector *connector, struct detailed_timing *timing)
 }
 
 static void
-do_established_modes(struct detailed_timing *timing, void *c)
+do_established_modes(const struct detailed_timing *timing, void *c)
 {
 	struct detailed_mode_closure *closure = c;
 
-	if (!is_display_descriptor((const u8 *)timing, EDID_DETAIL_EST_TIMINGS))
+	if (!is_display_descriptor(timing, EDID_DETAIL_EST_TIMINGS))
 		return;
 
 	closure->modes += drm_est3_modes(closure->connector, timing);
@@ -3082,7 +3108,7 @@ do_established_modes(struct detailed_timing *timing, void *c)
  * (defined above).  Tease them out and add them to the global modes list.
  */
 static int
-add_established_modes(struct drm_connector *connector, struct edid *edid)
+add_established_modes(struct drm_connector *connector, const struct edid *edid)
 {
 	struct drm_device *dev = connector->dev;
 	unsigned long est_bits = edid->established_timings.t1 |
@@ -3107,26 +3133,26 @@ add_established_modes(struct drm_connector *connector, struct edid *edid)
 	}
 
 	if (version_greater(edid, 1, 0))
-		    drm_for_each_detailed_block((u8 *)edid,
-						do_established_modes, &closure);
+		drm_for_each_detailed_block(edid, do_established_modes,
+					    &closure);
 
 	return modes + closure.modes;
 }
 
 static void
-do_standard_modes(struct detailed_timing *timing, void *c)
+do_standard_modes(const struct detailed_timing *timing, void *c)
 {
 	struct detailed_mode_closure *closure = c;
-	struct detailed_non_pixel *data = &timing->data.other_data;
+	const struct detailed_non_pixel *data = &timing->data.other_data;
 	struct drm_connector *connector = closure->connector;
-	struct edid *edid = closure->edid;
+	const struct edid *edid = closure->edid;
 	int i;
 
-	if (!is_display_descriptor((const u8 *)timing, EDID_DETAIL_STD_MODES))
+	if (!is_display_descriptor(timing, EDID_DETAIL_STD_MODES))
 		return;
 
 	for (i = 0; i < 6; i++) {
-		struct std_timing *std = &data->data.timings[i];
+		const struct std_timing *std = &data->data.timings[i];
 		struct drm_display_mode *newmode;
 
 		newmode = drm_mode_std(connector, edid, std);
@@ -3146,7 +3172,7 @@ do_standard_modes(struct detailed_timing *timing, void *c)
  * GTF or CVT. Grab them from @edid and add them to the list.
  */
 static int
-add_standard_modes(struct drm_connector *connector, struct edid *edid)
+add_standard_modes(struct drm_connector *connector, const struct edid *edid)
 {
 	int i, modes = 0;
 	struct detailed_mode_closure closure = {
@@ -3166,7 +3192,7 @@ add_standard_modes(struct drm_connector *connector, struct edid *edid)
 	}
 
 	if (version_greater(edid, 1, 0))
-		drm_for_each_detailed_block((u8 *)edid, do_standard_modes,
+		drm_for_each_detailed_block(edid, do_standard_modes,
 					    &closure);
 
 	/* XXX should also look for standard codes in VTB blocks */
@@ -3175,12 +3201,12 @@ add_standard_modes(struct drm_connector *connector, struct edid *edid)
 }
 
 static int drm_cvt_modes(struct drm_connector *connector,
-			 struct detailed_timing *timing)
+			 const struct detailed_timing *timing)
 {
 	int i, j, modes = 0;
 	struct drm_display_mode *newmode;
 	struct drm_device *dev = connector->dev;
-	struct cvt_timing *cvt;
+	const struct cvt_timing *cvt;
 	const int rates[] = { 60, 85, 75, 60, 50 };
 	const u8 empty[3] = { 0, 0, 0 };
 
@@ -3227,18 +3253,18 @@ static int drm_cvt_modes(struct drm_connector *connector,
 }
 
 static void
-do_cvt_mode(struct detailed_timing *timing, void *c)
+do_cvt_mode(const struct detailed_timing *timing, void *c)
 {
 	struct detailed_mode_closure *closure = c;
 
-	if (!is_display_descriptor((const u8 *)timing, EDID_DETAIL_CVT_3BYTE))
+	if (!is_display_descriptor(timing, EDID_DETAIL_CVT_3BYTE))
 		return;
 
 	closure->modes += drm_cvt_modes(closure->connector, timing);
 }
 
 static int
-add_cvt_modes(struct drm_connector *connector, struct edid *edid)
+add_cvt_modes(struct drm_connector *connector, const struct edid *edid)
 {
 	struct detailed_mode_closure closure = {
 		.connector = connector,
@@ -3246,7 +3272,7 @@ add_cvt_modes(struct drm_connector *connector, struct edid *edid)
 	};
 
 	if (version_greater(edid, 1, 2))
-		drm_for_each_detailed_block((u8 *)edid, do_cvt_mode, &closure);
+		drm_for_each_detailed_block(edid, do_cvt_mode, &closure);
 
 	/* XXX should also look for CVT codes in VTB blocks */
 
@@ -3256,12 +3282,12 @@ add_cvt_modes(struct drm_connector *connector, struct edid *edid)
 static void fixup_detailed_cea_mode_clock(struct drm_display_mode *mode);
 
 static void
-do_detailed_mode(struct detailed_timing *timing, void *c)
+do_detailed_mode(const struct detailed_timing *timing, void *c)
 {
 	struct detailed_mode_closure *closure = c;
 	struct drm_display_mode *newmode;
 
-	if (!is_detailed_timing_descriptor((const u8 *)timing))
+	if (!is_detailed_timing_descriptor(timing))
 		return;
 
 	newmode = drm_mode_detailed(closure->connector->dev,
@@ -3292,7 +3318,7 @@ do_detailed_mode(struct detailed_timing *timing, void *c)
  * @quirks: quirks to apply
  */
 static int
-add_detailed_modes(struct drm_connector *connector, struct edid *edid,
+add_detailed_modes(struct drm_connector *connector, const struct edid *edid,
 		   u32 quirks)
 {
 	struct detailed_mode_closure closure = {
@@ -3306,7 +3332,7 @@ add_detailed_modes(struct drm_connector *connector, struct edid *edid,
 		closure.preferred =
 		    (edid->features & DRM_EDID_FEATURE_PREFERRED_TIMING);
 
-	drm_for_each_detailed_block((u8 *)edid, do_detailed_mode, &closure);
+	drm_for_each_detailed_block(edid, do_detailed_mode, &closure);
 
 	return closure.modes;
 }
@@ -3638,7 +3664,7 @@ static bool drm_valid_hdmi_vic(u8 vic)
 }
 
 static int
-add_alternate_cea_modes(struct drm_connector *connector, struct edid *edid)
+add_alternate_cea_modes(struct drm_connector *connector, const struct edid *edid)
 {
 	struct drm_device *dev = connector->dev;
 	struct drm_display_mode *mode, *tmp;
@@ -4319,7 +4345,7 @@ static void drm_parse_y420cmdb_bitmap(struct drm_connector *connector,
 }
 
 static int
-add_cea_modes(struct drm_connector *connector, struct edid *edid)
+add_cea_modes(struct drm_connector *connector, const struct edid *edid)
 {
 	const u8 *cea = drm_find_cea_extension(edid);
 	const u8 *db, *hdmi = NULL, *video = NULL;
@@ -4489,23 +4515,25 @@ drm_parse_hdmi_vsdb_audio(struct drm_connector *connector, const u8 *db)
 }
 
 static void
-monitor_name(struct detailed_timing *t, void *data)
+monitor_name(const struct detailed_timing *timing, void *data)
 {
-	if (!is_display_descriptor((const u8 *)t, EDID_DETAIL_MONITOR_NAME))
+	const char **res = data;
+
+	if (!is_display_descriptor(timing, EDID_DETAIL_MONITOR_NAME))
 		return;
 
-	*(u8 **)data = t->data.other_data.data.str.str;
+	*res = timing->data.other_data.data.str.str;
 }
 
-static int get_monitor_name(struct edid *edid, char name[13])
+static int get_monitor_name(const struct edid *edid, char name[13])
 {
-	char *edid_name = NULL;
+	const char *edid_name = NULL;
 	int mnl;
 
 	if (!edid || !name)
 		return 0;
 
-	drm_for_each_detailed_block((u8 *)edid, monitor_name, &edid_name);
+	drm_for_each_detailed_block(edid, monitor_name, &edid_name);
 	for (mnl = 0; edid_name && mnl < 13; mnl++) {
 		if (edid_name[mnl] == 0x0a)
 			break;
@@ -4523,7 +4551,7 @@ static int get_monitor_name(struct edid *edid, char name[13])
  * @bufsize: The size of the name buffer (should be at least 14 chars.)
  *
  */
-void drm_edid_get_monitor_name(struct edid *edid, char *name, int bufsize)
+void drm_edid_get_monitor_name(const struct edid *edid, char *name, int bufsize)
 {
 	int name_length;
 	char buf[13];
@@ -4557,7 +4585,8 @@ static void clear_eld(struct drm_connector *connector)
  * Fill the ELD (EDID-Like Data) buffer for passing to the audio driver. The
  * HDCP and Port_ID ELD fields are left for the graphics driver to fill in.
  */
-static void drm_edid_to_eld(struct drm_connector *connector, struct edid *edid)
+static void drm_edid_to_eld(struct drm_connector *connector,
+			    const struct edid *edid)
 {
 	uint8_t *eld = connector->eld;
 	const u8 *cea;
@@ -4653,7 +4682,7 @@ static void drm_edid_to_eld(struct drm_connector *connector, struct edid *edid)
  *
  * Return: The number of found SADs or negative number on error.
  */
-int drm_edid_to_sad(struct edid *edid, struct cea_sad **sads)
+int drm_edid_to_sad(const struct edid *edid, struct cea_sad **sads)
 {
 	int count = 0;
 	int i, start, end, dbl;
@@ -4715,7 +4744,7 @@ EXPORT_SYMBOL(drm_edid_to_sad);
  * Return: The number of found Speaker Allocation Blocks or negative number on
  * error.
  */
-int drm_edid_to_speaker_allocation(struct edid *edid, u8 **sadb)
+int drm_edid_to_speaker_allocation(const struct edid *edid, u8 **sadb)
 {
 	int count = 0;
 	int i, start, end, dbl;
@@ -4810,7 +4839,7 @@ EXPORT_SYMBOL(drm_av_sync_delay);
  *
  * Return: True if the monitor is HDMI, false if not or unknown.
  */
-bool drm_detect_hdmi_monitor(struct edid *edid)
+bool drm_detect_hdmi_monitor(const struct edid *edid)
 {
 	const u8 *edid_ext;
 	int i;
@@ -4848,7 +4877,7 @@ EXPORT_SYMBOL(drm_detect_hdmi_monitor);
  *
  * Return: True if the monitor supports audio, false otherwise.
  */
-bool drm_detect_monitor_audio(struct edid *edid)
+bool drm_detect_monitor_audio(const struct edid *edid)
 {
 	const u8 *edid_ext;
 	int i, j;
@@ -5219,14 +5248,14 @@ static void drm_parse_cea_ext(struct drm_connector *connector,
 }
 
 static
-void get_monitor_range(struct detailed_timing *timing,
+void get_monitor_range(const struct detailed_timing *timing,
 		       void *info_monitor_range)
 {
 	struct drm_monitor_range_info *monitor_range = info_monitor_range;
 	const struct detailed_non_pixel *data = &timing->data.other_data;
 	const struct detailed_data_monitor_range *range = &data->data.range;
 
-	if (!is_display_descriptor((const u8 *)timing, EDID_DETAIL_MONITOR_RANGE))
+	if (!is_display_descriptor(timing, EDID_DETAIL_MONITOR_RANGE))
 		return;
 
 	/*
@@ -5251,7 +5280,7 @@ void drm_get_monitor_range(struct drm_connector *connector,
 	if (!version_greater(edid, 1, 1))
 		return;
 
-	drm_for_each_detailed_block((u8 *)edid, get_monitor_range,
+	drm_for_each_detailed_block(edid, get_monitor_range,
 				    &info->monitor_range);
 
 	DRM_DEBUG_KMS("Supported Monitor Refresh rate range is %d Hz - %d Hz\n",
@@ -5515,7 +5544,7 @@ static int add_displayid_detailed_1_modes(struct drm_connector *connector,
 }
 
 static int add_displayid_detailed_modes(struct drm_connector *connector,
-					struct edid *edid)
+					const struct edid *edid)
 {
 	const struct displayid_block *block;
 	struct displayid_iter iter;
@@ -5532,30 +5561,14 @@ static int add_displayid_detailed_modes(struct drm_connector *connector,
 	return num_modes;
 }
 
-/**
- * drm_add_edid_modes - add modes from EDID data, if available
- * @connector: connector we're probing
- * @edid: EDID data
- *
- * Add the specified modes to the connector's mode list. Also fills out the
- * &drm_display_info structure and ELD in @connector with any information which
- * can be derived from the edid.
- *
- * Return: The number of modes added or 0 if we couldn't find any.
- */
-int drm_add_edid_modes(struct drm_connector *connector, struct edid *edid)
+static int drm_edid_connector_update(struct drm_connector *connector,
+				     const struct edid *edid)
 {
 	int num_modes = 0;
 	u32 quirks;
 
 	if (edid == NULL) {
 		clear_eld(connector);
-		return 0;
-	}
-	if (!drm_edid_is_valid(edid)) {
-		clear_eld(connector);
-		drm_warn(connector->dev, "%s: EDID invalid.\n",
-			 connector->name);
 		return 0;
 	}
 
@@ -5608,6 +5621,28 @@ int drm_add_edid_modes(struct drm_connector *connector, struct edid *edid)
 		connector->display_info.bpc = 12;
 
 	return num_modes;
+}
+
+/**
+ * drm_add_edid_modes - add modes from EDID data, if available
+ * @connector: connector we're probing
+ * @edid: EDID data
+ *
+ * Add the specified modes to the connector's mode list. Also fills out the
+ * &drm_display_info structure and ELD in @connector with any information which
+ * can be derived from the edid.
+ *
+ * Return: The number of modes added or 0 if we couldn't find any.
+ */
+int drm_add_edid_modes(struct drm_connector *connector, struct edid *edid)
+{
+	if (edid && !drm_edid_is_valid(edid)) {
+		drm_warn(connector->dev, "%s: EDID invalid.\n",
+			 connector->name);
+		edid = NULL;
+	}
+
+	return drm_edid_connector_update(connector, edid);
 }
 EXPORT_SYMBOL(drm_add_edid_modes);
 
