@@ -142,7 +142,16 @@ int i915_ttm_move_notify(struct ttm_buffer_object *bo)
 	struct drm_i915_gem_object *obj = i915_ttm_to_gem(bo);
 	int ret;
 
-	ret = i915_gem_object_unbind(obj, I915_GEM_OBJECT_UNBIND_ACTIVE);
+	/*
+	 * Note: The async unbinding here will actually transform the
+	 * blocking wait for unbind into a wait before finally submitting
+	 * evict / migration blit and thus stall the migration timeline
+	 * which may not be good for overall throughput. We should make
+	 * sure we await the unbind fences *after* the migration blit
+	 * instead of *before* as we currently do.
+	 */
+	ret = i915_gem_object_unbind(obj, I915_GEM_OBJECT_UNBIND_ACTIVE |
+				     I915_GEM_OBJECT_UNBIND_ASYNC);
 	if (ret)
 		return ret;
 
@@ -427,11 +436,17 @@ __i915_ttm_move(struct ttm_buffer_object *bo,
 
 		if (!IS_ERR(fence))
 			goto out;
-	} else if (move_deps) {
-		int err = i915_deps_sync(move_deps, ctx);
+	} else {
+		int err = PTR_ERR(fence);
 
-		if (err)
-			return ERR_PTR(err);
+		if (err == -EINTR || err == -ERESTARTSYS || err == -EAGAIN)
+			return fence;
+
+		if (move_deps) {
+			err = i915_deps_sync(move_deps, ctx);
+			if (err)
+				return ERR_PTR(err);
+		}
 	}
 
 	/* Error intercept failed or no accelerated migration to start with */
@@ -525,7 +540,7 @@ int i915_ttm_move(struct ttm_buffer_object *bo, bool evict,
 			return ret;
 		}
 
-		migration_fence = __i915_ttm_move(bo, ctx, clear, dst_mem, bo->ttm,
+		migration_fence = __i915_ttm_move(bo, ctx, clear, dst_mem, ttm,
 						  dst_rsgt, true, &deps);
 		i915_deps_fini(&deps);
 	}
@@ -596,7 +611,11 @@ int i915_gem_obj_copy_ttm(struct drm_i915_gem_object *dst,
 	assert_object_held(src);
 	i915_deps_init(&deps, GFP_KERNEL | __GFP_NORETRY | __GFP_NOWARN);
 
-	ret = dma_resv_reserve_shared(src_bo->base.resv, 1);
+	ret = dma_resv_reserve_fences(src_bo->base.resv, 1);
+	if (ret)
+		return ret;
+
+	ret = dma_resv_reserve_fences(dst_bo->base.resv, 1);
 	if (ret)
 		return ret;
 
