@@ -3775,10 +3775,7 @@ static struct amd64_family_type family_types[] = {
 		.f6_id = PCI_DEVICE_ID_AMD_19H_M10H_DF_F6,
 		.max_mcs = 12,
 		.flags.has_ddr5 = 1,
-		.ops = {
-			.early_channel_count	= f17_early_channel_count,
-			.dbam_to_cs		= f17_addr_mask_to_cs_size,
-		}
+		.ops = f17_ops,
 	},
 	[ALDEBARAN_GPUS] = {
 		.ctl_name = "ALDEBARAN",
