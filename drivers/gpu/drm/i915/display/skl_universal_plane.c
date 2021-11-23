@@ -615,9 +615,20 @@ skl_plane_disable_arm(struct intel_plane *plane,
 	struct drm_i915_private *dev_priv = to_i915(plane->base.dev);
 	enum plane_id plane_id = plane->id;
 	enum pipe pipe = plane->pipe;
-	unsigned long irqflags;
 
-	spin_lock_irqsave(&dev_priv->uncore.lock, irqflags);
+	skl_write_plane_wm(plane, crtc_state);
+
+	intel_de_write_fw(dev_priv, PLANE_CTL(pipe, plane_id), 0);
+	intel_de_write_fw(dev_priv, PLANE_SURF(pipe, plane_id), 0);
+}
+
+static void
+icl_plane_disable_arm(struct intel_plane *plane,
+		      const struct intel_crtc_state *crtc_state)
+{
+	struct drm_i915_private *dev_priv = to_i915(plane->base.dev);
+	enum plane_id plane_id = plane->id;
+	enum pipe pipe = plane->pipe;
 
 	if (icl_is_hdr_plane(dev_priv, plane_id))
 		intel_de_write_fw(dev_priv, PLANE_CUS_CTL(pipe, plane_id), 0);
@@ -627,8 +638,6 @@ skl_plane_disable_arm(struct intel_plane *plane,
 	intel_psr2_disable_plane_sel_fetch(plane, crtc_state);
 	intel_de_write_fw(dev_priv, PLANE_CTL(pipe, plane_id), 0);
 	intel_de_write_fw(dev_priv, PLANE_SURF(pipe, plane_id), 0);
-
-	spin_unlock_irqrestore(&dev_priv->uncore.lock, irqflags);
 }
 
 static bool
@@ -1065,7 +1074,7 @@ static void icl_plane_csc_load_black(struct intel_plane *plane)
 	intel_de_write_fw(i915, PLANE_CSC_POSTOFF(pipe, plane_id, 2), 0);
 }
 
-static int skl_plane_color_plane(const struct intel_plane_state *plane_state)
+static int icl_plane_color_plane(const struct intel_plane_state *plane_state)
 {
 	/* Program the UV plane on planar master */
 	if (plane_state->planar_linked_plane && !plane_state->planar_slave)
@@ -1082,29 +1091,17 @@ skl_plane_update_noarm(struct intel_plane *plane,
 	struct drm_i915_private *dev_priv = to_i915(plane->base.dev);
 	enum plane_id plane_id = plane->id;
 	enum pipe pipe = plane->pipe;
-	int color_plane = skl_plane_color_plane(plane_state);
-	u32 stride = skl_plane_stride(plane_state, color_plane);
-	const struct drm_framebuffer *fb = plane_state->hw.fb;
+	u32 stride = skl_plane_stride(plane_state, 0);
 	int crtc_x = plane_state->uapi.dst.x1;
 	int crtc_y = plane_state->uapi.dst.y1;
 	u32 src_w = drm_rect_width(&plane_state->uapi.src) >> 16;
 	u32 src_h = drm_rect_height(&plane_state->uapi.src) >> 16;
-	unsigned long irqflags;
 
 	/* The scaler will handle the output position */
 	if (plane_state->scaler_id >= 0) {
 		crtc_x = 0;
 		crtc_y = 0;
 	}
-
-	spin_lock_irqsave(&dev_priv->uncore.lock, irqflags);
-
-	/*
-	 * FIXME: pxp session invalidation can hit any time even at time of commit
-	 * or after the commit, display content will be garbage.
-	 */
-	if (plane_state->force_black)
-		icl_plane_csc_load_black(plane);
 
 	intel_de_write_fw(dev_priv, PLANE_STRIDE(pipe, plane_id),
 			  PLANE_STRIDE_(stride));
@@ -1113,25 +1110,7 @@ skl_plane_update_noarm(struct intel_plane *plane,
 	intel_de_write_fw(dev_priv, PLANE_SIZE(pipe, plane_id),
 			  PLANE_HEIGHT(src_h - 1) | PLANE_WIDTH(src_w - 1));
 
-	if (intel_fb_is_rc_ccs_cc_modifier(fb->modifier)) {
-		intel_de_write_fw(dev_priv, PLANE_CC_VAL(pipe, plane_id, 0),
-				  lower_32_bits(plane_state->ccval));
-		intel_de_write_fw(dev_priv, PLANE_CC_VAL(pipe, plane_id, 1),
-				  upper_32_bits(plane_state->ccval));
-	}
-
-	if (icl_is_hdr_plane(dev_priv, plane_id))
-		intel_de_write_fw(dev_priv, PLANE_CUS_CTL(pipe, plane_id),
-				  plane_state->cus_ctl);
-
-	if (fb->format->is_yuv && icl_is_hdr_plane(dev_priv, plane_id))
-		icl_program_input_csc(plane, crtc_state, plane_state);
-
 	skl_write_plane_wm(plane, crtc_state);
-
-	intel_psr2_program_plane_sel_fetch(plane, crtc_state, plane_state, color_plane);
-
-	spin_unlock_irqrestore(&dev_priv->uncore.lock, irqflags);
 }
 
 static void
@@ -1142,20 +1121,16 @@ skl_plane_update_arm(struct intel_plane *plane,
 	struct drm_i915_private *dev_priv = to_i915(plane->base.dev);
 	enum plane_id plane_id = plane->id;
 	enum pipe pipe = plane->pipe;
-	int color_plane = skl_plane_color_plane(plane_state);
-	u32 x = plane_state->view.color_plane[color_plane].x;
-	u32 y = plane_state->view.color_plane[color_plane].y;
-	u32 plane_color_ctl = 0;
-	u32 plane_ctl = plane_state->ctl;
-	unsigned long irqflags;
+	u32 x = plane_state->view.color_plane[0].x;
+	u32 y = plane_state->view.color_plane[0].y;
+	u32 plane_ctl, plane_color_ctl = 0;
 
-	plane_ctl |= skl_plane_ctl_crtc(crtc_state);
+	plane_ctl = plane_state->ctl |
+		skl_plane_ctl_crtc(crtc_state);
 
 	if (DISPLAY_VER(dev_priv) >= 10)
 		plane_color_ctl = plane_state->color_ctl |
 			glk_plane_color_ctl_crtc(crtc_state);
-
-	spin_lock_irqsave(&dev_priv->uncore.lock, irqflags);
 
 	intel_de_write_fw(dev_priv, PLANE_KEYVAL(pipe, plane_id), skl_plane_keyval(plane_state));
 	intel_de_write_fw(dev_priv, PLANE_KEYMSK(pipe, plane_id), skl_plane_keymsk(plane_state));
@@ -1165,12 +1140,11 @@ skl_plane_update_arm(struct intel_plane *plane,
 			  PLANE_OFFSET_Y(y) | PLANE_OFFSET_X(x));
 
 	intel_de_write_fw(dev_priv, PLANE_AUX_DIST(pipe, plane_id),
-			  skl_plane_aux_dist(plane_state, color_plane));
+			  skl_plane_aux_dist(plane_state, 0));
 
-	if (DISPLAY_VER(dev_priv) < 11)
-		intel_de_write_fw(dev_priv, PLANE_AUX_OFFSET(pipe, plane_id),
-				  PLANE_OFFSET_Y(plane_state->view.color_plane[1].y) |
-				  PLANE_OFFSET_X(plane_state->view.color_plane[1].x));
+	intel_de_write_fw(dev_priv, PLANE_AUX_OFFSET(pipe, plane_id),
+			  PLANE_OFFSET_Y(plane_state->view.color_plane[1].y) |
+			  PLANE_OFFSET_X(plane_state->view.color_plane[1].x));
 
 	if (DISPLAY_VER(dev_priv) >= 10)
 		intel_de_write_fw(dev_priv, PLANE_COLOR_CTL(pipe, plane_id), plane_color_ctl);
@@ -1192,9 +1166,114 @@ skl_plane_update_arm(struct intel_plane *plane,
 	 */
 	intel_de_write_fw(dev_priv, PLANE_CTL(pipe, plane_id), plane_ctl);
 	intel_de_write_fw(dev_priv, PLANE_SURF(pipe, plane_id),
-			  skl_plane_surf(plane_state, color_plane));
+			  skl_plane_surf(plane_state, 0));
+}
 
-	spin_unlock_irqrestore(&dev_priv->uncore.lock, irqflags);
+static void
+icl_plane_update_noarm(struct intel_plane *plane,
+		       const struct intel_crtc_state *crtc_state,
+		       const struct intel_plane_state *plane_state)
+{
+	struct drm_i915_private *dev_priv = to_i915(plane->base.dev);
+	enum plane_id plane_id = plane->id;
+	enum pipe pipe = plane->pipe;
+	int color_plane = icl_plane_color_plane(plane_state);
+	u32 stride = skl_plane_stride(plane_state, color_plane);
+	const struct drm_framebuffer *fb = plane_state->hw.fb;
+	int crtc_x = plane_state->uapi.dst.x1;
+	int crtc_y = plane_state->uapi.dst.y1;
+	int x = plane_state->view.color_plane[color_plane].x;
+	int y = plane_state->view.color_plane[color_plane].y;
+	int src_w = drm_rect_width(&plane_state->uapi.src) >> 16;
+	int src_h = drm_rect_height(&plane_state->uapi.src) >> 16;
+	u32 plane_color_ctl;
+
+	plane_color_ctl = plane_state->color_ctl |
+		glk_plane_color_ctl_crtc(crtc_state);
+
+	/* The scaler will handle the output position */
+	if (plane_state->scaler_id >= 0) {
+		crtc_x = 0;
+		crtc_y = 0;
+	}
+
+	intel_de_write_fw(dev_priv, PLANE_STRIDE(pipe, plane_id),
+			  PLANE_STRIDE_(stride));
+	intel_de_write_fw(dev_priv, PLANE_POS(pipe, plane_id),
+			  PLANE_POS_Y(crtc_y) | PLANE_POS_X(crtc_x));
+	intel_de_write_fw(dev_priv, PLANE_SIZE(pipe, plane_id),
+			  PLANE_HEIGHT(src_h - 1) | PLANE_WIDTH(src_w - 1));
+
+	intel_de_write_fw(dev_priv, PLANE_KEYVAL(pipe, plane_id), skl_plane_keyval(plane_state));
+	intel_de_write_fw(dev_priv, PLANE_KEYMSK(pipe, plane_id), skl_plane_keymsk(plane_state));
+	intel_de_write_fw(dev_priv, PLANE_KEYMAX(pipe, plane_id), skl_plane_keymax(plane_state));
+
+	intel_de_write_fw(dev_priv, PLANE_OFFSET(pipe, plane_id),
+			  PLANE_OFFSET_Y(y) | PLANE_OFFSET_X(x));
+
+	if (intel_fb_is_rc_ccs_cc_modifier(fb->modifier)) {
+		intel_de_write_fw(dev_priv, PLANE_CC_VAL(pipe, plane_id, 0),
+				  lower_32_bits(plane_state->ccval));
+		intel_de_write_fw(dev_priv, PLANE_CC_VAL(pipe, plane_id, 1),
+				  upper_32_bits(plane_state->ccval));
+	}
+
+	intel_de_write_fw(dev_priv, PLANE_AUX_DIST(pipe, plane_id),
+			  skl_plane_aux_dist(plane_state, color_plane));
+
+	if (icl_is_hdr_plane(dev_priv, plane_id))
+		intel_de_write_fw(dev_priv, PLANE_CUS_CTL(pipe, plane_id),
+				  plane_state->cus_ctl);
+
+	intel_de_write_fw(dev_priv, PLANE_COLOR_CTL(pipe, plane_id), plane_color_ctl);
+
+	if (fb->format->is_yuv && icl_is_hdr_plane(dev_priv, plane_id))
+		icl_program_input_csc(plane, crtc_state, plane_state);
+
+	skl_write_plane_wm(plane, crtc_state);
+
+	/*
+	 * FIXME: pxp session invalidation can hit any time even at time of commit
+	 * or after the commit, display content will be garbage.
+	 */
+	if (plane_state->force_black)
+		icl_plane_csc_load_black(plane);
+
+	intel_psr2_program_plane_sel_fetch(plane, crtc_state, plane_state, color_plane);
+}
+
+static void
+icl_plane_update_arm(struct intel_plane *plane,
+		     const struct intel_crtc_state *crtc_state,
+		     const struct intel_plane_state *plane_state)
+{
+	struct drm_i915_private *dev_priv = to_i915(plane->base.dev);
+	enum plane_id plane_id = plane->id;
+	enum pipe pipe = plane->pipe;
+	int color_plane = icl_plane_color_plane(plane_state);
+	u32 plane_ctl;
+
+	plane_ctl = plane_state->ctl |
+		skl_plane_ctl_crtc(crtc_state);
+
+	/*
+	 * Enable the scaler before the plane so that we don't
+	 * get a catastrophic underrun even if the two operations
+	 * end up happening in two different frames.
+	 *
+	 * TODO: split into noarm+arm pair
+	 */
+	if (plane_state->scaler_id >= 0)
+		skl_program_plane_scaler(plane, crtc_state, plane_state);
+
+	/*
+	 * The control register self-arms if the plane was previously
+	 * disabled. Try to make the plane enable atomic by writing
+	 * the control register just before the surface register.
+	 */
+	intel_de_write_fw(dev_priv, PLANE_CTL(pipe, plane_id), plane_ctl);
+	intel_de_write_fw(dev_priv, PLANE_SURF(pipe, plane_id),
+			  skl_plane_surf(plane_state, color_plane));
 }
 
 static void
@@ -1204,7 +1283,6 @@ skl_plane_async_flip(struct intel_plane *plane,
 		     bool async_flip)
 {
 	struct drm_i915_private *dev_priv = to_i915(plane->base.dev);
-	unsigned long irqflags;
 	enum plane_id plane_id = plane->id;
 	enum pipe pipe = plane->pipe;
 	u32 plane_ctl = plane_state->ctl;
@@ -1214,13 +1292,9 @@ skl_plane_async_flip(struct intel_plane *plane,
 	if (async_flip)
 		plane_ctl |= PLANE_CTL_ASYNC_FLIP;
 
-	spin_lock_irqsave(&dev_priv->uncore.lock, irqflags);
-
 	intel_de_write_fw(dev_priv, PLANE_CTL(pipe, plane_id), plane_ctl);
 	intel_de_write_fw(dev_priv, PLANE_SURF(pipe, plane_id),
 			  skl_plane_surf(plane_state, 0));
-
-	spin_unlock_irqrestore(&dev_priv->uncore.lock, irqflags);
 }
 
 static bool intel_format_is_p01x(u32 format)
@@ -1325,7 +1399,7 @@ static int skl_plane_check_dst_coordinates(const struct intel_crtc_state *crtc_s
 		to_i915(plane_state->uapi.plane->dev);
 	int crtc_x = plane_state->uapi.dst.x1;
 	int crtc_w = drm_rect_width(&plane_state->uapi.dst);
-	int pipe_src_w = crtc_state->pipe_src_w;
+	int pipe_src_w = drm_rect_width(&crtc_state->pipe_src);
 
 	/*
 	 * Display WA #1175: glk
@@ -2162,9 +2236,15 @@ skl_universal_plane_create(struct drm_i915_private *dev_priv,
 	}
 
 	plane->max_stride = skl_plane_max_stride;
-	plane->update_noarm = skl_plane_update_noarm;
-	plane->update_arm = skl_plane_update_arm;
-	plane->disable_arm = skl_plane_disable_arm;
+	if (DISPLAY_VER(dev_priv) >= 11) {
+		plane->update_noarm = icl_plane_update_noarm;
+		plane->update_arm = icl_plane_update_arm;
+		plane->disable_arm = icl_plane_disable_arm;
+	} else {
+		plane->update_noarm = skl_plane_update_noarm;
+		plane->update_arm = skl_plane_update_arm;
+		plane->disable_arm = skl_plane_disable_arm;
+	}
 	plane->get_hw_state = skl_plane_get_hw_state;
 	plane->check_plane = skl_plane_check;
 
@@ -2284,7 +2364,7 @@ skl_get_initial_plane_config(struct intel_crtc *crtc,
 
 	drm_WARN_ON(dev, pipe != crtc->pipe);
 
-	if (crtc_state->bigjoiner) {
+	if (crtc_state->bigjoiner_pipes) {
 		drm_dbg_kms(&dev_priv->drm,
 			    "Unsupported bigjoiner configuration for initial FB\n");
 		return;
