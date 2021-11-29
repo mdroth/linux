@@ -55,6 +55,15 @@
 #define AVIC_GATAG_TO_VMID(x)		((x >> AVIC_VCPU_ID_BITS) & AVIC_VM_ID_MASK)
 #define AVIC_GATAG_TO_VCPUID(x)		(x & AVIC_VCPU_ID_MASK)
 
+#define IS_AVIC_MODE_X1(x)		(avic_get_vcpu_apic_mode(x) == AVIC_MODE_X1)
+#define IS_AVIC_MODE_X2(x)		(avic_get_vcpu_apic_mode(x) == AVIC_MODE_X2)
+
+enum avic_modes {
+	AVIC_MODE_NONE = 0,
+	AVIC_MODE_X1,
+	AVIC_MODE_X2,
+};
+
 /* Note:
  * This hash table is used to map VM_ID to a struct kvm_svm,
  * when handling AMD IOMMU GALOG notification to schedule in
@@ -66,6 +75,7 @@ static u32 next_vm_id = 0;
 static bool next_vm_id_wrapped = 0;
 static u64 avic_host_physical_id_mask;
 static DEFINE_SPINLOCK(svm_vm_data_hash_lock);
+static enum avic_modes avic_mode;
 
 /*
  * This is a wrapper of struct amd_iommu_ir_data.
@@ -81,6 +91,16 @@ enum avic_ipi_failure_cause {
 	AVIC_IPI_FAILURE_INVALID_TARGET,
 	AVIC_IPI_FAILURE_INVALID_BACKING_PAGE,
 };
+
+static inline enum avic_modes avic_get_vcpu_apic_mode(struct vcpu_svm *svm)
+{
+	if (svm->vmcb->control.int_ctl & X2APIC_MODE_MASK)
+		return AVIC_MODE_X2;
+	else if (svm->vmcb->control.int_ctl & AVIC_ENABLE_MASK)
+		return AVIC_MODE_X1;
+	else
+		return AVIC_MODE_NONE;
+}
 
 /* Note:
  * This function is called from IOMMU driver to notify
@@ -1023,13 +1043,29 @@ void svm_vcpu_unblocking(struct kvm_vcpu *vcpu)
 	avic_set_running(vcpu, true);
 }
 
+/*
+ * Note:
+ * - The module param avic enable both xAPIC and x2APIC mode.
+ * - Hypervisor can support both xAVIC and x2AVIC in the same guest.
+ * - The mode can be switched at run-time.
+ */
 bool avic_hardware_setup(bool avic)
 {
-	if (!avic || !npt_enabled || !boot_cpu_has(X86_FEATURE_AVIC))
+	if (!avic || !npt_enabled)
 		return false;
 
-	pr_info("AVIC enabled\n");
+	if (boot_cpu_has(X86_FEATURE_AVIC)) {
+		avic_mode = AVIC_MODE_X1;
+		pr_info("AVIC enabled\n");
+	}
+
+	if (boot_cpu_has(X86_FEATURE_X2AVIC)) {
+		avic_mode = AVIC_MODE_X2;
+		pr_info("x2AVIC enabled\n");
+	}
+
 	avic_init_host_physical_apicid_mask();
 	amd_iommu_register_ga_log_notifier(&avic_ga_log_notifier);
-	return true;
+
+	return !!avic_mode;
 }
