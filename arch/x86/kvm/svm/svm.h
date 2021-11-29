@@ -169,6 +169,7 @@ struct vcpu_svm {
 	struct page *avic_backing_page;
 	u64 *avic_physical_id_cache;
 	bool avic_is_running;
+	bool x2apic_enabled;
 
 	/*
 	 * Per-vcpu list of struct amd_svm_iommu_ir:
@@ -529,6 +530,7 @@ void avic_init_vmcb(struct vcpu_svm *svm);
 int avic_incomplete_ipi_interception(struct kvm_vcpu *vcpu);
 int avic_unaccelerated_access_interception(struct kvm_vcpu *vcpu);
 int avic_init_vcpu(struct vcpu_svm *svm);
+void avic_update_vapic_bar(struct vcpu_svm *svm, u64 data);
 void avic_vcpu_load(struct kvm_vcpu *vcpu, int cpu);
 void avic_vcpu_put(struct kvm_vcpu *vcpu);
 void avic_post_state_restore(struct kvm_vcpu *vcpu);
