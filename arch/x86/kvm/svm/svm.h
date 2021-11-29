@@ -27,8 +27,9 @@
 #define	IOPM_SIZE PAGE_SIZE * 3
 #define	MSRPM_SIZE PAGE_SIZE * 2
 
-#define MAX_DIRECT_ACCESS_MSRS	20
-#define MSRPM_OFFSETS	16
+#define MAX_DIRECT_ACCESS_MSRS	(20 + 0x100)
+#define MSRPM_OFFSETS	30
+
 extern u32 msrpm_offsets[MSRPM_OFFSETS] __read_mostly;
 extern bool npt_enabled;
 extern bool intercept_smi;
