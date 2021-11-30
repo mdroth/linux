@@ -396,7 +396,12 @@ static u32 *avic_get_logical_id_entry(struct kvm_vcpu *vcpu, u32 ldr, bool flat)
 	struct kvm_svm *kvm_svm = to_kvm_svm(vcpu->kvm);
 	int index;
 	u32 *logical_apic_id_table;
-	int dlid = GET_APIC_LOGICAL_ID(ldr);
+	int dlid;
+
+	if (!apic_x2apic_mode(vcpu->arch.apic))
+		dlid = GET_APIC_LOGICAL_ID(ldr);
+	else
+		dlid = ldr;
 
 	if (!dlid)
 		return NULL;
@@ -406,13 +411,23 @@ static u32 *avic_get_logical_id_entry(struct kvm_vcpu *vcpu, u32 ldr, bool flat)
 		if (index > 7)
 			return NULL;
 	} else { /* cluster */
-		int cluster = (dlid & 0xf0) >> 4;
-		int apic = ffs(dlid & 0x0f) - 1;
+		if (!apic_x2apic_mode(vcpu->arch.apic)) {
+			int cluster = (dlid & 0xf0) >> 4;
+			int apic = ffs(dlid & 0x0f) - 1;
 
-		if ((apic < 0) || (apic > 7) ||
-		    (cluster >= 0xf))
-			return NULL;
-		index = (cluster << 2) + apic;
+			if ((apic < 0) || (apic > 7) ||
+			    (cluster >= 0xf))
+				return NULL;
+			index = (cluster * 4) + apic;
+		} else {
+			int cluster = (dlid & 0xffff0000) >> 16;
+			int apic = ffs(dlid & 0x0000ffff) - 1;
+
+			if ((apic < 0) || (apic > 0x7fff) ||
+			    (cluster >= 0xffff))
+				return NULL;
+			index = (cluster * 16) + apic;
+		}
 	}
 
 	logical_apic_id_table = (u32 *) page_address(kvm_svm->avic_logical_id_table_page);
