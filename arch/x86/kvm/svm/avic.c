@@ -325,17 +325,22 @@ static int avic_init_backing_page(struct kvm_vcpu *vcpu)
 	return 0;
 }
 
-static void avic_kick_target_vcpus(struct kvm *kvm, struct kvm_lapic *source,
-				   u32 icrl, u32 icrh)
+static void avic_kick_target_vcpus(struct kvm *kvm, struct vcpu_svm *svm,
+				   struct kvm_lapic *source, u32 icrl, u32 icrh)
 {
 	struct kvm_vcpu *vcpu;
+	u32 dest;
 	int i;
+
+	if (svm->x2apic_enabled)
+		dest = icrh;
+	else
+		dest = GET_APIC_DEST_FIELD(icrh);
 
 	kvm_for_each_vcpu(i, vcpu, kvm) {
 		bool m = kvm_apic_match_dest(vcpu, source,
 					     icrl & APIC_SHORT_MASK,
-					     GET_APIC_DEST_FIELD(icrh),
-					     icrl & APIC_DEST_MASK);
+					     dest, icrl & APIC_DEST_MASK);
 
 		if (m && !avic_vcpu_is_running(vcpu))
 			kvm_vcpu_wake_up(vcpu);
@@ -375,7 +380,7 @@ int avic_incomplete_ipi_interception(struct kvm_vcpu *vcpu)
 		 * set the appropriate IRR bits on the valid target
 		 * vcpus. So, we just need to kick the appropriate vcpu.
 		 */
-		avic_kick_target_vcpus(vcpu->kvm, apic, icrl, icrh);
+		avic_kick_target_vcpus(vcpu->kvm, to_svm(vcpu), apic, icrl, icrh);
 		break;
 	case AVIC_IPI_FAILURE_INVALID_TARGET:
 		WARN_ONCE(1, "Invalid IPI target: index=%u, vcpu=%d, icr=%#0x:%#0x\n",
