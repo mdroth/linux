@@ -1031,13 +1031,7 @@ static __init int svm_hardware_setup(void)
 			nrips = false;
 	}
 
-	enable_apicv = avic = avic && npt_enabled && boot_cpu_has(X86_FEATURE_AVIC);
-
-	if (enable_apicv) {
-		pr_info("AVIC enabled\n");
-
-		amd_iommu_register_ga_log_notifier(&avic_ga_log_notifier);
-	}
+	enable_apicv = avic = avic_hardware_setup(avic);
 
 	if (vls) {
 		if (!npt_enabled ||
