@@ -261,13 +261,18 @@ void avic_init_vmcb(struct vcpu_svm *svm)
 	vmcb->control.avic_backing_page = bpa & AVIC_HPA_MASK;
 	vmcb->control.avic_logical_id = lpa & AVIC_HPA_MASK;
 	vmcb->control.avic_physical_id = ppa & AVIC_HPA_MASK;
-	vmcb->control.avic_physical_id |= AVIC_MAX_PHYSICAL_ID_COUNT;
 	vmcb->control.avic_vapic_bar = APIC_DEFAULT_PHYS_BASE & VMCB_AVIC_APIC_BAR_MASK;
 
-	if (kvm_apicv_activated(svm->vcpu.kvm))
+	if (kvm_apicv_activated(svm->vcpu.kvm)) {
 		vmcb->control.int_ctl |= AVIC_ENABLE_MASK;
-	else
-		vmcb->control.int_ctl &= ~AVIC_ENABLE_MASK;
+		if (svm->x2apic_enabled) {
+			vmcb->control.int_ctl |= X2APIC_MODE_MASK;
+			vmcb->control.avic_physical_id |= X2AVIC_MAX_PHYSICAL_ID;
+		} else
+			vmcb->control.avic_physical_id |= AVIC_MAX_PHYSICAL_ID;
+	} else {
+		vmcb->control.int_ctl &= ~(AVIC_ENABLE_MASK | X2APIC_MODE_MASK);
+	}
 }
 
 static u64 *avic_get_physical_id_entry(struct kvm_vcpu *vcpu,
@@ -758,6 +763,15 @@ out:
 	return ret;
 }
 
+static inline void avic_set_x2apic_msr_interception(struct vcpu_svm *svm, bool disable)
+{
+	int i;
+
+	for (i = 0x800; i <= 0x8ff; i++)
+		set_msr_interception(&svm->vcpu, svm->msrpm, i,
+				     !disable, !disable);
+}
+
 void svm_refresh_apicv_exec_ctrl(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
@@ -777,8 +791,29 @@ void svm_refresh_apicv_exec_ctrl(struct kvm_vcpu *vcpu)
 		 */
 		avic_post_state_restore(vcpu);
 		vmcb->control.int_ctl |= AVIC_ENABLE_MASK;
+
+		if (svm->x2apic_enabled) {
+			vmcb->control.int_ctl |= X2APIC_MODE_MASK;
+			vmcb->control.avic_physical_id |= X2AVIC_MAX_PHYSICAL_ID;
+			/* Disabling MSR intercept for x2APIC registers */
+			avic_set_x2apic_msr_interception(svm, false);
+		} else {
+			vmcb->control.avic_physical_id |= AVIC_MAX_PHYSICAL_ID;
+			/* Enabling MSR intercept for x2APIC registers */
+			avic_set_x2apic_msr_interception(svm, true);
+		}
 	} else {
 		vmcb->control.int_ctl &= ~AVIC_ENABLE_MASK;
+
+		if (svm->x2apic_enabled) {
+			vmcb->control.int_ctl &= ~X2APIC_MODE_MASK;
+			vmcb->control.avic_physical_id &= ~(X2AVIC_MAX_PHYSICAL_ID);
+		} else {
+			vmcb->control.avic_physical_id &= ~(AVIC_MAX_PHYSICAL_ID);
+		}
+
+		/* Enabling MSR intercept for x2APIC registers */
+		avic_set_x2apic_msr_interception(svm, true);
 	}
 	vmcb_mark_dirty(vmcb, VMCB_AVIC);
 
