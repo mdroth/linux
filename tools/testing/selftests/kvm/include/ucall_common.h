@@ -1,8 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * tools/testing/selftests/kvm/include/kvm_util.h
+ * Common interfaces related to ucall support.
+ *
+ * A ucall is a hypercall to userspace.
  *
  * Copyright (C) 2018, Google LLC.
+ * Copyright (C) 2018, Red Hat, Inc.
+ * Copyright (C) 2021, Advanced Micro Devices, Inc.
  */
 #ifndef SELFTEST_KVM_UCALL_COMMON_H
 #define SELFTEST_KVM_UCALL_COMMON_H
@@ -14,6 +18,7 @@ enum {
 	UCALL_ABORT,
 	UCALL_DONE,
 	UCALL_UNHANDLED,
+	UCALL_NOT_IMPLEMENTED,
 };
 
 #define UCALL_MAX_ARGS 6
@@ -23,8 +28,18 @@ struct ucall {
 	uint64_t args[UCALL_MAX_ARGS];
 };
 
+struct ucall_ops {
+	const char *name;
+	void (*init)(struct kvm_vm *vm, void *arg);
+	void (*uninit)(struct kvm_vm *vm);
+	void (*send_cmd)(struct ucall *uc);
+	uint64_t (*recv_cmd)(struct kvm_vm *vm, uint32_t vcpu_id, struct ucall *uc);
+};
+
 void ucall_init(struct kvm_vm *vm, void *arg);
 void ucall_uninit(struct kvm_vm *vm);
+void ucall_init_ops(struct kvm_vm *vm, void *arg, const struct ucall_ops *ops);
+void ucall_uninit_ops(struct kvm_vm *vm);
 void ucall(uint64_t cmd, int nargs, ...);
 uint64_t get_ucall(struct kvm_vm *vm, uint32_t vcpu_id, struct ucall *uc);
 
