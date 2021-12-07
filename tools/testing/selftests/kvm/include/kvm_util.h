@@ -14,7 +14,7 @@
  * new header. Once all archs implement the new header the #include for
  * ucall_common.h can be dropped.
  */
-#ifdef __x86_64__
+#if defined(__x86_64__) || defined (__aarch64__)
 #include "ucall.h"
 #else
 #include "ucall_common.h"

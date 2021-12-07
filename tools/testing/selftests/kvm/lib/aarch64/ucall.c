@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * ucall support. A ucall is a "hypercall to userspace".
+ * Arch-specific ucall implementations.
+ *
+ * A ucall is a "hypercall to userspace".
  *
  * Copyright (C) 2018, Red Hat, Inc.
  */
-#include "kvm_util.h"
+#include "kvm_util_base.h"
 #include "../kvm_util_internal.h"
+#include "ucall.h"
 
 static vm_vaddr_t *ucall_exit_mmio_addr;
 
@@ -22,7 +25,7 @@ static bool ucall_mmio_init(struct kvm_vm *vm, vm_paddr_t gpa)
 	return true;
 }
 
-void ucall_init(struct kvm_vm *vm, void *arg)
+static void ucall_ops_mmio_init(struct kvm_vm *vm, void *arg)
 {
 	vm_paddr_t gpa, start, end, step, offset;
 	unsigned int bits;
@@ -65,37 +68,21 @@ void ucall_init(struct kvm_vm *vm, void *arg)
 	TEST_FAIL("Can't find a ucall mmio address");
 }
 
-void ucall_uninit(struct kvm_vm *vm)
+static void ucall_ops_mmio_uninit(struct kvm_vm *vm)
 {
 	ucall_exit_mmio_addr = 0;
 	sync_global_to_guest(vm, ucall_exit_mmio_addr);
 }
 
-void ucall(uint64_t cmd, int nargs, ...)
+static void ucall_ops_mmio_send_cmd(struct ucall *uc)
 {
-	struct ucall uc = {
-		.cmd = cmd,
-	};
-	va_list va;
-	int i;
-
-	nargs = nargs <= UCALL_MAX_ARGS ? nargs : UCALL_MAX_ARGS;
-
-	va_start(va, nargs);
-	for (i = 0; i < nargs; ++i)
-		uc.args[i] = va_arg(va, uint64_t);
-	va_end(va);
-
-	*ucall_exit_mmio_addr = (vm_vaddr_t)&uc;
+	*ucall_exit_mmio_addr = (vm_vaddr_t)uc;
 }
 
-uint64_t get_ucall(struct kvm_vm *vm, uint32_t vcpu_id, struct ucall *uc)
+static uint64_t ucall_ops_mmio_recv_cmd(struct kvm_vm *vm, uint32_t vcpu_id, struct ucall *uc)
 {
 	struct kvm_run *run = vcpu_state(vm, vcpu_id);
 	struct ucall ucall = {};
-
-	if (uc)
-		memset(uc, 0, sizeof(*uc));
 
 	if (run->exit_reason == KVM_EXIT_MMIO &&
 	    run->mmio.phys_addr == (uint64_t)ucall_exit_mmio_addr) {
@@ -113,3 +100,13 @@ uint64_t get_ucall(struct kvm_vm *vm, uint32_t vcpu_id, struct ucall *uc)
 
 	return ucall.cmd;
 }
+
+const struct ucall_ops ucall_ops_mmio = {
+	.name = "MMIO",
+	.init = ucall_ops_mmio_init,
+	.uninit = ucall_ops_mmio_uninit,
+	.send_cmd = ucall_ops_mmio_send_cmd,
+	.recv_cmd = ucall_ops_mmio_recv_cmd,
+};
+
+const struct ucall_ops ucall_ops_default = ucall_ops_mmio;
