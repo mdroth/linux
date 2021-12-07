@@ -1,45 +1,26 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * ucall support. A ucall is a "hypercall to userspace".
+ * Arch-specific ucall implementations.
+ *
+ * A ucall is a "hypercall to userspace".
  *
  * Copyright (C) 2019 Red Hat, Inc.
  */
-#include "kvm_util.h"
+#include "kvm_util_base.h"
+#include "ucall.h"
 
-void ucall_init(struct kvm_vm *vm, void *arg)
+static void
+ucall_ops_diag501_send_cmd(struct ucall *uc)
 {
-}
-
-void ucall_uninit(struct kvm_vm *vm)
-{
-}
-
-void ucall(uint64_t cmd, int nargs, ...)
-{
-	struct ucall uc = {
-		.cmd = cmd,
-	};
-	va_list va;
-	int i;
-
-	nargs = nargs <= UCALL_MAX_ARGS ? nargs : UCALL_MAX_ARGS;
-
-	va_start(va, nargs);
-	for (i = 0; i < nargs; ++i)
-		uc.args[i] = va_arg(va, uint64_t);
-	va_end(va);
-
 	/* Exit via DIAGNOSE 0x501 (normally used for breakpoints) */
 	asm volatile ("diag 0,%0,0x501" : : "a"(&uc) : "memory");
 }
 
-uint64_t get_ucall(struct kvm_vm *vm, uint32_t vcpu_id, struct ucall *uc)
+static uint64_t
+ucall_ops_diag501_recv_cmd(struct kvm_vm *vm, uint32_t vcpu_id, struct ucall *uc)
 {
 	struct kvm_run *run = vcpu_state(vm, vcpu_id);
 	struct ucall ucall = {};
-
-	if (uc)
-		memset(uc, 0, sizeof(*uc));
 
 	if (run->exit_reason == KVM_EXIT_S390_SIEIC &&
 	    run->s390_sieic.icptcode == 4 &&
@@ -57,3 +38,11 @@ uint64_t get_ucall(struct kvm_vm *vm, uint32_t vcpu_id, struct ucall *uc)
 
 	return ucall.cmd;
 }
+
+const struct ucall_ops ucall_ops_diag501 = {
+	.name = "diag501",
+	.send_cmd = ucall_ops_diag501_send_cmd,
+	.recv_cmd = ucall_ops_diag501_recv_cmd,
+};
+
+const struct ucall_ops ucall_ops_default = ucall_ops_diag501;
