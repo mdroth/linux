@@ -12,6 +12,7 @@
 #include "ucall_common.h"
 
 extern const struct ucall_ops ucall_ops_pio;
+extern const struct ucall_ops ucall_ops_halt;
 
 extern const struct ucall_ops ucall_ops_default;
 
