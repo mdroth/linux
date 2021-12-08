@@ -38,10 +38,23 @@ static uint64_t ucall_ops_pio_recv_cmd(struct kvm_vm *vm, uint32_t vcpu_id,
 	return ucall.cmd;
 }
 
+static uint64_t ucall_ops_pio_recv_cmd_shared(struct kvm_vm *vm, uint32_t vcpu_id,
+					      struct ucall *uc)
+{
+	struct kvm_run *run = vcpu_state(vm, vcpu_id);
+
+	if (run->exit_reason == KVM_EXIT_IO && run->io.port == UCALL_PIO_PORT)
+		vcpu_run_complete_io(vm, vcpu_id);
+
+	return uc->cmd;
+}
+
 const struct ucall_ops ucall_ops_pio = {
 	.name = "PIO",
 	.send_cmd = ucall_ops_pio_send_cmd,
 	.recv_cmd = ucall_ops_pio_recv_cmd,
+	.send_cmd_shared = ucall_ops_pio_send_cmd,
+	.recv_cmd_shared = ucall_ops_pio_recv_cmd_shared,
 };
 
 const struct ucall_ops ucall_ops_default = ucall_ops_pio;
