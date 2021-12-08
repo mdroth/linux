@@ -34,6 +34,8 @@ struct ucall_ops {
 	void (*uninit)(struct kvm_vm *vm);
 	void (*send_cmd)(struct ucall *uc);
 	uint64_t (*recv_cmd)(struct kvm_vm *vm, uint32_t vcpu_id, struct ucall *uc);
+	void (*send_cmd_shared)(struct ucall *uc);
+	uint64_t (*recv_cmd_shared)(struct kvm_vm *vm, uint32_t vcpu_id, struct ucall *uc);
 };
 
 void ucall_init(struct kvm_vm *vm, void *arg);
@@ -42,6 +44,9 @@ void ucall_init_ops(struct kvm_vm *vm, void *arg, const struct ucall_ops *ops);
 void ucall_uninit_ops(struct kvm_vm *vm);
 void ucall(uint64_t cmd, int nargs, ...);
 uint64_t get_ucall(struct kvm_vm *vm, uint32_t vcpu_id, struct ucall *uc);
+vm_vaddr_t ucall_shared_alloc(struct kvm_vm *vm, int count);
+void ucall_shared(struct ucall *uc, uint64_t cmd, int nargs, ...);
+uint64_t get_ucall_shared(struct kvm_vm *vm, uint32_t vcpu_id, struct ucall *uc);
 
 #define GUEST_SYNC_ARGS(stage, arg1, arg2, arg3, arg4)	\
 				ucall(UCALL_SYNC, 6, "hello", stage, arg1, arg2, arg3, arg4)
