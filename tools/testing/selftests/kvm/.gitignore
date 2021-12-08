@@ -70,3 +70,4 @@
 /steal_time
 /kvm_binary_stats_test
 /system_counter_offset_test
+/ucall_test
