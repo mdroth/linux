@@ -93,3 +93,41 @@ uint64_t get_ucall(struct kvm_vm *vm, uint32_t vcpu_id, struct ucall *uc)
 
 	return ucall_ops->recv_cmd(vm, vcpu_id, uc);
 }
+
+/* Allocate shared memory within a guest to for a shared ucall buffer. */
+vm_vaddr_t ucall_shared_alloc(struct kvm_vm *vm, int count)
+{
+	return vm_vaddr_alloc(vm, count * sizeof(struct ucall),
+			      vm_get_page_size(vm));
+}
+
+/*
+ * Populate a shared ucall buffer previously allocated by ucall_shared_alloc()
+ * and then generate an exit to host userspace.
+ */
+void ucall_shared(struct ucall *uc, uint64_t cmd, int nargs, ...)
+{
+	va_list va;
+
+	if (!ucall_ops->send_cmd_shared)
+		return;
+
+	va_start(va, nargs);
+	ucall_process_args(uc, cmd, nargs, va);
+	va_end(va);
+
+	ucall_ops->send_cmd_shared(uc);
+}
+
+/*
+ * Parse a ucall buffer that has been allocated by ucall_shared_alloc() and
+ * shared with the guest in advance to determine the ucall message/command that
+ * was sent by the guest.
+ */
+uint64_t get_ucall_shared(struct kvm_vm *vm, uint32_t vcpu_id, struct ucall *uc)
+{
+	if (!ucall_ops->recv_cmd_shared)
+		return UCALL_NOT_IMPLEMENTED;
+
+	return ucall_ops->recv_cmd_shared(vm, vcpu_id, uc);
+}
