@@ -57,4 +57,27 @@ const struct ucall_ops ucall_ops_pio = {
 	.recv_cmd_shared = ucall_ops_pio_recv_cmd_shared,
 };
 
+static void ucall_ops_halt_send_cmd_shared(struct ucall *uc)
+{
+	asm volatile("hlt" : : : "memory");
+}
+
+static uint64_t ucall_ops_halt_recv_cmd_shared(struct kvm_vm *vm, uint32_t vcpu_id,
+					       struct ucall *uc)
+{
+	struct kvm_run *run = vcpu_state(vm, vcpu_id);
+
+	TEST_ASSERT(run->exit_reason == KVM_EXIT_HLT,
+		    "unexpected exit reason: %u (%s)",
+		    run->exit_reason, exit_reason_str(run->exit_reason));
+
+	return uc->cmd;
+}
+
+const struct ucall_ops ucall_ops_halt = {
+	.name = "halt",
+	.send_cmd_shared = ucall_ops_halt_send_cmd_shared,
+	.recv_cmd_shared = ucall_ops_halt_recv_cmd_shared,
+};
+
 const struct ucall_ops ucall_ops_default = ucall_ops_pio;
