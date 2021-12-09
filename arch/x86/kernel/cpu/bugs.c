@@ -1021,6 +1021,7 @@ enum spectre_v2_mitigation_cmd {
 	SPECTRE_V2_CMD_EIBRS_RETPOLINE,
 	SPECTRE_V2_CMD_EIBRS_LFENCE,
 	SPECTRE_V2_CMD_IBRS,
+	SPECTRE_V2_CMD_AUTOIBRS,
 };
 
 enum spectre_v2_user_cmd {
@@ -1095,6 +1096,7 @@ spectre_v2_parse_user_cmdline(void)
 	return SPECTRE_V2_USER_CMD_AUTO;
 }
 
+/* Checks for Intel IBRS versions */
 static inline bool spectre_v2_in_ibrs_mode(enum spectre_v2_mitigation mode)
 {
 	return mode == SPECTRE_V2_IBRS ||
@@ -1204,6 +1206,7 @@ static const char * const spectre_v2_strings[] = {
 	[SPECTRE_V2_EIBRS_LFENCE]		= "Mitigation: Enhanced IBRS + LFENCE",
 	[SPECTRE_V2_EIBRS_RETPOLINE]		= "Mitigation: Enhanced IBRS + Retpolines",
 	[SPECTRE_V2_IBRS]			= "Mitigation: IBRS",
+	[SPECTRE_V2_AUTO_IBRS]			= "Mitigation: Automatic IBRS",
 };
 
 static const struct {
@@ -1220,6 +1223,7 @@ static const struct {
 	{ "eibrs",		SPECTRE_V2_CMD_EIBRS,		  false },
 	{ "eibrs,lfence",	SPECTRE_V2_CMD_EIBRS_LFENCE,	  false },
 	{ "eibrs,retpoline",	SPECTRE_V2_CMD_EIBRS_RETPOLINE,	  false },
+	{ "autoibrs",		SPECTRE_V2_CMD_AUTOIBRS,	  false },
 	{ "auto",		SPECTRE_V2_CMD_AUTO,		  false },
 	{ "ibrs",		SPECTRE_V2_CMD_IBRS,              false },
 };
@@ -1272,6 +1276,13 @@ static enum spectre_v2_mitigation_cmd __init spectre_v2_parse_cmdline(void)
 	     cmd == SPECTRE_V2_CMD_EIBRS_RETPOLINE) &&
 	    !boot_cpu_has(X86_FEATURE_IBRS_ENHANCED)) {
 		pr_err("%s selected but CPU doesn't have eIBRS. Switching to AUTO select\n",
+		       mitigation_options[i].option);
+		return SPECTRE_V2_CMD_AUTO;
+	}
+
+	if (cmd == SPECTRE_V2_CMD_AUTOIBRS &&
+	    !boot_cpu_has(X86_FEATURE_AUTOIBRS)) {
+		pr_err("%s selected but CPU doesn't have AMD Automatic IBRS. Switching to AUTO select\n",
 		       mitigation_options[i].option);
 		return SPECTRE_V2_CMD_AUTO;
 	}
@@ -1377,6 +1388,7 @@ static void __init spectre_v2_determine_rsb_fill_type_at_vmexit(enum spectre_v2_
 	case SPECTRE_V2_RETPOLINE:
 	case SPECTRE_V2_LFENCE:
 	case SPECTRE_V2_IBRS:
+	case SPECTRE_V2_AUTO_IBRS:
 		setup_force_cpu_cap(X86_FEATURE_RSB_VMEXIT);
 		pr_info("Spectre v2 / SpectreRSB : Filling RSB on VMEXIT\n");
 		return;
@@ -1390,6 +1402,7 @@ static void __init spectre_v2_select_mitigation(void)
 {
 	enum spectre_v2_mitigation_cmd cmd = spectre_v2_parse_cmdline();
 	enum spectre_v2_mitigation mode = SPECTRE_V2_NONE;
+	uint64_t efer;
 
 	/*
 	 * If the CPU is not affected and the command line mode is NONE or AUTO
@@ -1405,6 +1418,11 @@ static void __init spectre_v2_select_mitigation(void)
 
 	case SPECTRE_V2_CMD_FORCE:
 	case SPECTRE_V2_CMD_AUTO:
+		if (boot_cpu_has(X86_FEATURE_AUTOIBRS)) {
+			mode = SPECTRE_V2_AUTO_IBRS;
+			break;
+		}
+
 		if (boot_cpu_has(X86_FEATURE_IBRS_ENHANCED)) {
 			mode = SPECTRE_V2_EIBRS;
 			break;
@@ -1450,6 +1468,10 @@ static void __init spectre_v2_select_mitigation(void)
 	case SPECTRE_V2_CMD_EIBRS_RETPOLINE:
 		mode = SPECTRE_V2_EIBRS_RETPOLINE;
 		break;
+
+	case SPECTRE_V2_CMD_AUTOIBRS:
+		mode = SPECTRE_V2_AUTO_IBRS;
+		break;
 	}
 
 	if (mode == SPECTRE_V2_EIBRS && unprivileged_ebpf_enabled())
@@ -1463,6 +1485,11 @@ static void __init spectre_v2_select_mitigation(void)
 	switch (mode) {
 	case SPECTRE_V2_NONE:
 	case SPECTRE_V2_EIBRS:
+		break;
+
+	case SPECTRE_V2_AUTO_IBRS:
+		rdmsrl(MSR_EFER, efer);
+		wrmsrl(MSR_EFER, efer | EFER_AUTOIBRS);
 		break;
 
 	case SPECTRE_V2_IBRS:
@@ -1541,8 +1568,8 @@ static void __init spectre_v2_select_mitigation(void)
 	/*
 	 * Retpoline protects the kernel, but doesn't protect firmware.  IBRS
 	 * and Enhanced IBRS protect firmware too, so enable IBRS around
-	 * firmware calls only when IBRS / Enhanced IBRS aren't otherwise
-	 * enabled.
+	 * firmware calls only when IBRS / Enhanced / Automatic IBRS aren't
+	 * otherwise enabled.
 	 *
 	 * Use "mode" to check Enhanced IBRS instead of boot_cpu_has(), because
 	 * the user might select retpoline on the kernel command line and if
@@ -1559,7 +1586,8 @@ static void __init spectre_v2_select_mitigation(void)
 			pr_info("Enabling Speculation Barrier for firmware calls\n");
 		}
 
-	} else if (boot_cpu_has(X86_FEATURE_IBRS) && !spectre_v2_in_ibrs_mode(mode)) {
+	} else if (boot_cpu_has(X86_FEATURE_IBRS) && !spectre_v2_in_ibrs_mode(mode) &&
+		   mode != SPECTRE_V2_AUTO_IBRS) {
 		setup_force_cpu_cap(X86_FEATURE_USE_IBRS_FW);
 		pr_info("Enabling Restricted Speculation for firmware calls\n");
 	}

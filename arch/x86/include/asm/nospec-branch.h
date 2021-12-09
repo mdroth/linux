@@ -278,6 +278,7 @@ enum spectre_v2_mitigation {
 	SPECTRE_V2_EIBRS_RETPOLINE,
 	SPECTRE_V2_EIBRS_LFENCE,
 	SPECTRE_V2_IBRS,
+	SPECTRE_V2_AUTO_IBRS,
 };
 
 /* The indirect branch speculation control variants */
