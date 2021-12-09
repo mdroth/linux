@@ -695,6 +695,7 @@ enum spectre_v2_mitigation_cmd {
 	SPECTRE_V2_CMD_EIBRS,
 	SPECTRE_V2_CMD_EIBRS_RETPOLINE,
 	SPECTRE_V2_CMD_EIBRS_LFENCE,
+	SPECTRE_V2_CMD_AUTOIBRS,
 };
 
 enum spectre_v2_user_cmd {
@@ -866,6 +867,7 @@ static const char * const spectre_v2_strings[] = {
 	[SPECTRE_V2_EIBRS]			= "Mitigation: Enhanced IBRS",
 	[SPECTRE_V2_EIBRS_LFENCE]		= "Mitigation: Enhanced IBRS + LFENCE",
 	[SPECTRE_V2_EIBRS_RETPOLINE]		= "Mitigation: Enhanced IBRS + Retpolines",
+	[SPECTRE_V2_AUTO_IBRS]			= "Mitigation: Automatic IBRS",
 };
 
 static const struct {
@@ -882,6 +884,7 @@ static const struct {
 	{ "eibrs",		SPECTRE_V2_CMD_EIBRS,		  false },
 	{ "eibrs,lfence",	SPECTRE_V2_CMD_EIBRS_LFENCE,	  false },
 	{ "eibrs,retpoline",	SPECTRE_V2_CMD_EIBRS_RETPOLINE,	  false },
+	{ "autoibrs",		SPECTRE_V2_CMD_AUTOIBRS,	  false },
 	{ "auto",		SPECTRE_V2_CMD_AUTO,		  false },
 };
 
@@ -933,6 +936,13 @@ static enum spectre_v2_mitigation_cmd __init spectre_v2_parse_cmdline(void)
 	     cmd == SPECTRE_V2_CMD_EIBRS_RETPOLINE) &&
 	    !boot_cpu_has(X86_FEATURE_IBRS_ENHANCED)) {
 		pr_err("%s selected but CPU doesn't have eIBRS. Switching to AUTO select\n",
+		       mitigation_options[i].option);
+		return SPECTRE_V2_CMD_AUTO;
+	}
+
+	if (cmd == SPECTRE_V2_CMD_AUTOIBRS &&
+	    !boot_cpu_has(X86_FEATURE_AUTOIBRS)) {
+		pr_err("%s selected but CPU doesn't have AMD Automatic IBRS. Switching to AUTO select\n",
 		       mitigation_options[i].option);
 		return SPECTRE_V2_CMD_AUTO;
 	}
@@ -1010,6 +1020,18 @@ static void __init spectre_v2_select_mitigation(void)
 
 	case SPECTRE_V2_CMD_EIBRS_RETPOLINE:
 		mode = SPECTRE_V2_EIBRS_RETPOLINE;
+		break;
+
+	case SPECTRE_V2_CMD_AUTOIBRS:
+		if (!boot_cpu_has(X86_FEATURE_AUTOIBRS)) {
+			pr_err("yikes, shouldn't be here!\n");
+		} else {
+			uint64_t efer;
+
+			mode = SPECTRE_V2_AUTO_IBRS;
+			rdmsrl(MSR_EFER, efer);
+			wrmsrl(MSR_EFER, efer | EFER_AUTOIBRS);
+		}
 		break;
 	}
 
