@@ -52,71 +52,67 @@ static bool check_buf(uint8_t *buf, size_t pages, size_t stride, uint8_t val)
 	return true;
 }
 
-static void guest_test_start(struct sev_sync_data *sync)
+static void guest_test_start(struct ucall *uc)
 {
 	/* Initial guest check-in. */
-	sev_guest_sync(sync, 1, 0);
+	GUEST_SHARED_SYNC(uc, 1);
 }
 
-static void check_test_start(struct kvm_vm *vm, struct sev_sync_data *sync)
+static void check_test_start(struct kvm_vm *vm, struct ucall *uc)
 {
-	struct kvm_run *run;
-
-	run = vcpu_state(vm, VCPU_ID);
 	vcpu_run(vm, VCPU_ID);
 
 	/* Initial guest check-in. */
-	sev_check_guest_sync(run, sync, 1);
+	CHECK_SHARED_SYNC(vm, VCPU_ID, uc, 1);
 }
 
 static void
-guest_test_common(struct sev_sync_data *sync, uint8_t *shared_buf, uint8_t *private_buf)
+guest_test_common(struct ucall *uc, uint8_t *shared_buf, uint8_t *private_buf)
 {
 	bool success;
 
 	/* Initial check-in for common. */
-	sev_guest_sync(sync, 100, 0);
+	GUEST_SHARED_SYNC(uc, 100);
 
 	/* Ensure initial shared pages are intact. */
 	success = check_buf(shared_buf, SHARED_PAGES, PAGE_STRIDE, 0x41);
-	SEV_GUEST_ASSERT(sync, 103, success);
+	GUEST_SHARED_ASSERT(uc, success);
 
 	/* Ensure initial private pages are intact/encrypted. */
 	success = check_buf(private_buf, PRIVATE_PAGES, PAGE_STRIDE, 0x42);
-	SEV_GUEST_ASSERT(sync, 104, success);
+	GUEST_SHARED_ASSERT(uc, success);
 
 	/* Ensure host userspace can't read newly-written encrypted data. */
 	fill_buf(private_buf, PRIVATE_PAGES, PAGE_STRIDE, 0x43);
 
-	sev_guest_sync(sync, 200, 0);
+	GUEST_SHARED_SYNC(uc, 101);
 
 	/* Ensure guest can read newly-written shared data from host. */
 	success = check_buf(shared_buf, SHARED_PAGES, PAGE_STRIDE, 0x44);
-	SEV_GUEST_ASSERT(sync, 201, success);
+	GUEST_SHARED_ASSERT(uc, success);
 
 	/* Ensure host can read newly-written shared data from guest. */
 	fill_buf(shared_buf, SHARED_PAGES, PAGE_STRIDE, 0x45);
 
-	sev_guest_sync(sync, 300, 0);
+	GUEST_SHARED_SYNC(uc, 102);
 }
 
 static void
-check_test_common(struct kvm_vm *vm, struct sev_sync_data *sync,
+check_test_common(struct kvm_vm *vm, struct ucall *uc,
 		  uint8_t *shared_buf, uint8_t *private_buf)
 {
-	struct kvm_run *run = vcpu_state(vm, VCPU_ID);
 	bool success;
 
 	/* Initial guest check-in. */
 	vcpu_run(vm, VCPU_ID);
-	sev_check_guest_sync(run, sync, 100);
+	CHECK_SHARED_SYNC(vm, VCPU_ID, uc, 100);
 
 	/* Ensure initial private pages are intact/encrypted. */
 	success = check_buf(private_buf, PRIVATE_PAGES, PAGE_STRIDE, 0x42);
 	TEST_ASSERT(!success, "Initial guest memory not encrypted!");
 
 	vcpu_run(vm, VCPU_ID);
-	sev_check_guest_sync(run, sync, 200);
+	CHECK_SHARED_SYNC(vm, VCPU_ID, uc, 101);
 
 	/* Ensure host userspace can't read newly-written encrypted data. */
 	success = check_buf(private_buf, PRIVATE_PAGES, PAGE_STRIDE, 0x43);
@@ -126,7 +122,7 @@ check_test_common(struct kvm_vm *vm, struct sev_sync_data *sync,
 	fill_buf(shared_buf, SHARED_PAGES, PAGE_STRIDE, 0x44);
 
 	vcpu_run(vm, VCPU_ID);
-	sev_check_guest_sync(run, sync, 300);
+	CHECK_SHARED_SYNC(vm, VCPU_ID, uc, 102);
 
 	/* Ensure host can read newly-written shared data from guest. */
 	success = check_buf(shared_buf, SHARED_PAGES, PAGE_STRIDE, 0x45);
@@ -134,45 +130,43 @@ check_test_common(struct kvm_vm *vm, struct sev_sync_data *sync,
 }
 
 static void
-guest_test_done(struct sev_sync_data *sync)
+guest_test_done(struct ucall *uc)
 {
-	sev_guest_done(sync, 10000, 0);
+	GUEST_SHARED_DONE(uc);
 }
 
 static void
-check_test_done(struct kvm_vm *vm, struct sev_sync_data *sync)
+check_test_done(struct kvm_vm *vm, struct ucall *uc)
 {
-	struct kvm_run *run = vcpu_state(vm, VCPU_ID);
-
 	vcpu_run(vm, VCPU_ID);
-	sev_check_guest_done(run, sync, 10000);
+	CHECK_SHARED_DONE(vm, VCPU_ID, uc);
 }
 
 static void __attribute__((__flatten__))
-guest_sev_code(struct sev_sync_data *sync, uint8_t *shared_buf, uint8_t *private_buf)
+guest_sev_code(struct ucall *uc, uint8_t *shared_buf, uint8_t *private_buf)
 {
 	uint32_t eax, ebx, ecx, edx;
 	uint64_t sev_status;
 
-	guest_test_start(sync);
+	guest_test_start(uc);
 
 	/* Check SEV CPUID bit. */
 	eax = 0x8000001f;
 	ecx = 0;
 	cpuid(&eax, &ebx, &ecx, &edx);
-	SEV_GUEST_ASSERT(sync, 2, eax & (1 << 1));
+	GUEST_SHARED_ASSERT(uc, eax & (1 << 1));
 
 	/* Check SEV MSR bit. */
 	sev_status = rdmsr(MSR_AMD64_SEV);
-	SEV_GUEST_ASSERT(sync, 3, (sev_status & 0x1) == 1);
+	GUEST_SHARED_ASSERT(uc, (sev_status & 0x1) == 1);
 
-	guest_test_common(sync, shared_buf, private_buf);
+	guest_test_common(uc, shared_buf, private_buf);
 
-	guest_test_done(sync);
+	guest_test_done(uc);
 }
 
 static void
-setup_test_common(struct sev_vm *sev, void *guest_code, vm_vaddr_t *sync_vaddr,
+setup_test_common(struct sev_vm *sev, void *guest_code, vm_vaddr_t *uc_vaddr,
 		  vm_vaddr_t *shared_vaddr, vm_vaddr_t *private_vaddr)
 {
 	struct kvm_vm *vm = sev_get_vm(sev);
@@ -182,8 +176,8 @@ setup_test_common(struct sev_vm *sev, void *guest_code, vm_vaddr_t *sync_vaddr,
 	vm_vcpu_add_default(vm, VCPU_ID, guest_code);
 	kvm_vm_elf_load(vm, program_invocation_name);
 
-	/* Set up shared sync buffer. */
-	*sync_vaddr = vm_vaddr_alloc_shared(vm, PAGE_SIZE, 0);
+	/* Set up shared ucall buffer. */
+	*uc_vaddr = ucall_shared_alloc(vm, 1);
 
 	/* Set up buffer for reserved shared memory. */
 	*shared_vaddr = vm_vaddr_alloc_shared(vm, SHARED_PAGES * PAGE_SIZE,
@@ -200,9 +194,9 @@ setup_test_common(struct sev_vm *sev, void *guest_code, vm_vaddr_t *sync_vaddr,
 
 static void test_sev(void *guest_code, uint64_t policy)
 {
-	vm_vaddr_t sync_vaddr, shared_vaddr, private_vaddr;
+	vm_vaddr_t uc_vaddr, shared_vaddr, private_vaddr;
 	uint8_t *shared_buf, *private_buf;
-	struct sev_sync_data *sync;
+	struct ucall *uc;
 	uint8_t measurement[512];
 	struct sev_vm *sev;
 	struct kvm_vm *vm;
@@ -213,12 +207,12 @@ static void test_sev(void *guest_code, uint64_t policy)
 		return;
 	vm = sev_get_vm(sev);
 
-	setup_test_common(sev, guest_code, &sync_vaddr, &shared_vaddr, &private_vaddr);
+	setup_test_common(sev, guest_code, &uc_vaddr, &shared_vaddr, &private_vaddr);
 
 	/* Set up guest params. */
-	vcpu_args_set(vm, VCPU_ID, 4, sync_vaddr, shared_vaddr, private_vaddr);
+	vcpu_args_set(vm, VCPU_ID, 4, uc_vaddr, shared_vaddr, private_vaddr);
 
-	sync = addr_gva2hva(vm, sync_vaddr);
+	uc = addr_gva2hva(vm, uc_vaddr);
 	shared_buf = addr_gva2hva(vm, shared_vaddr);
 	private_buf = addr_gva2hva(vm, private_vaddr);
 
@@ -235,9 +229,9 @@ static void test_sev(void *guest_code, uint64_t policy)
 	sev_vm_launch_finish(sev);
 
 	/* Guest is ready to run. Do the tests. */
-	check_test_start(vm, sync);
-	check_test_common(vm, sync, shared_buf, private_buf);
-	check_test_done(vm, sync);
+	check_test_start(vm, uc);
+	check_test_common(vm, uc, shared_buf, private_buf);
+	check_test_done(vm, uc);
 
 	sev_vm_free(sev);
 }
