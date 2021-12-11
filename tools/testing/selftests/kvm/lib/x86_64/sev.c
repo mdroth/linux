@@ -261,6 +261,9 @@ void sev_vm_launch(struct sev_vm *sev)
 	struct kvm_sev_launch_start ksev_launch_start = {0};
 	struct kvm_sev_guest_status ksev_status = {0};
 
+	/* Need to use ucall_shared for synchronization. */
+	ucall_init_ops(sev_get_vm(sev), NULL, &ucall_ops_halt);
+
 	ksev_launch_start.policy = sev->sev_policy;
 	kvm_sev_ioctl(sev, KVM_SEV_LAUNCH_START, &ksev_launch_start);
 	kvm_sev_ioctl(sev, KVM_SEV_GUEST_STATUS, &ksev_status);
