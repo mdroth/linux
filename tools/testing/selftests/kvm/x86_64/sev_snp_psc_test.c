@@ -44,7 +44,7 @@ struct pageTableEntry {
 
 /* Globals for use by #VC handler and helpers. */
 static int page_not_validated_count;
-static struct sev_sync_data *guest_sync;
+static struct ucall *guest_uc;
 static uint8_t enc_bit;
 
 static void fill_buf(uint8_t *buf, size_t pages, size_t stride, uint8_t val)
@@ -91,13 +91,13 @@ static void vc_handler(struct ex_regs *regs)
 
 		asm volatile("mov %%cr2,%0" : "=r" (gva));
 		ret = snp_pvalidate((void *)gva, 0, true);
-		SEV_GUEST_ASSERT(guest_sync, 9001, !ret);
+		GUEST_SHARED_ASSERT(guest_uc, !ret);
 
 		return;
 	}
 
 	ret = sev_es_handle_vc(NULL, 0, regs);
-	SEV_GUEST_ASSERT(guest_sync, 20000 + regs->error_code, !ret);
+	GUEST_SHARED_ASSERT(guest_uc, !ret);
 }
 
 #define gpa_mask(gpa) (gpa & ~(1ULL << enc_bit))
@@ -118,16 +118,16 @@ static void set_pte_bit(void *ptr, uint8_t pos, bool enable)
 	index[3] = (gva >> 39) & 0x1FFU;
 
 	pml4e = (struct pageTableEntry *)va(gpa_mask(get_cr3()));
-	SEV_GUEST_ASSERT(guest_sync, 1001, pml4e[index[3]].present);
+	GUEST_SHARED_ASSERT(guest_uc, pml4e[index[3]].present);
 
 	pdpe = (struct pageTableEntry *)gfn2va(pml4e[index[3]].pfn);
-	SEV_GUEST_ASSERT(guest_sync, 1002, pdpe[index[2]].present);
+	GUEST_SHARED_ASSERT(guest_uc, pdpe[index[2]].present);
 
 	pde = (struct pageTableEntry *)gfn2va(pdpe[index[2]].pfn);
-	SEV_GUEST_ASSERT(guest_sync, 1003, pde[index[1]].present);
+	GUEST_SHARED_ASSERT(guest_uc, pde[index[1]].present);
 
 	pte = (struct pageTableEntry *)gfn2va(pde[index[1]].pfn);
-	SEV_GUEST_ASSERT(guest_sync, 1004, pte[index[0]].present);
+	GUEST_SHARED_ASSERT(guest_uc, pte[index[0]].present);
 
 	pte_val = (uint64_t *)&pte[index[0]];
 	if (enable)
@@ -138,24 +138,24 @@ static void set_pte_bit(void *ptr, uint8_t pos, bool enable)
 	asm volatile("invlpg (%0)" ::"r" (gva) : "memory");
 }
 
-static void guest_test_psc(uint64_t shared_buf_gpa, uint8_t *shared_buf,
+static void guest_test_psc(struct ucall *uc, uint64_t shared_buf_gpa, uint8_t *shared_buf,
 			   uint64_t private_buf_gpa, uint8_t *private_buf)
 {
 	bool success;
 	int rc, i;
 
-	sev_guest_sync(guest_sync, 100, 0);
+	GUEST_SHARED_SYNC(uc, 100);
 
 	/* Flip 1st half of private pages to shared and verify VMM can read them. */
 	for (i = 0; i < (PRIVATE_PAGES / 2); i++) {
 		rc = snp_pvalidate(&private_buf[i * PAGE_SIZE], 0, false);
-		SEV_GUEST_ASSERT(guest_sync, 101, !rc);
+		GUEST_SHARED_ASSERT(uc, !rc);
 		snp_psc_set_shared(private_buf_gpa + i * PAGE_SIZE);
 		set_pte_bit(&private_buf[i * PAGE_SIZE], enc_bit, false);
 	}
 	fill_buf(private_buf, PRIVATE_PAGES / 2, PAGE_STRIDE, 0x43);
 
-	sev_guest_sync(guest_sync, 200, 0);
+	GUEST_SHARED_SYNC(uc, 200);
 
 	/*
 	 * Flip 2nd half of private pages to shared and hand them to the VMM.
@@ -166,12 +166,11 @@ static void guest_test_psc(uint64_t shared_buf_gpa, uint8_t *shared_buf,
 	 */
 	for (i = PRIVATE_PAGES / 2; i < PRIVATE_PAGES; i++) {
 		rc = snp_pvalidate(&private_buf[i * PAGE_SIZE], 0, false);
-		if (rc)
-			sev_guest_abort(guest_sync, rc, 0);
+		GUEST_SHARED_ASSERT(uc, !rc);
 		snp_psc_set_shared(private_buf_gpa + i * PAGE_SIZE);
 	}
 
-	sev_guest_sync(guest_sync, 300, 0);
+	GUEST_SHARED_SYNC(uc, 300);
 
 	/*
 	 * VMM has filled up the newly-shared pages, but C-bit is still set, so
@@ -181,28 +180,28 @@ static void guest_test_psc(uint64_t shared_buf_gpa, uint8_t *shared_buf,
 	WRITE_ONCE(page_not_validated_count, 0);
 	success = check_buf_nostop(&private_buf[(PRIVATE_PAGES / 2) * PAGE_SIZE],
 				   PRIVATE_PAGES / 2, PAGE_STRIDE, 0x44);
-	SEV_GUEST_ASSERT(guest_sync, 301, !success);
-	SEV_GUEST_ASSERT(guest_sync, 302,
-			 READ_ONCE(page_not_validated_count) == (PRIVATE_PAGES / 2));
+	GUEST_SHARED_ASSERT(uc, !success);
+	GUEST_SHARED_ASSERT(uc,
+			    READ_ONCE(page_not_validated_count) == (PRIVATE_PAGES / 2));
 
 	/* Now flip the C-bit off and verify the VMM-provided values are intact. */
 	for (i = PRIVATE_PAGES / 2; i < PRIVATE_PAGES; i++)
 		set_pte_bit(&private_buf[i * PAGE_SIZE], enc_bit, false);
 	success = check_buf(&private_buf[(PRIVATE_PAGES / 2) * PAGE_SIZE],
 			    PRIVATE_PAGES / 2, PAGE_STRIDE, 0x44);
-	SEV_GUEST_ASSERT(guest_sync, 303, success);
+	GUEST_SHARED_ASSERT(uc, success);
 
 	/* Flip the 1st half back to private pages. */
 	for (i = 0; i < (PRIVATE_PAGES / 2); i++) {
 		snp_psc_set_private(private_buf_gpa + i * PAGE_SIZE);
 		set_pte_bit(&private_buf[i * PAGE_SIZE], enc_bit, true);
 		rc = snp_pvalidate(&private_buf[i * PAGE_SIZE], 0, true);
-		SEV_GUEST_ASSERT(guest_sync, 304, !rc);
+		GUEST_SHARED_ASSERT(uc, !rc);
 	}
 	/* Pages are private again, write over them with new encrypted data. */
 	fill_buf(private_buf, PRIVATE_PAGES / 2, PAGE_STRIDE, 0x45);
 
-	sev_guest_sync(guest_sync, 400, 0);
+	GUEST_SHARED_SYNC(uc, 400);
 
 	/*
 	 * Take some private pages and flip the C-bit off. Subsequent access
@@ -213,7 +212,7 @@ static void guest_test_psc(uint64_t shared_buf_gpa, uint8_t *shared_buf,
 		set_pte_bit(&private_buf[i * PAGE_SIZE], enc_bit, false);
 	fill_buf(private_buf, PRIVATE_PAGES / 4, PAGE_STRIDE, 0x46);
 
-	sev_guest_sync(guest_sync, 500, 0);
+	GUEST_SHARED_SYNC(uc, 500);
 
 	/* Flip all even-numbered shared pages to private. */
 	for (i = 0; i < SHARED_PAGES; i++) {
@@ -223,56 +222,55 @@ static void guest_test_psc(uint64_t shared_buf_gpa, uint8_t *shared_buf,
 		snp_psc_set_private(shared_buf_gpa + i * PAGE_SIZE);
 		set_pte_bit(&shared_buf[i * PAGE_SIZE], enc_bit, true);
 		rc = snp_pvalidate(&shared_buf[i * PAGE_SIZE], 0, true);
-		SEV_GUEST_ASSERT(guest_sync, 501, !rc);
+		GUEST_SHARED_ASSERT(uc, !rc);
 	}
 
 	/* Write across the entire range and hand it back to VMM to verify. */
 	fill_buf(shared_buf, SHARED_PAGES, PAGE_STRIDE, 0x47);
 
-	sev_guest_sync(guest_sync, 600, 0);
+	GUEST_SHARED_SYNC(uc, 600);
 }
 
-static void check_test_psc(struct kvm_vm *vm, struct sev_sync_data *sync,
+static void check_test_psc(struct kvm_vm *vm, struct ucall *uc,
 			   uint8_t *shared_buf, uint8_t *private_buf)
 {
-	struct kvm_run *run = vcpu_state(vm, VCPU_ID);
 	bool success;
 	int i;
 
 	/* Initial check-in for PSC tests. */
 	vcpu_run(vm, VCPU_ID);
-	sev_check_guest_sync(run, sync, 100);
+	CHECK_SHARED_SYNC(vm, VCPU_ID, uc, 100);
 
 	vcpu_run(vm, VCPU_ID);
-	sev_check_guest_sync(run, sync, 200);
+	CHECK_SHARED_SYNC(vm, VCPU_ID, uc, 200);
 
 	/* 1st half of private buffer should be shared now, check contents. */
 	success = check_buf(private_buf, PRIVATE_PAGES / 2, PAGE_STRIDE, 0x43);
 	TEST_ASSERT(success, "Unexpected contents in newly-shared buffer.");
 
 	vcpu_run(vm, VCPU_ID);
-	sev_check_guest_sync(run, sync, 300);
+	CHECK_SHARED_SYNC(vm, VCPU_ID, uc, 300);
 
 	/* 2nd half of private buffer should be shared now, write to it. */
 	fill_buf(&private_buf[(PRIVATE_PAGES / 2) * PAGE_SIZE],
 		 PRIVATE_PAGES / 2, PAGE_STRIDE, 0x44);
 
 	vcpu_run(vm, VCPU_ID);
-	sev_check_guest_sync(run, sync, 400);
+	CHECK_SHARED_SYNC(vm, VCPU_ID, uc, 400);
 
 	/* 1st half of private buffer should no longer be shared. Verify. */
 	success = check_buf(private_buf, PRIVATE_PAGES / 2, PAGE_STRIDE, 0x45);
 	TEST_ASSERT(!success, "Unexpected contents in newly-private buffer.");
 
 	vcpu_run(vm, VCPU_ID);
-	sev_check_guest_sync(run, sync, 500);
+	CHECK_SHARED_SYNC(vm, VCPU_ID, uc, 500);
 
 	/* 1st quarter of private buffer should be shared again. Verify. */
 	success = check_buf(private_buf, PRIVATE_PAGES / 4, PAGE_STRIDE, 0x46);
 	TEST_ASSERT(success, "Unexpected contents in newly-shared buffer.");
 
 	vcpu_run(vm, VCPU_ID);
-	sev_check_guest_sync(run, sync, 600);
+	CHECK_SHARED_SYNC(vm, VCPU_ID, uc, 600);
 
 	/* Verify even-numbered pages in shared_buf are now private. */
 	for (i = 0; i < SHARED_PAGES; i++) {
@@ -285,14 +283,16 @@ static void check_test_psc(struct kvm_vm *vm, struct sev_sync_data *sync,
 }
 
 static void __attribute__((__flatten__))
-guest_code(struct sev_sync_data *sync, uint64_t shared_buf_gpa, uint8_t *shared_buf,
+guest_code(struct ucall *uc, uint64_t shared_buf_gpa, uint8_t *shared_buf,
 	   uint64_t private_buf_gpa, uint8_t *private_buf)
 {
 	uint32_t eax, ebx, ecx, edx;
 
+	/* Initialize a global so exception handler can access. */
+	guest_uc = uc;
+
 	/* Initial check-in. */
-	guest_sync = sync;
-	sev_guest_sync(guest_sync, 1, 0);
+	GUEST_SHARED_SYNC(uc, 1);
 
 	/* Get encryption bit via CPUID. */
 	eax = 0x8000001f;
@@ -301,17 +301,16 @@ guest_code(struct sev_sync_data *sync, uint64_t shared_buf_gpa, uint8_t *shared_
 	enc_bit = ebx & 0x3F;
 
 	/* Do the tests. */
-	guest_test_psc(shared_buf_gpa, shared_buf, private_buf_gpa, private_buf);
+	guest_test_psc(uc, shared_buf_gpa, shared_buf, private_buf_gpa, private_buf);
 
-	sev_guest_done(guest_sync, 10000, 0);
+	GUEST_SHARED_DONE(uc);
 }
 
 int main(int argc, char *argv[])
 {
-	vm_vaddr_t shared_vaddr, private_vaddr, sync_vaddr;
+	vm_vaddr_t shared_vaddr, private_vaddr, uc_vaddr;
 	uint8_t *shared_buf, *private_buf;
-	struct sev_sync_data *sync;
-	struct kvm_run *run;
+	struct ucall *uc;
 	struct sev_vm *sev;
 	struct kvm_vm *vm;
 
@@ -328,9 +327,9 @@ int main(int argc, char *argv[])
 	vm_install_exception_handler(vm, 29, vc_handler);
 	vcpu_init_descriptor_tables(vm, VCPU_ID);
 
-	/* Set up shared page for sync buffer. */
-	sync_vaddr = vm_vaddr_alloc_shared(vm, PAGE_SIZE, 0);
-	sync = addr_gva2hva(vm, sync_vaddr);
+	/* Set up shared ucall buffer. */
+	uc_vaddr = ucall_shared_alloc(vm, 1);
+	uc = addr_gva2hva(vm, uc_vaddr);
 
 	/* Set up additional buffer for reserved shared memory. */
 	shared_vaddr = vm_vaddr_alloc_shared(vm, SHARED_PAGES * PAGE_SIZE,
@@ -353,7 +352,7 @@ int main(int argc, char *argv[])
 	virt_map(vm, LINEAR_MAP_GVA, 1UL << sev_get_enc_bit(sev), TOTAL_PAGES);
 
 	/* Set up guest params. */
-	vcpu_args_set(vm, VCPU_ID, 5, sync_vaddr,
+	vcpu_args_set(vm, VCPU_ID, 5, uc_vaddr,
 		      addr_gva2gpa(vm, shared_vaddr), shared_vaddr,
 		      addr_gva2gpa(vm, private_vaddr), private_vaddr);
 
@@ -361,16 +360,15 @@ int main(int argc, char *argv[])
 	sev_snp_vm_launch(sev);
 
 	/* Initial guest check-in. */
-	run = vcpu_state(vm, VCPU_ID);
 	vcpu_run(vm, VCPU_ID);
-	sev_check_guest_sync(run, sync, 1);
+	CHECK_SHARED_SYNC(vm, VCPU_ID, uc, 1);
 
 	/* Do the tests. */
-	check_test_psc(vm, sync, shared_buf, private_buf);
+	check_test_psc(vm, uc, shared_buf, private_buf);
 
 	/* Wait for guest to finish up. */
 	vcpu_run(vm, VCPU_ID);
-	sev_check_guest_done(run, sync, 10000);
+	CHECK_SHARED_DONE(vm, VCPU_ID, uc);
 
 	sev_snp_vm_free(sev);
 
