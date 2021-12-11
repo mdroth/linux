@@ -375,6 +375,9 @@ void sev_snp_vm_launch(struct sev_vm *sev)
 	struct kvm_sev_snp_launch_start launch_start = {0};
 	struct kvm_sev_snp_launch_update launch_finish = {0};
 
+	/* Need to use ucall_shared for synchronization. */
+	ucall_init_ops(sev_get_vm(sev), NULL, &ucall_ops_halt);
+
 	launch_start.policy = sev->snp_policy;
 	kvm_sev_ioctl(sev, KVM_SEV_SNP_LAUNCH_START, &launch_start);
 
