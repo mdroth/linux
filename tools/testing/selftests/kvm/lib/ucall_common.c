@@ -97,8 +97,8 @@ uint64_t get_ucall(struct kvm_vm *vm, uint32_t vcpu_id, struct ucall *uc)
 /* Allocate shared memory within a guest to for a shared ucall buffer. */
 vm_vaddr_t ucall_shared_alloc(struct kvm_vm *vm, int count)
 {
-	return vm_vaddr_alloc(vm, count * sizeof(struct ucall),
-			      vm_get_page_size(vm));
+	return vm_vaddr_alloc_shared(vm, count * sizeof(struct ucall),
+				     vm_get_page_size(vm));
 }
 
 /*
