@@ -18,6 +18,7 @@
 #include "svm_util.h"
 #include "linux/psp-sev.h"
 #include "sev.h"
+#include "sev_exitlib.h"
 
 #define VCPU_ID			2
 #define PAGE_SIZE		4096
@@ -30,6 +31,10 @@
 #define PRIVATE_VADDR_MIN	(SHARED_VADDR_MIN + SHARED_PAGES * PAGE_SIZE)
 
 #define TOTAL_PAGES		(512 + SHARED_PAGES + PRIVATE_PAGES)
+
+/* Globals for use by #VC handler. */
+static void *ghcb0_gva;
+static vm_paddr_t ghcb0_gpa;
 
 static void fill_buf(uint8_t *buf, size_t pages, size_t stride, uint8_t val)
 {
@@ -165,6 +170,47 @@ guest_sev_code(struct ucall *uc, uint8_t *shared_buf, uint8_t *private_buf)
 	guest_test_done(uc);
 }
 
+static void vc_handler(struct ex_regs *regs)
+{
+	sev_es_handle_vc(ghcb0_gva, ghcb0_gpa, regs);
+}
+
+static void __attribute__((__flatten__))
+guest_sev_es_code(struct ucall *uc, uint8_t *shared_buf,
+		  uint8_t *private_buf, uint64_t ghcb_gpa, void *ghcb_gva)
+{
+	uint32_t eax, ebx, ecx, edx;
+	uint64_t sev_status;
+
+	guest_test_start(uc);
+
+again:
+	/* Check CPUID values via GHCB MSR protocol. */
+	eax = 0x8000001f;
+	ecx = 0;
+	cpuid(&eax, &ebx, &ecx, &edx);
+
+	/* Check SEV bit. */
+	GUEST_SHARED_ASSERT(uc, eax & (1 << 1));
+	/* Check SEV-ES bit. */
+	GUEST_SHARED_ASSERT(uc, eax & (1 << 3));
+
+	if (!ghcb0_gva) {
+		ghcb0_gva = ghcb_gva;
+		ghcb0_gpa = ghcb_gpa;
+		/* Check CPUID bits again using GHCB-based protocol. */
+		goto again;
+	}
+
+	/* Check SEV and SEV-ES enabled bits (bits 0 and 1, respectively). */
+	sev_status = rdmsr(MSR_AMD64_SEV);
+	GUEST_SHARED_ASSERT(uc, (sev_status & 0x3) == 3);
+
+	guest_test_common(uc, shared_buf, private_buf);
+
+	guest_test_done(uc);
+}
+
 static struct sev_vm *
 setup_test_common(void *guest_code, uint64_t policy, struct ucall **uc,
 		  uint8_t **shared_buf, uint8_t **private_buf)
@@ -200,7 +246,18 @@ setup_test_common(void *guest_code, uint64_t policy, struct ucall **uc,
 	fill_buf(*private_buf, PRIVATE_PAGES, PAGE_STRIDE, 0x42);
 
 	/* Set up guest params. */
-	vcpu_args_set(vm, VCPU_ID, 4, uc_vaddr, shared_vaddr, private_vaddr);
+	if (policy & SEV_POLICY_ES) {
+		vm_vaddr_t ghcb_vaddr = vm_vaddr_alloc_shared(vm, PAGE_SIZE, PAGE_SIZE);
+
+		vcpu_args_set(vm, VCPU_ID, 6, uc_vaddr, shared_vaddr, private_vaddr,
+			      addr_gva2gpa(vm, ghcb_vaddr), ghcb_vaddr);
+		/* Set up VC handler. */
+		vm_init_descriptor_tables(vm);
+		vm_install_exception_handler(vm, 29, vc_handler);
+		vcpu_init_descriptor_tables(vm, VCPU_ID);
+	} else {
+		vcpu_args_set(vm, VCPU_ID, 4, uc_vaddr, shared_vaddr, private_vaddr);
+	}
 
 	/*
 	 * Hand these back to test harness, translation is needed now since page
@@ -250,6 +307,10 @@ int main(int argc, char *argv[])
 	/* SEV tests */
 	test_sev(guest_sev_code, SEV_POLICY_NO_DBG);
 	test_sev(guest_sev_code, 0);
+
+	/* SEV-ES tests */
+	test_sev(guest_sev_es_code, SEV_POLICY_ES | SEV_POLICY_NO_DBG);
+	test_sev(guest_sev_es_code, SEV_POLICY_ES);
 
 	return 0;
 }
