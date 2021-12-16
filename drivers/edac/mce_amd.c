@@ -693,6 +693,8 @@ static void decode_smca_error(struct mce *m)
 	enum smca_bank_types bank_type = smca_get_bank_type(m->extcpu, m->bank);
 	const char *ip_name;
 	u8 xec = XEC(m->status, xec_mask);
+	char buf[256];
+	char *p, *end;
 
 	if (bank_type >= N_SMCA_BANK_TYPES)
 		return;
@@ -702,9 +704,15 @@ static void decode_smca_error(struct mce *m)
 		return;
 	}
 
+	memset(buf, 0, sizeof(buf));
+	p = buf;
+	end = buf + sizeof(buf);
+
 	ip_name = smca_get_long_name(bank_type);
 
-	pr_emerg(HW_ERR "%s Ext. Error Code: %d", ip_name, xec);
+	p += scnprintf(p, end - p, "%s Ext. Error Code: %d", ip_name, xec);
+
+	pr_emerg(HW_ERR "%s", buf);
 
 	if (bank_type == SMCA_UMC && xec == 0 && decode_dram_ecc)
 		decode_dram_ecc(topology_die_id(m->extcpu), m);
@@ -712,26 +720,33 @@ static void decode_smca_error(struct mce *m)
 
 static inline void amd_decode_err_code(u16 ec)
 {
+	char buf[256];
+	char *p, *end;
+
 	if (INT_ERROR(ec)) {
 		pr_emerg(HW_ERR "internal: %s\n", UU_MSG(ec));
 		return;
 	}
 
-	pr_emerg(HW_ERR "cache level: %s", LL_MSG(ec));
+	memset(buf, 0, sizeof(buf));
+	p = buf;
+	end = buf + sizeof(buf);
+
+	p += scnprintf(p, end - p, "cache level: %s", LL_MSG(ec));
 
 	if (BUS_ERROR(ec))
-		pr_cont(", mem/io: %s", II_MSG(ec));
+		p += scnprintf(p, end - p, ", mem/io: %s", II_MSG(ec));
 	else
-		pr_cont(", tx: %s", TT_MSG(ec));
+		p += scnprintf(p, end - p, ", tx: %s", TT_MSG(ec));
 
 	if (MEM_ERROR(ec) || BUS_ERROR(ec)) {
-		pr_cont(", mem-tx: %s", R4_MSG(ec));
+		p += scnprintf(p, end - p, ", mem-tx: %s", R4_MSG(ec));
 
 		if (BUS_ERROR(ec))
-			pr_cont(", part-proc: %s (%s)", PP_MSG(ec), TO_MSG(ec));
+			p += scnprintf(p, end - p, ", part-proc: %s (%s)", PP_MSG(ec), TO_MSG(ec));
 	}
 
-	pr_cont("\n");
+	pr_emerg(HW_ERR "%s", buf);
 }
 
 static const char *decode_error_status(struct mce *m)
@@ -756,6 +771,8 @@ amd_decode_mce(struct notifier_block *nb, unsigned long val, void *data)
 	struct mce *m = (struct mce *)data;
 	unsigned int fam = x86_family(m->cpuid);
 	u64 mca_config = 0;
+	char buf[256];
+	char *p, *end;
 	int ecc;
 
 	if (m->kflags & MCE_HANDLED_CEC)
@@ -763,7 +780,11 @@ amd_decode_mce(struct notifier_block *nb, unsigned long val, void *data)
 
 	pr_emerg(HW_ERR "%s\n", decode_error_status(m));
 
-	pr_emerg(HW_ERR "CPU:%d (%x:%x:%x) MC%d_STATUS[%s|%s|%s|%s|%s",
+	memset(buf, 0, sizeof(buf));
+	p = buf;
+	end = buf + sizeof(buf);
+
+	p += scnprintf(p, end - p, "CPU:%d (%x:%x:%x) MC%d_STATUS[%s|%s|%s|%s|%s",
 		m->extcpu,
 		fam, x86_model(m->cpuid), x86_stepping(m->cpuid),
 		m->bank,
@@ -779,28 +800,29 @@ amd_decode_mce(struct notifier_block *nb, unsigned long val, void *data)
 
 		if (!rdmsrl_safe_on_cpu(m->extcpu, addr, &mca_config) &&
 		    (mca_config & MCI_CONFIG_MCAX))
-			pr_cont("|%s", ((m->status & MCI_STATUS_TCC) ? "TCC" : "-"));
+			p += scnprintf(p, end - p, "|%s", ((m->status & MCI_STATUS_TCC) ? "TCC" : "-"));
 
-		pr_cont("|%s", ((m->status & MCI_STATUS_SYNDV) ? "SyndV" : "-"));
+		p += scnprintf(p, end - p, "|%s", ((m->status & MCI_STATUS_SYNDV) ? "SyndV" : "-"));
 	}
 
 	/* do the two bits[14:13] together */
 	ecc = (m->status >> 45) & 0x3;
 	if (ecc)
-		pr_cont("|%sECC", ((ecc == 2) ? "C" : "U"));
+		p += scnprintf(p, end - p, "|%sECC", ((ecc == 2) ? "C" : "U"));
 
 	if (fam >= 0x15) {
-		pr_cont("|%s", (m->status & MCI_STATUS_DEFERRED ? "Deferred" : "-"));
+		p += scnprintf(p, end - p, "|%s", (m->status & MCI_STATUS_DEFERRED ? "Deferred" : "-"));
 
 		/* F15h, bank4, bit 43 is part of McaStatSubCache. */
 		if (fam != 0x15 || m->bank != 4)
-			pr_cont("|%s", (m->status & MCI_STATUS_POISON ? "Poison" : "-"));
+			p += scnprintf(p, end - p, "|%s", (m->status & MCI_STATUS_POISON ? "Poison" : "-"));
 	}
 
 	if (fam >= 0x17)
-		pr_cont("|%s", (m->status & MCI_STATUS_SCRUB ? "Scrub" : "-"));
+		p += scnprintf(p, end - p, "|%s", (m->status & MCI_STATUS_SCRUB ? "Scrub" : "-"));
 
-	pr_cont("]: 0x%016llx\n", m->status);
+	p += scnprintf(p, end - p, "]: 0x%016llx\n", m->status);
+	pr_emerg(HW_ERR "%s", buf);
 
 	if (m->status & MCI_STATUS_ADDRV)
 		pr_emerg(HW_ERR "Error Addr: 0x%016llx\n", m->addr);
@@ -809,15 +831,20 @@ amd_decode_mce(struct notifier_block *nb, unsigned long val, void *data)
 		pr_emerg(HW_ERR "PPIN: 0x%016llx\n", m->ppin);
 
 	if (boot_cpu_has(X86_FEATURE_SMCA)) {
-		pr_emerg(HW_ERR "IPID: 0x%016llx", m->ipid);
+		memset(buf, 0, sizeof(buf));
+		p = buf;
+
+		p += scnprintf(p, end - p, "IPID: 0x%016llx", m->ipid);
 
 		if (m->status & MCI_STATUS_SYNDV) {
-			pr_cont(", Syndrome: 0x%016llx\n", m->synd);
+			p += scnprintf(p, end - p, ", Syndrome: 0x%016llx", m->synd);
+			pr_emerg(HW_ERR "%s", buf);
+
 			pr_emerg(HW_ERR "Syndrome1: 0x%016llx, Syndrome2: 0x%016llx",
 					m->synd1, m->synd2);
+		} else {
+			pr_emerg(HW_ERR "%s", buf);
 		}
-
-		pr_cont("\n");
 
 		decode_smca_error(m);
 
