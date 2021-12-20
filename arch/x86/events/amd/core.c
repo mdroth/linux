@@ -596,6 +596,11 @@ static void amd_pmu_cpu_dead(int cpu)
 	amd_pmu_cpu_reset(cpu);
 }
 
+static inline void amd_pmu_set_global_ctl(u64 ctl)
+{
+	wrmsrl(MSR_AMD64_PERF_CNTR_GLOBAL_CTL, ctl);
+}
+
 /*
  * When a PMC counter overflows, an NMI is used to process the event and
  * reset the counter. NMI latency can result in the counter being updated
@@ -625,12 +630,32 @@ static void amd_pmu_wait_on_overflow(int idx)
 	}
 }
 
+static void amd_pmu_global_enable_all(int added)
+{
+	amd_pmu_set_global_ctl(amd_pmu_global_cntr_mask);
+}
+
+DEFINE_STATIC_CALL_NULL(amd_pmu_enable_all, x86_pmu_enable_all);
+
+static void amd_pmu_enable_all(int added)
+{
+	static_call(amd_pmu_enable_all)(added);
+}
+
+static void amd_pmu_global_disable_all(void)
+{
+	/* Disable all PMCs */
+	amd_pmu_set_global_ctl(0);
+}
+
+DEFINE_STATIC_CALL_NULL(amd_pmu_disable_all, x86_pmu_disable_all);
+
 static void amd_pmu_disable_all(void)
 {
 	struct cpu_hw_events *cpuc = this_cpu_ptr(&cpu_hw_events);
 	int idx;
 
-	x86_pmu_disable_all();
+	static_call(amd_pmu_disable_all)();
 
 	/*
 	 * This shouldn't be called from NMI context, but add a safeguard here
@@ -669,6 +694,28 @@ static void amd_pmu_disable_event(struct perf_event *event)
 		return;
 
 	amd_pmu_wait_on_overflow(event->hw.idx);
+}
+
+static void amd_pmu_global_enable_event(struct perf_event *event)
+{
+	struct hw_perf_event *hwc = &event->hw;
+
+	/*
+	 * Testing cpu_hw_events.enabled should be skipped in this case unlike
+	 * in x86_pmu_enable_event().
+	 *
+	 * Since cpu_hw_events.enabled is set only after returning from
+	 * x86_pmu_start(), the PMCs must be programmed and kept ready.
+	 * Counting starts only after x86_pmu_enable_all() is called.
+	 */
+	__x86_pmu_enable_event(hwc, ARCH_PERFMON_EVENTSEL_ENABLE);
+}
+
+DEFINE_STATIC_CALL_NULL(amd_pmu_enable_event, x86_pmu_enable_event);
+
+static void amd_pmu_enable_event(struct perf_event *event)
+{
+	static_call(amd_pmu_enable_event)(event);
 }
 
 /*
@@ -929,8 +976,8 @@ static __initconst const struct x86_pmu amd_pmu = {
 	.name			= "AMD",
 	.handle_irq		= amd_pmu_handle_irq,
 	.disable_all		= amd_pmu_disable_all,
-	.enable_all		= x86_pmu_enable_all,
-	.enable			= x86_pmu_enable_event,
+	.enable_all		= amd_pmu_enable_all,
+	.enable			= amd_pmu_enable_event,
 	.disable		= amd_pmu_disable_event,
 	.hw_config		= amd_pmu_hw_config,
 	.schedule_events	= x86_schedule_events,
@@ -989,6 +1036,11 @@ static int __init amd_core_pmu_init(void)
 		x86_pmu.num_counters = EXT_PERFMON_DEBUG_NUM_CORE_PMC(ebx);
 
 		amd_pmu_global_cntr_mask = (1ULL << x86_pmu.num_counters) - 1;
+
+		/* Update PMC handling functions */
+		static_call_update(amd_pmu_enable_all, amd_pmu_global_enable_all);
+		static_call_update(amd_pmu_disable_all, amd_pmu_global_disable_all);
+		static_call_update(amd_pmu_enable_event, amd_pmu_global_enable_event);
 	}
 
 	/*
