@@ -435,7 +435,6 @@ static inline void apic_set_eoi_write(void (*eoi_write)(u32 reg, u32 v)) {}
 #endif /* CONFIG_X86_LOCAL_APIC */
 
 extern void apic_ack_irq(struct irq_data *data);
-extern u32 apic_get_max_phys_apicid(void);
 
 static inline void ack_APIC_irq(void)
 {
