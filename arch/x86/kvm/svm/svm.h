@@ -29,10 +29,6 @@
 
 #define MAX_DIRECT_ACCESS_MSRS	20
 #define MSRPM_OFFSETS	16
-
-#define X2APIC_MODE_SHIFT 30
-#define X2APIC_MODE_MASK (1 << X2APIC_MODE_SHIFT)
-
 extern u32 msrpm_offsets[MSRPM_OFFSETS] __read_mostly;
 extern bool npt_enabled;
 extern bool intercept_smi;
