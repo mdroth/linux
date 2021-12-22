@@ -22,7 +22,6 @@
 #include <asm/apic.h>
 #include <asm/irq_remapping.h>
 
-#include "cpuid.h"
 #include "trace.h"
 #include "lapic.h"
 #include "x86.h"
@@ -165,26 +164,6 @@ static void avic_init_host_physical_apicid_mask(void)
 	}
 	pr_debug("Using AVIC host physical APIC ID mask %#0llx\n",
 		 avic_host_physical_id_mask);
-}
-
-void avic_vcpu_after_set_cpuid(struct kvm_vcpu *vcpu, int nested)
-{
-	/*
-	 * If the X2APIC feature is exposed to the guest,
-	 * disable AVIC unless X2AVIC mode is enabled.
-	 */
-	if (avic_mode == AVIC_MODE_X1 &&
-	    guest_cpuid_has(vcpu, X86_FEATURE_X2APIC))
-		kvm_request_apicv_update(vcpu->kvm, false,
-					 APICV_INHIBIT_REASON_X2APIC);
-
-	/*
-	 * Currently, AVIC does not work with nested virtualization.
-	 * So, we disable AVIC when cpuid for SVM is set in the L1 guest.
-	 */
-	if (nested && guest_cpuid_has(vcpu, X86_FEATURE_SVM))
-		kvm_request_apicv_update(vcpu->kvm, false,
-					 APICV_INHIBIT_REASON_NESTED);
 }
 
 int avic_vm_init(struct kvm *kvm)
