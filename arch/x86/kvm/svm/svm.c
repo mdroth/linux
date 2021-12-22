@@ -87,7 +87,7 @@ static uint64_t osvw_len = 4, osvw_status;
 static DEFINE_PER_CPU(u64, current_tsc_ratio);
 #define TSC_RATIO_DEFAULT	0x0100000000ULL
 
-static struct svm_direct_access_msrs {
+static const struct svm_direct_access_msrs {
 	u32 index;   /* Index of the MSR */
 	bool always; /* True if intercept is initially cleared */
 } direct_access_msrs[MAX_DIRECT_ACCESS_MSRS] = {
@@ -771,26 +771,6 @@ static void add_msr_offset(u32 offset)
 	BUG();
 }
 
-static void init_direct_access_msrs(void)
-{
-	int i, j;
-
-	/* Find the first initialized w/ MSR_INVALID */
-	for (i = 0; direct_access_msrs[i].index != MSR_INVALID; i++)
-		continue;
-
-	/* Initialize x2APIC direct_access_msrs entries */
-	for (j = 0; j < NUM_DIRECT_ACCESS_X2APIC_MSRS; j++) {
-		direct_access_msrs[i + j].index = boot_cpu_has(X86_FEATURE_X2AVIC) ?
-						  (0x800 + j) : MSR_INVALID;
-		direct_access_msrs[i + j].always = false;
-	}
-
-	/* Initialize last entry */
-	direct_access_msrs[i + j].index = MSR_INVALID;
-	direct_access_msrs[i + j].always = false;
-}
-
 static void init_msrpm_offsets(void)
 {
 	int i;
@@ -989,7 +969,6 @@ static __init int svm_hardware_setup(void)
 	memset(iopm_va, 0xff, PAGE_SIZE * (1 << order));
 	iopm_base = page_to_pfn(iopm_pages) << PAGE_SHIFT;
 
-	init_direct_access_msrs();
 	init_msrpm_offsets();
 
 	supported_xcr0 &= ~(XFEATURE_MASK_BNDREGS | XFEATURE_MASK_BNDCSR);
