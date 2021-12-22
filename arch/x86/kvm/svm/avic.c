@@ -475,31 +475,15 @@ static void avic_invalidate_logical_id_entry(struct kvm_vcpu *vcpu)
 		clear_bit(AVIC_LOGICAL_ID_ENTRY_VALID_BIT, (unsigned long *)entry);
 }
 
-static inline unsigned long avic_get_apic_id(struct kvm_vcpu *vcpu)
-{
-	u32 apic_id = kvm_lapic_get_reg(vcpu->arch.apic, APIC_ID);
-
-	if (!apic_x2apic_mode(vcpu->arch.apic)) {
-		/*
-		 * In case of xAPIC, we do not support
-		 * APIC ID larger than 254.
-		 */
-		if (vcpu->vcpu_id >= APIC_BROADCAST)
-			return X2APIC_BROADCAST;
-		return apic_id >> 24;
-	} else
-		return apic_id;
-}
-
 static int avic_handle_ldr_update(struct kvm_vcpu *vcpu)
 {
 	int ret = 0;
 	struct vcpu_svm *svm = to_svm(vcpu);
 	u32 ldr = kvm_lapic_get_reg(vcpu->arch.apic, APIC_LDR);
-	ulong id = avic_get_apic_id(vcpu);
+	u32 id = kvm_xapic_id(vcpu->arch.apic);
 
-	if (id == X2APIC_BROADCAST)
-		return -EINVAL;
+	if (ldr == svm->ldr_reg)
+		return 0;
 
 	avic_invalidate_logical_id_entry(vcpu);
 
@@ -516,10 +500,7 @@ static int avic_handle_apic_id_update(struct kvm_vcpu *vcpu)
 {
 	u64 *old, *new;
 	struct vcpu_svm *svm = to_svm(vcpu);
-	ulong id = avic_get_apic_id(vcpu);
-
-	if (id == X2APIC_BROADCAST)
-		return 1;
+	u32 id = kvm_xapic_id(vcpu->arch.apic);
 
 	if (vcpu->vcpu_id == id)
 		return 0;
@@ -539,8 +520,7 @@ static int avic_handle_apic_id_update(struct kvm_vcpu *vcpu)
 	 * APIC ID table entry if already setup the LDR.
 	 */
 	if (svm->ldr_reg)
-		if (avic_handle_ldr_update(vcpu))
-			return 1;
+		avic_handle_ldr_update(vcpu);
 
 	return 0;
 }
