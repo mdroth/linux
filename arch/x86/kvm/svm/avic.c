@@ -617,24 +617,6 @@ void avic_post_state_restore(struct kvm_vcpu *vcpu)
 	avic_handle_ldr_update(vcpu);
 }
 
-void avic_update_vapic_bar(struct vcpu_svm *svm, u64 data)
-{
-	enum lapic_mode mode = kvm_apic_mode(data);
-
-	svm->vmcb->control.avic_vapic_bar = data & VMCB_AVIC_APIC_BAR_MASK;
-
-	/* Set x2APIC mode bit if guest enable x2apic mode. */
-	if (avic_mode == AVIC_MODE_X2 && mode == LAPIC_MODE_X2APIC) {
-		pr_debug("vcpu_id:%d switch to X2APIC\n", svm->vcpu.vcpu_id);
-		svm->x2apic_enabled = true;
-	} else {
-		pr_debug("vcpu_id:%d switch to XAPIC\n", svm->vcpu.vcpu_id);
-		svm->x2apic_enabled = false;
-	}
-	vmcb_mark_dirty(svm->vmcb, VMCB_AVIC);
-	kvm_vcpu_update_apicv(&svm->vcpu);
-}
-
 void svm_set_virtual_apic_mode(struct kvm_vcpu *vcpu)
 {
 	return;
