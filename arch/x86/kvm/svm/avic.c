@@ -19,7 +19,6 @@
 #include <linux/amd-iommu.h>
 #include <linux/kvm_host.h>
 
-#include <asm/apic.h>
 #include <asm/irq_remapping.h>
 
 #include "trace.h"
@@ -64,7 +63,6 @@
 static DEFINE_HASHTABLE(svm_vm_data_hash, SVM_VM_DATA_HASH_BITS);
 static u32 next_vm_id = 0;
 static bool next_vm_id_wrapped = 0;
-static u64 avic_host_physical_id_mask;
 static DEFINE_SPINLOCK(svm_vm_data_hash_lock);
 
 /*
@@ -133,20 +131,6 @@ void avic_vm_destroy(struct kvm *kvm)
 	spin_lock_irqsave(&svm_vm_data_hash_lock, flags);
 	hash_del(&kvm_svm->hnode);
 	spin_unlock_irqrestore(&svm_vm_data_hash_lock, flags);
-}
-
-static void avic_init_host_physical_apicid_mask(void)
-{
-	if (!x2apic_mode) {
-		/* If host is in xAPIC mode, default to only 8-bit mask. */
-		avic_host_physical_id_mask = 0xffULL;
-	} else {
-		u32 count = get_count_order(apic_get_max_phys_apicid());
-
-		avic_host_physical_id_mask = BIT(count) - 1;
-	}
-	pr_debug("Using AVIC host physical APIC ID mask %#0llx\n",
-		 avic_host_physical_id_mask);
 }
 
 int avic_vm_init(struct kvm *kvm)
@@ -959,17 +943,22 @@ out:
 void avic_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 {
 	u64 entry;
+	/* ID = 0xff (broadcast), ID > 0xff (reserved) */
 	int h_physical_id = kvm_cpu_get_apicid(cpu);
 	struct vcpu_svm *svm = to_svm(vcpu);
 
-	if (WARN_ON(h_physical_id > avic_host_physical_id_mask))
+	/*
+	 * Since the host physical APIC id is 8 bits,
+	 * we can support host APIC ID upto 255.
+	 */
+	if (WARN_ON(h_physical_id > AVIC_PHYSICAL_ID_ENTRY_HOST_PHYSICAL_ID_MASK))
 		return;
 
 	entry = READ_ONCE(*(svm->avic_physical_id_cache));
 	WARN_ON(entry & AVIC_PHYSICAL_ID_ENTRY_IS_RUNNING_MASK);
 
-	entry &= ~avic_host_physical_id_mask;
-	entry |= h_physical_id;
+	entry &= ~AVIC_PHYSICAL_ID_ENTRY_HOST_PHYSICAL_ID_MASK;
+	entry |= (h_physical_id & AVIC_PHYSICAL_ID_ENTRY_HOST_PHYSICAL_ID_MASK);
 
 	entry &= ~AVIC_PHYSICAL_ID_ENTRY_IS_RUNNING_MASK;
 	if (svm->avic_is_running)
@@ -1029,7 +1018,6 @@ bool avic_hardware_setup(bool avic, bool npt)
 		return false;
 
 	pr_info("AVIC enabled\n");
-	avic_init_host_physical_apicid_mask();
 	amd_iommu_register_ga_log_notifier(&avic_ga_log_notifier);
 	return true;
 }
