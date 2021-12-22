@@ -515,7 +515,6 @@ static inline bool avic_vcpu_is_running(struct kvm_vcpu *vcpu)
 	return (READ_ONCE(*entry) & AVIC_PHYSICAL_ID_ENTRY_IS_RUNNING_MASK);
 }
 
-bool avic_hardware_setup(bool avic, bool npt);
 int avic_ga_log_notifier(u32 ga_tag);
 void avic_vm_destroy(struct kvm *kvm);
 int avic_vm_init(struct kvm *kvm);

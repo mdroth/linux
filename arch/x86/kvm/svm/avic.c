@@ -1011,13 +1011,3 @@ void svm_vcpu_unblocking(struct kvm_vcpu *vcpu)
 		kvm_vcpu_update_apicv(vcpu);
 	avic_set_running(vcpu, true);
 }
-
-bool avic_hardware_setup(bool avic, bool npt)
-{
-	if (!avic || !npt || !boot_cpu_has(X86_FEATURE_AVIC))
-		return false;
-
-	pr_info("AVIC enabled\n");
-	amd_iommu_register_ga_log_notifier(&avic_ga_log_notifier);
-	return true;
-}
