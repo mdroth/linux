@@ -502,7 +502,6 @@ extern struct kvm_x86_nested_ops svm_nested_ops;
 /* avic.c */
 
 #define AVIC_LOGICAL_ID_ENTRY_GUEST_PHYSICAL_ID_MASK	(0xFF)
-#define X2AVIC_LOGICAL_ID_ENTRY_GUEST_PHYSICAL_ID_MASK	(0x7FFFFFFF)
 #define AVIC_LOGICAL_ID_ENTRY_VALID_BIT			31
 #define AVIC_LOGICAL_ID_ENTRY_VALID_MASK		(1 << 31)
 

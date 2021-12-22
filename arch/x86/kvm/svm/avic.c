@@ -437,28 +437,19 @@ static u32 *avic_get_logical_id_entry(struct kvm_vcpu *vcpu, u32 ldr, bool flat)
 	return &logical_apic_id_table[index];
 }
 
-static int avic_ldr_write(struct kvm_vcpu *vcpu, u32 g_physical_id, u32 ldr)
+static int avic_ldr_write(struct kvm_vcpu *vcpu, u8 g_physical_id, u32 ldr)
 {
-	bool flat = false;
-	u32 *entry, new_entry, mask = 0;
-	struct vcpu_svm *svm = to_svm(vcpu);
+	bool flat;
+	u32 *entry, new_entry;
 
-	/* Note: x2APIC mode only support logical cluster mode */
-	if (!apic_x2apic_mode(vcpu->arch.apic))
-		flat = kvm_lapic_get_reg(vcpu->arch.apic, APIC_DFR) == APIC_DFR_FLAT;
-
+	flat = kvm_lapic_get_reg(vcpu->arch.apic, APIC_DFR) == APIC_DFR_FLAT;
 	entry = avic_get_logical_id_entry(vcpu, ldr, flat);
 	if (!entry)
 		return -EINVAL;
 
-	if (!svm->x2apic_enabled)
-		mask = AVIC_LOGICAL_ID_ENTRY_GUEST_PHYSICAL_ID_MASK;
-	else
-		mask = X2AVIC_LOGICAL_ID_ENTRY_GUEST_PHYSICAL_ID_MASK;
-
 	new_entry = READ_ONCE(*entry);
-	new_entry &= ~mask;
-	new_entry |= (g_physical_id & mask);
+	new_entry &= ~AVIC_LOGICAL_ID_ENTRY_GUEST_PHYSICAL_ID_MASK;
+	new_entry |= (g_physical_id & AVIC_LOGICAL_ID_ENTRY_GUEST_PHYSICAL_ID_MASK);
 	new_entry |= AVIC_LOGICAL_ID_ENTRY_VALID_MASK;
 	WRITE_ONCE(*entry, new_entry);
 
