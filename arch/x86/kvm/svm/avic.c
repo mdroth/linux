@@ -34,18 +34,10 @@
 #define AVIC_HPA_MASK	~((0xFFFULL << 52) | 0xFFF)
 
 /*
- * For AVIC the APIC ID 0xff is broadcast, so the max index allowed for
- * physical APIC ID table is 0xfe (254).
+ * 0xff is broadcast, so the max index allowed for physical APIC ID
+ * table is 0xfe.  APIC IDs above 0xff are reserved.
  */
-#define AVIC_MAX_PHYSICAL_ID		0XFEULL
-#define AVIC_MAX_PHYSICAL_ID_COUNT	(AVIC_MAX_PHYSICAL_ID + 1)
-
-/*
- * For x2AVIC, the max index allowed for physical APIC ID
- * table is 0x1ff (511).
- */
-#define X2AVIC_MAX_PHYSICAL_ID		0x1FFUL
-#define X2AVIC_MAX_PHYSICAL_ID_COUNT	(X2AVIC_MAX_PHYSICAL_ID + 1)
+#define AVIC_MAX_PHYSICAL_ID_COUNT	255
 
 #define AVIC_UNACCEL_ACCESS_WRITE_MASK		1
 #define AVIC_UNACCEL_ACCESS_OFFSET_MASK		0xFF0
@@ -258,18 +250,13 @@ void avic_init_vmcb(struct vcpu_svm *svm)
 	vmcb->control.avic_backing_page = bpa & AVIC_HPA_MASK;
 	vmcb->control.avic_logical_id = lpa & AVIC_HPA_MASK;
 	vmcb->control.avic_physical_id = ppa & AVIC_HPA_MASK;
+	vmcb->control.avic_physical_id |= AVIC_MAX_PHYSICAL_ID_COUNT;
 	vmcb->control.avic_vapic_bar = APIC_DEFAULT_PHYS_BASE & VMCB_AVIC_APIC_BAR_MASK;
 
-	if (kvm_apicv_activated(svm->vcpu.kvm)) {
+	if (kvm_apicv_activated(svm->vcpu.kvm))
 		vmcb->control.int_ctl |= AVIC_ENABLE_MASK;
-		if (svm->x2apic_enabled) {
-			vmcb->control.int_ctl |= X2APIC_MODE_MASK;
-			vmcb->control.avic_physical_id |= X2AVIC_MAX_PHYSICAL_ID;
-		} else
-			vmcb->control.avic_physical_id |= AVIC_MAX_PHYSICAL_ID;
-	} else {
-		vmcb->control.int_ctl &= ~(AVIC_ENABLE_MASK | X2APIC_MODE_MASK);
-	}
+	else
+		vmcb->control.int_ctl &= ~AVIC_ENABLE_MASK;
 }
 
 static u64 *avic_get_physical_id_entry(struct kvm_vcpu *vcpu,
