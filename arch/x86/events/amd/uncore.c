@@ -209,9 +209,15 @@ static int amd_uncore_event_init(struct perf_event *event)
 {
 	struct amd_uncore *uncore;
 	struct hw_perf_event *hwc = &event->hw;
+	u64 event_mask = AMD64_RAW_EVENT_MASK_NB;
 
 	if (event->attr.type != event->pmu->type)
 		return -ENOENT;
+
+	/* Not all Family 19h models use the same format */
+	if (is_nb_event(event) && boot_cpu_data.x86 == 0x19 &&
+	    boot_cpu_data.x86_model >= 0x10 && boot_cpu_data.x86_model <= 0x1f)
+		event_mask = AMD64_F19H_RAW_EVENT_MASK_NB;
 
 	/*
 	 * NB and Last level cache counters (MSRs) are shared across all cores
@@ -221,7 +227,7 @@ static int amd_uncore_event_init(struct perf_event *event)
 	 * out. So we do not support sampling and per-thread events via
 	 * CAP_NO_INTERRUPT, and we do not enable counter overflow interrupts:
 	 */
-	hwc->config = event->attr.config & AMD64_RAW_EVENT_MASK_NB;
+	hwc->config = event->attr.config & event_mask;
 	hwc->idx = -1;
 
 	if (event->cpu < 0)
@@ -287,8 +293,10 @@ static struct device_attribute format_attr_##_var =			\
 
 DEFINE_UNCORE_FORMAT_ATTR(event12,	event,		"config:0-7,32-35");
 DEFINE_UNCORE_FORMAT_ATTR(event14,	event,		"config:0-7,32-35,59-60"); /* F17h+ DF */
+DEFINE_UNCORE_FORMAT_ATTR(event14n,	event,		"config:0-7,32-37");	   /* F19h+ DF (newer models only) */
 DEFINE_UNCORE_FORMAT_ATTR(event8,	event,		"config:0-7");		   /* F17h+ L3 */
-DEFINE_UNCORE_FORMAT_ATTR(umask,	umask,		"config:8-15");
+DEFINE_UNCORE_FORMAT_ATTR(umask8,	umask,		"config:8-15");
+DEFINE_UNCORE_FORMAT_ATTR(umask12,	umask,		"config:8-15,24-27");	   /* F19h+ DF (newer models only) */
 DEFINE_UNCORE_FORMAT_ATTR(coreid,	coreid,		"config:42-44");	   /* F19h L3 */
 DEFINE_UNCORE_FORMAT_ATTR(slicemask,	slicemask,	"config:48-51");	   /* F17h L3 */
 DEFINE_UNCORE_FORMAT_ATTR(threadmask8,	threadmask,	"config:56-63");	   /* F17h L3 */
@@ -299,13 +307,13 @@ DEFINE_UNCORE_FORMAT_ATTR(sliceid,	sliceid,	"config:48-50");	   /* F19h L3 */
 
 static struct attribute *amd_uncore_df_format_attr[] = {
 	&format_attr_event12.attr, /* event14 if F17h+ */
-	&format_attr_umask.attr,
+	&format_attr_umask8.attr,
 	NULL,
 };
 
 static struct attribute *amd_uncore_l3_format_attr[] = {
 	&format_attr_event12.attr, /* event8 if F17h+ */
-	&format_attr_umask.attr,
+	&format_attr_umask8.attr,
 	NULL, /* slicemask if F17h,	coreid if F19h */
 	NULL, /* threadmask8 if F17h,	enallslices if F19h */
 	NULL, /*			enallcores if F19h */
@@ -585,7 +593,13 @@ static int __init amd_uncore_init(void)
 	}
 
 	if (boot_cpu_has(X86_FEATURE_PERFCTR_NB)) {
-		if (boot_cpu_data.x86 >= 0x17)
+		/* Not all Family 19h models use the same format */
+		if (boot_cpu_data.x86 == 0x19 &&
+		    boot_cpu_data.x86_model >= 0x10 &&
+		    boot_cpu_data.x86_model <= 0x1f) {
+			*df_attr++ = &format_attr_event14n.attr;
+			*df_attr++ = &format_attr_umask12.attr;
+		} else if (boot_cpu_data.x86 >= 0x17)
 			*df_attr = &format_attr_event14.attr;
 
 		amd_uncore_nb = alloc_percpu(struct amd_uncore *);
@@ -613,7 +627,7 @@ static int __init amd_uncore_init(void)
 	if (boot_cpu_has(X86_FEATURE_PERFCTR_LLC)) {
 		if (boot_cpu_data.x86 >= 0x19) {
 			*l3_attr++ = &format_attr_event8.attr;
-			*l3_attr++ = &format_attr_umask.attr;
+			*l3_attr++ = &format_attr_umask8.attr;
 			*l3_attr++ = &format_attr_coreid.attr;
 			*l3_attr++ = &format_attr_enallslices.attr;
 			*l3_attr++ = &format_attr_enallcores.attr;
@@ -621,7 +635,7 @@ static int __init amd_uncore_init(void)
 			*l3_attr++ = &format_attr_threadmask2.attr;
 		} else if (boot_cpu_data.x86 >= 0x17) {
 			*l3_attr++ = &format_attr_event8.attr;
-			*l3_attr++ = &format_attr_umask.attr;
+			*l3_attr++ = &format_attr_umask8.attr;
 			*l3_attr++ = &format_attr_slicemask.attr;
 			*l3_attr++ = &format_attr_threadmask8.attr;
 		}
