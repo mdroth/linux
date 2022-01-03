@@ -158,6 +158,14 @@ out:
 	hwc->event_base_rdpmc = uncore->rdpmc_base + hwc->idx;
 	hwc->state = PERF_HES_UPTODATE | PERF_HES_STOPPED;
 
+	/*
+	 * Some Family 19h+ models have more than 4 DF counters and these
+	 * additional ones are mapped after the L3 counters making the DF
+	 * RDPMC assignments discontiguous
+	 */
+	if (is_nb_event(event) && hwc->idx >= NUM_COUNTERS_NB)
+		hwc->event_base_rdpmc += NUM_COUNTERS_L3;
+
 	if (flags & PERF_EF_START)
 		amd_uncore_start(event, PERF_EF_RELOAD);
 
