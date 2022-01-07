@@ -372,6 +372,7 @@ struct pebs_xmm {
 
 /* Extended Performance Monitoring and Debug EBX feature bits */
 #define EXT_PERFMON_DEBUG_NUM_CORE_PMC(ebx)	((ebx) & GENMASK(3, 0))
+#define EXT_PERFMON_DEBUG_NUM_DF_PMC(ebx)	(((ebx) >> 10) & GENMASK(5, 0))
 
 /*
  * IBS cpuid feature detection

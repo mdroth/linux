@@ -21,7 +21,7 @@
 #define NUM_COUNTERS_NB		4
 #define NUM_COUNTERS_L2		4
 #define NUM_COUNTERS_L3		6
-#define MAX_COUNTERS		6
+#define MAX_COUNTERS		16	/* For some Family 19h+ models */
 
 #define RDPMC_BASE_NB		6
 #define RDPMC_BASE_LLC		10
@@ -596,6 +596,12 @@ static int __init amd_uncore_init(void)
 		ret = perf_pmu_register(&amd_nb_pmu, amd_nb_pmu.name, -1);
 		if (ret)
 			goto fail_nb;
+
+		/* Check for Performance Monitoring v2 support */
+		if (boot_cpu_has(X86_FEATURE_PERFMON_V2)) {
+			int ebx = cpuid_ebx(EXT_PERFMON_DEBUG_FEATURES);
+			num_counters_nb = EXT_PERFMON_DEBUG_NUM_DF_PMC(ebx);
+		}
 
 		pr_info("%d %s %s counters detected\n", num_counters_nb,
 			boot_cpu_data.x86_vendor == X86_VENDOR_HYGON ?  "HYGON" : "",
