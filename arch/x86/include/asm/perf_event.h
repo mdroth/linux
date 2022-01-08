@@ -366,6 +366,14 @@ struct pebs_xmm {
 };
 
 /*
+ * AMD Extended Performance Monitoring and Debug cpuid feature detection
+ */
+#define EXT_PERFMON_DEBUG_FEATURES		0x80000022
+
+/* Extended Performance Monitoring and Debug EBX feature bits */
+#define EXT_PERFMON_DEBUG_NUM_CORE_PMC(ebx)	((ebx) & GENMASK(3, 0))
+
+/*
  * IBS cpuid feature detection
  */
 
