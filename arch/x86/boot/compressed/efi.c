@@ -132,6 +132,25 @@ efi_get_system_table(struct boot_params *boot_params,
 	return 0;
 }
 
+static struct efi_setup_data *
+kexec_setup_data_addr(struct boot_params *boot_params)
+{
+#ifdef CONFIG_X86_64
+	struct setup_data *data;
+	u64 pa_data;
+
+	pa_data = boot_params->hdr.setup_data;
+	while (pa_data) {
+		data = (struct setup_data *)pa_data;
+		if (data->type == SETUP_EFI)
+			return (struct efi_setup_data *)(pa_data + sizeof(struct setup_data));
+
+		pa_data = data->next;
+	}
+#endif
+       return NULL;
+}
+
 /**
  * Given boot_params, locate EFI system table from it and return the physical
  * address EFI configuration table.
@@ -161,10 +180,11 @@ efi_get_conf_table(struct boot_params *boot_params,
 
 	/* Handle EFI bitness properly */
 	if (*is_efi_64) {
+		struct efi_setup_data *esd = kexec_setup_data_addr(boot_params);
 		efi_system_table_64_t *stbl =
 			(efi_system_table_64_t *)sys_table_pa;
 
-		*conf_table_pa	= stbl->tables;
+		*conf_table_pa	= esd ? esd->tables : stbl->tables;
 		*conf_table_len	= stbl->nr_tables;
 	} else {
 		efi_system_table_32_t *stbl =
