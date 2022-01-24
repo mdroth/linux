@@ -520,14 +520,22 @@ static void perf_ibs_read(struct perf_event *event) { }
 
 PMU_FORMAT_ATTR(rand_en,	"config:57");
 PMU_FORMAT_ATTR(cnt_ctl,	"config:19");
+/*
+ * We can't use PMU_FORMAT_ATTR() because of "l3missonly" attribute
+ * name conflict between both the pmus.
+ */
+PMU_EVENT_ATTR_STRING(l3missonly, fetch_l3missonly, "config:59");
+PMU_EVENT_ATTR_STRING(l3missonly, op_l3missonly, "config:16");
 
 static struct attribute *ibs_fetch_format_attrs[] = {
 	&format_attr_rand_en.attr,
+	NULL,	/* &fetch_l3missonly.attr.attr if IBS_CAPS_ZEN4IBSEXTENSIONS */
 	NULL,
 };
 
 static struct attribute *ibs_op_format_attrs[] = {
 	NULL,	/* &format_attr_cnt_ctl.attr if IBS_CAPS_OPCNT */
+	NULL,	/* &op_l3missonly.attr.attr if IBS_CAPS_ZEN4IBSEXTENSIONS */
 	NULL,
 };
 
@@ -761,7 +769,8 @@ static __init int perf_ibs_pmu_init(struct perf_ibs *perf_ibs, char *name)
 
 static __init void perf_event_ibs_init(void)
 {
-	struct attribute **attr = ibs_op_format_attrs;
+	struct attribute **fetch_attr = ibs_fetch_format_attrs;
+	struct attribute **op_attr = ibs_op_format_attrs;
 
 	/*
 	 * Some chips fail to reset the fetch count when it is written; instead
@@ -773,17 +782,29 @@ static __init void perf_event_ibs_init(void)
 	if (boot_cpu_data.x86 == 0x19 && boot_cpu_data.x86_model < 0x10)
 		perf_ibs_fetch.fetch_ignore_if_zero_rip = 1;
 
+	/* First attribute is already defined. */
+	fetch_attr++;
+	if (ibs_caps & IBS_CAPS_ZEN4IBSEXTENSIONS) {
+		perf_ibs_fetch.config_mask |= IBS_FETCH_L3MISSONLY;
+		*fetch_attr++ = &fetch_l3missonly.attr.attr;
+	}
+
 	perf_ibs_pmu_init(&perf_ibs_fetch, "ibs_fetch");
 
 	if (ibs_caps & IBS_CAPS_OPCNT) {
 		perf_ibs_op.config_mask |= IBS_OP_CNT_CTL;
-		*attr++ = &format_attr_cnt_ctl.attr;
+		*op_attr++ = &format_attr_cnt_ctl.attr;
 	}
 
 	if (ibs_caps & IBS_CAPS_OPCNTEXT) {
 		perf_ibs_op.max_period  |= IBS_OP_MAX_CNT_EXT_MASK;
 		perf_ibs_op.config_mask	|= IBS_OP_MAX_CNT_EXT_MASK;
 		perf_ibs_op.cnt_mask    |= IBS_OP_MAX_CNT_EXT_MASK;
+	}
+
+	if (ibs_caps & IBS_CAPS_ZEN4IBSEXTENSIONS) {
+		perf_ibs_op.config_mask |= IBS_OP_L3MISSONLY;
+		*op_attr++ = &op_l3missonly.attr.attr;
 	}
 
 	perf_ibs_pmu_init(&perf_ibs_op, "ibs_op");
