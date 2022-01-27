@@ -855,8 +855,10 @@ int svm_deliver_avic_intr(struct kvm_vcpu *vcpu, int vec)
 	if (avic_vcpu_is_running(vcpu)) {
 		int cpuid = vcpu->cpu;
 
-		if (cpuid != get_cpu())
+		if (cpuid != get_cpu()) {
+			trace_kvm_avic_doorbell(vcpu->vcpu_id, cpuid, kvm_cpu_get_apicid(cpuid), vec);
 			wrmsrl(SVM_AVIC_DOORBELL, kvm_cpu_get_apicid(cpuid));
+		}
 		put_cpu();
 	} else
 		kvm_vcpu_wake_up(vcpu);
@@ -1130,6 +1132,7 @@ void avic_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 	if (WARN_ON((h_physical_id & avic_host_physical_id_mask) != h_physical_id))
 		return;
 
+	trace_kvm_avic_vcpu_load(vcpu->vcpu_id, cpu);
 	entry = READ_ONCE(*(svm->avic_physical_id_cache));
 
 	entry &= ~((u64)avic_host_physical_id_mask);
@@ -1153,6 +1156,7 @@ void avic_vcpu_put(struct kvm_vcpu *vcpu)
 	if (entry & AVIC_PHYSICAL_ID_ENTRY_IS_RUNNING_MASK)
 		avic_update_iommu_vcpu_affinity(vcpu, -1, 0);
 
+	trace_kvm_avic_vcpu_put(vcpu->vcpu_id);
 	entry &= ~AVIC_PHYSICAL_ID_ENTRY_IS_RUNNING_MASK;
 	WRITE_ONCE(*(svm->avic_physical_id_cache), entry);
 }

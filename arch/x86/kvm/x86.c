@@ -3451,6 +3451,7 @@ int kvm_set_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	case MSR_IA32_APICBASE:
 		return kvm_set_apic_base(vcpu, msr_info);
 	case APIC_BASE_MSR ... APIC_BASE_MSR + 0xff:
+		trace_kvm_set_msr(vcpu->vcpu_id, msr);
 		return kvm_x2apic_msr_write(vcpu, msr, data);
 	case MSR_IA32_TSC_DEADLINE:
 		kvm_set_lapic_tscdeadline_msr(vcpu, data);
@@ -3830,6 +3831,7 @@ int kvm_get_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		msr_info->data = kvm_get_apic_base(vcpu);
 		break;
 	case APIC_BASE_MSR ... APIC_BASE_MSR + 0xff:
+		trace_kvm_get_msr(vcpu->vcpu_id, msr_info->index);
 		return kvm_x2apic_msr_read(vcpu, msr_info->index, &msr_info->data);
 	case MSR_IA32_TSC_DEADLINE:
 		msr_info->data = kvm_get_lapic_tscdeadline_msr(vcpu);
@@ -12640,6 +12642,11 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_pi_irte_update);
 EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_avic_unaccelerated_access);
 EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_avic_incomplete_ipi);
 EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_avic_ga_log);
+EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_avic_doorbell);
+EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_avic_vcpu_load);
+EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_avic_vcpu_put);
+EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_set_msr);
+EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_get_msr);
 EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_apicv_update_request);
 EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_vmgexit_enter);
 EXPORT_TRACEPOINT_SYMBOL_GPL(kvm_vmgexit_exit);

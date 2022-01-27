@@ -1431,6 +1431,94 @@ TRACE_EVENT(kvm_avic_ga_log,
 		  __entry->vmid, __entry->vcpuid)
 );
 
+TRACE_EVENT(kvm_avic_doorbell,
+	    TP_PROTO(u32 vcpuid, u32 cpuid, u32 apicid, u32 vec),
+	    TP_ARGS(vcpuid, cpuid, apicid, vec),
+
+	TP_STRUCT__entry(
+		__field(u32, vcpuid)
+		__field(u32, cpuid)
+		__field(u32, apicid)
+		__field(u32, vec)
+	),
+
+	TP_fast_assign(
+		__entry->vcpuid = vcpuid;
+		__entry->cpuid = cpuid;
+		__entry->apicid = apicid;
+		__entry->vec = vec;
+	),
+
+	TP_printk("vcpuid=%u, cpuid=%u, apicid=%u, vec=%u",
+		  __entry->vcpuid, __entry->cpuid, __entry->apicid, __entry->vec)
+);
+
+TRACE_EVENT(kvm_avic_vcpu_load,
+	    TP_PROTO(u32 vcpuid, u32 cpu),
+	    TP_ARGS(vcpuid, cpu),
+
+	TP_STRUCT__entry(
+		__field(u32, vcpuid)
+		__field(u32, cpu)
+	),
+
+	TP_fast_assign(
+		__entry->vcpuid = vcpuid;
+		__entry->cpu = cpu;
+	),
+
+	TP_printk("vcpuid=%u, cpu=%u", __entry->vcpuid, __entry->cpu)
+);
+
+TRACE_EVENT(kvm_avic_vcpu_put,
+	    TP_PROTO(u32 vcpuid),
+	    TP_ARGS(vcpuid),
+
+	TP_STRUCT__entry(
+		__field(u32, vcpuid)
+	),
+
+	TP_fast_assign(
+		__entry->vcpuid = vcpuid;
+	),
+
+	TP_printk("vcpuid=%u", __entry->vcpuid)
+);
+
+TRACE_EVENT(kvm_set_msr,
+	    TP_PROTO(u32 vcpuid, u32 index),
+	    TP_ARGS(vcpuid, index),
+
+	TP_STRUCT__entry(
+		__field(u32, vcpuid)
+		__field(u32, index)
+	),
+
+	TP_fast_assign(
+		__entry->vcpuid = vcpuid;
+		__entry->index = index;
+	),
+
+	TP_printk("vcpuid=%u, index=%#x", __entry->vcpuid, __entry->index)
+);
+
+TRACE_EVENT(kvm_get_msr,
+	    TP_PROTO(u32 vcpuid, u32 index),
+	    TP_ARGS(vcpuid, index),
+
+	TP_STRUCT__entry(
+		__field(u32, vcpuid)
+		__field(u32, index)
+	),
+
+	TP_fast_assign(
+		__entry->vcpuid = vcpuid;
+		__entry->index = index;
+	),
+
+	TP_printk("vcpuid=%u, index=%#x", __entry->vcpuid, __entry->index)
+);
+
 TRACE_EVENT(kvm_hv_timer_state,
 		TP_PROTO(unsigned int vcpu_id, unsigned int hv_timer_in_use),
 		TP_ARGS(vcpu_id, hv_timer_in_use),
