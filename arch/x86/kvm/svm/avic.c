@@ -723,6 +723,13 @@ void avic_update_vapic_bar(struct vcpu_svm *svm, u64 data)
 		 svm->x2apic_enabled ? "x2APIC" : "xAPIC");
 	vmcb_mark_dirty(svm->vmcb, VMCB_AVIC);
 	kvm_vcpu_update_apicv(&svm->vcpu);
+
+	/*
+	 * The VM could be running w/ AVIC activated switching from APIC
+	 * to x2APIC mode. We need to all refresh to make sure that all
+	 * x2AVIC configuration are being done.
+	 */
+	svm_refresh_apicv_exec_ctrl(&svm->vcpu);
 }
 
 void svm_set_virtual_apic_mode(struct kvm_vcpu *vcpu)
@@ -1124,7 +1131,6 @@ void avic_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 		return;
 
 	entry = READ_ONCE(*(svm->avic_physical_id_cache));
-	WARN_ON(entry & AVIC_PHYSICAL_ID_ENTRY_IS_RUNNING_MASK);
 
 	entry &= ~((u64)avic_host_physical_id_mask);
 	entry |= h_physical_id;
