@@ -7,6 +7,7 @@
 #include <linux/delay.h>
 #include <linux/jiffies.h>
 #include <asm/apicdef.h>
+#include <asm/apic.h>
 #include <asm/nmi.h>
 
 #include "../perf_event.h"
@@ -601,6 +602,45 @@ static inline void amd_pmu_set_global_ctl(u64 ctl)
 	wrmsrl(MSR_AMD64_PERF_CNTR_GLOBAL_CTL, ctl);
 }
 
+static inline u64 amd_pmu_get_global_overflow(void)
+{
+	u64 status;
+
+	/* PerfCntrGlobalStatus is read-only */
+	rdmsrl(MSR_AMD64_PERF_CNTR_GLOBAL_STATUS, status);
+
+	return status & amd_pmu_global_cntr_mask;
+}
+
+static inline void amd_pmu_ack_global_overflow(u64 status)
+{
+	/*
+	 * PerfCntrGlobalStatus is read-only but an overflow acknowledgement
+	 * mechanism exists; writing 1 to a bit in PerfCntrGlobalStatusClr
+	 * clears the same bit in PerfCntrGlobalStatus
+	 */
+
+	/* Only allow modifications to PerfCntrGlobalStatus.PerfCntrOvfl */
+	status &= amd_pmu_global_cntr_mask;
+	wrmsrl(MSR_AMD64_PERF_CNTR_GLOBAL_STATUS_CLR, status);
+}
+
+static bool amd_pmu_legacy_has_overflow(int idx)
+{
+	u64 counter;
+
+	rdmsrl(x86_pmu_event_addr(idx), counter);
+
+	return !(counter & BIT_ULL(x86_pmu.cntval_bits - 1));
+}
+
+static bool amd_pmu_global_has_overflow(int idx)
+{
+	return amd_pmu_get_global_overflow() & BIT_ULL(idx);
+}
+
+DEFINE_STATIC_CALL_NULL(amd_pmu_has_overflow, amd_pmu_legacy_has_overflow);
+
 /*
  * When a PMC counter overflows, an NMI is used to process the event and
  * reset the counter. NMI latency can result in the counter being updated
@@ -613,7 +653,6 @@ static inline void amd_pmu_set_global_ctl(u64 ctl)
 static void amd_pmu_wait_on_overflow(int idx)
 {
 	unsigned int i;
-	u64 counter;
 
 	/*
 	 * Wait for the counter to be reset if it has overflowed. This loop
@@ -621,8 +660,7 @@ static void amd_pmu_wait_on_overflow(int idx)
 	 * forever...
 	 */
 	for (i = 0; i < OVERFLOW_WAIT_COUNT; i++) {
-		rdmsrl(x86_pmu_event_addr(idx), counter);
-		if (counter & (1ULL << (x86_pmu.cntval_bits - 1)))
+		if (!static_call(amd_pmu_has_overflow)(idx))
 			break;
 
 		/* Might be in IRQ context, so can't sleep */
@@ -718,6 +756,83 @@ static void amd_pmu_enable_event(struct perf_event *event)
 	static_call(amd_pmu_enable_event)(event);
 }
 
+static int amd_pmu_global_handle_irq(struct pt_regs *regs)
+{
+	struct perf_sample_data data;
+	struct cpu_hw_events *cpuc;
+	struct hw_perf_event *hwc;
+	struct perf_event *event;
+	u64 val, status, mask;
+	int handled = 0, idx;
+
+	status = amd_pmu_get_global_overflow();
+
+	/* Check if any overflows are pending */
+	if (!status)
+		return 0;
+
+	/* Stop counting */
+	amd_pmu_global_disable_all();
+
+	cpuc = this_cpu_ptr(&cpu_hw_events);
+
+	/*
+	 * Some chipsets need to unmask the LVTPC in a particular spot
+	 * inside the nmi handler.  As a result, the unmasking was
+	 * pushed into all the nmi handlers.
+	 *
+	 * This generic handler doesn't seem to have any issues where
+	 * the unmasking occurs so it was left at the top.
+	 *
+	 * N.B. Taken from x86_pmu_handle_irq()
+	 */
+	apic_write(APIC_LVTPC, APIC_DM_NMI);
+
+	for (idx = 0; idx < x86_pmu.num_counters; idx++) {
+		if (!test_bit(idx, cpuc->active_mask))
+			continue;
+
+		event = cpuc->events[idx];
+		hwc = &event->hw;
+		val = x86_perf_event_update(event);
+		mask = BIT_ULL(idx);
+
+		if (!(status & mask))
+			continue;
+
+		/* Event overflow */
+		handled++;
+		perf_sample_data_init(&data, 0, hwc->last_period);
+
+		if (!x86_perf_event_set_period(event))
+			continue;
+
+		if (perf_event_overflow(event, &data, regs))
+			x86_pmu_stop(event, 0);
+
+		status &= ~mask;
+	}
+
+	/*
+	 * It should never be the case that some overflows are not handled as
+	 * the corresponding PMCs are expected to be inactive according to the
+	 * active_mask
+	 */
+	WARN_ON(status > 0);
+
+	/* Clear overflow bits */
+	amd_pmu_ack_global_overflow(~status);
+
+	inc_irq_stat(apic_perf_irqs);
+
+	/* Resume counting */
+	amd_pmu_global_enable_all(0);
+
+	return handled;
+}
+
+DEFINE_STATIC_CALL_NULL(amd_pmu_handle_irq, x86_pmu_handle_irq);
+
 /*
  * Because of NMI latency, if multiple PMC counters are active or other sources
  * of NMIs are received, the perf NMI handler can handle one or more overflowed
@@ -741,7 +856,7 @@ static int amd_pmu_handle_irq(struct pt_regs *regs)
 	int handled;
 
 	/* Process any counter overflows */
-	handled = x86_pmu_handle_irq(regs);
+	handled = static_call(amd_pmu_handle_irq)(regs);
 
 	/*
 	 * If a counter was handled, record a timestamp such that un-handled
@@ -1041,6 +1156,8 @@ static int __init amd_core_pmu_init(void)
 		static_call_update(amd_pmu_enable_all, amd_pmu_global_enable_all);
 		static_call_update(amd_pmu_disable_all, amd_pmu_global_disable_all);
 		static_call_update(amd_pmu_enable_event, amd_pmu_global_enable_event);
+		static_call_update(amd_pmu_has_overflow, amd_pmu_global_has_overflow);
+		static_call_update(amd_pmu_handle_irq, amd_pmu_global_handle_irq);
 	}
 
 	/*
