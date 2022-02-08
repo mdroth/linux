@@ -212,6 +212,7 @@ module_param(dump_invalid_vmcb, bool, 0644);
 bool intercept_smi = true;
 module_param(intercept_smi, bool, 0444);
 
+static struct kvm_x86_ops svm_x86_ops;
 
 static bool svm_gp_erratum_intercept = true;
 
