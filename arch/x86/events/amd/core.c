@@ -639,7 +639,7 @@ static bool amd_pmu_global_has_overflow(int idx)
 	return amd_pmu_get_global_overflow() & BIT_ULL(idx);
 }
 
-DEFINE_STATIC_CALL(amd_pmu_has_overflow, amd_pmu_legacy_has_overflow);
+DEFINE_STATIC_CALL_NULL(amd_pmu_has_overflow, amd_pmu_legacy_has_overflow);
 
 /*
  * When a PMC counter overflows, an NMI is used to process the event and
@@ -673,7 +673,7 @@ static void amd_pmu_global_enable_all(int added)
 	amd_pmu_set_global_ctl(amd_pmu_global_cntr_mask);
 }
 
-DEFINE_STATIC_CALL(amd_pmu_enable_all, x86_pmu_enable_all);
+DEFINE_STATIC_CALL_NULL(amd_pmu_enable_all, x86_pmu_enable_all);
 
 static void amd_pmu_enable_all(int added)
 {
@@ -686,7 +686,7 @@ static void amd_pmu_global_disable_all(void)
 	amd_pmu_set_global_ctl(0);
 }
 
-DEFINE_STATIC_CALL(amd_pmu_disable_all, x86_pmu_disable_all);
+DEFINE_STATIC_CALL_NULL(amd_pmu_disable_all, x86_pmu_disable_all);
 
 static void amd_pmu_disable_all(void)
 {
@@ -749,7 +749,7 @@ static void amd_pmu_global_enable_event(struct perf_event *event)
 	__x86_pmu_enable_event(hwc, ARCH_PERFMON_EVENTSEL_ENABLE);
 }
 
-DEFINE_STATIC_CALL(amd_pmu_enable_event, x86_pmu_enable_event);
+DEFINE_STATIC_CALL_NULL(amd_pmu_enable_event, x86_pmu_enable_event);
 
 static void amd_pmu_enable_event(struct perf_event *event)
 {
@@ -831,7 +831,7 @@ static int amd_pmu_global_handle_irq(struct pt_regs *regs)
 	return handled;
 }
 
-DEFINE_STATIC_CALL(amd_pmu_handle_irq, x86_pmu_handle_irq);
+DEFINE_STATIC_CALL_NULL(amd_pmu_handle_irq, x86_pmu_handle_irq);
 
 /*
  * Because of NMI latency, if multiple PMC counters are active or other sources
