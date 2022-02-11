@@ -851,7 +851,7 @@ static void delete_endpoint(void *data)
 
 	parent_port = cxl_mem_find_port(cxlmd);
 	if (!parent_port)
-		return;
+		goto out;
 	parent = &parent_port->dev;
 
 	cxl_device_lock(parent);
@@ -861,6 +861,7 @@ static void delete_endpoint(void *data)
 	}
 	cxl_device_unlock(parent);
 	put_device(parent);
+out:
 	put_device(&endpoint->dev);
 }
 
