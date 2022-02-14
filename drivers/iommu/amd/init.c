@@ -1026,7 +1026,6 @@ static bool __copy_device_table(struct amd_iommu *iommu)
 						    get_order(pci_seg->dev_table_size));
 	if (pci_seg->old_dev_tbl_cpy == NULL) {
 		pr_err("Failed to allocate memory for copying old device table!\n");
-		memunmap(old_devtb);
 		return false;
 	}
 
@@ -1057,7 +1056,6 @@ static bool __copy_device_table(struct amd_iommu *iommu)
 			if ((int_ctl != DTE_IRQ_REMAP_INTCTL) ||
 			    (int_tab_len != DTE_INTTABLEN)) {
 				pr_err("Wrong old irq remapping flag: %#x\n", devid);
-				memunmap(old_devtb);
 				return false;
 			}
 
