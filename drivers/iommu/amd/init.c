@@ -1104,15 +1104,15 @@ static bool copy_device_table(void)
 	return true;
 }
 
-void amd_iommu_apply_erratum_63(struct amd_iommu *iommu, u16 devid)
+void amd_iommu_apply_erratum_63(u16 devid)
 {
 	int sysmgt;
 
-	sysmgt = get_dev_entry_bit(iommu, devid, DEV_ENTRY_SYSMGT1) |
-		 (get_dev_entry_bit(iommu, devid, DEV_ENTRY_SYSMGT2) << 1);
+	sysmgt = get_dev_entry_bit(devid, DEV_ENTRY_SYSMGT1) |
+		 (get_dev_entry_bit(devid, DEV_ENTRY_SYSMGT2) << 1);
 
 	if (sysmgt == 0x01)
-		set_dev_entry_bit(iommu, devid, DEV_ENTRY_IW);
+		set_dev_entry_bit(devid, DEV_ENTRY_IW);
 }
 
 /* Writes the specific IOMMU for a device into the rlookup table */
@@ -1143,7 +1143,7 @@ static void __init set_dev_entry_from_acpi(struct amd_iommu *iommu,
 	if (flags & ACPI_DEVFLAG_LINT1)
 		set_dev_entry_bit(devid, DEV_ENTRY_LINT1_PASS);
 
-	amd_iommu_apply_erratum_63(iommu, devid);
+	amd_iommu_apply_erratum_63(devid);
 
 	set_iommu_for_device(iommu, devid);
 }
