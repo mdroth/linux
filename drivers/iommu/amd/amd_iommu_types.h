@@ -485,7 +485,6 @@ struct amd_iommu_fault {
 };
 
 
-struct amd_iommu;
 struct iommu_domain;
 struct irq_domain;
 struct amd_irte_ops;
@@ -549,13 +548,6 @@ struct amd_iommu_pci_seg {
 	 * page table root pointer.
 	 */
 	struct dev_table_entry *dev_table;
-
-	/*
-	 * The rlookup iommu table is used to find the IOMMU which is
-	 * responsible for a specific device. It is indexed by the PCI
-	 * device id.
-	 */
-	struct amd_iommu **rlookup_table;
 };
 
 /*

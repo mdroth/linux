@@ -662,26 +662,6 @@ static inline void free_dev_table(struct amd_iommu_pci_seg *pci_seg)
 	pci_seg->dev_table = NULL;
 }
 
-/* Allocate per PCI segment IOMMU rlookup table. */
-static inline int __init alloc_rlookup_table(struct amd_iommu_pci_seg *pci_seg)
-{
-	pci_seg->rlookup_table = (void *)__get_free_pages(
-						GFP_KERNEL | __GFP_ZERO,
-						get_order(rlookup_table_size));
-	if (pci_seg->rlookup_table == NULL)
-		return -ENOMEM;
-
-	return 0;
-}
-
-static inline void free_rlookup_table(struct amd_iommu_pci_seg *pci_seg)
-{
-	free_pages((unsigned long)pci_seg->rlookup_table,
-		   get_order(rlookup_table_size));
-	pci_seg->rlookup_table = NULL;
-}
-
-
 /*
  * Allocates the command buffer. This buffer is per AMD IOMMU. We can
  * write commands to that buffer later and the IOMMU will execute them
@@ -1493,8 +1473,6 @@ static struct amd_iommu_pci_seg *__init alloc_pci_segment(u16 id)
 
 	if (alloc_dev_table(pci_seg))
 		return NULL;
-	if (alloc_rlookup_table(pci_seg))
-		return NULL;
 
 	pci_seg->id = id;
 	list_add_tail(&pci_seg->list, &amd_iommu_pci_seg_list);
@@ -1519,9 +1497,8 @@ static void __init free_pci_segment(void)
 	struct amd_iommu_pci_seg *pci_seg, *next;
 
 	for_each_pci_segment_safe(pci_seg, next) {
-		list_del(&pci_seg->list);
-		free_rlookup_table(pci_seg);
 		free_dev_table(pci_seg);
+		list_del(&pci_seg->list);
 		kfree(pci_seg);
 	}
 }
