@@ -2798,16 +2798,20 @@ static int set_remap_table_entry_alias(struct pci_dev *pdev, u16 alias,
 	return 0;
 }
 
-static struct irq_remap_table *alloc_irq_table(struct amd_iommu *iommu,
-					       u16 devid, struct pci_dev *pdev)
+static struct irq_remap_table *alloc_irq_table(u16 devid, struct pci_dev *pdev)
 {
 	struct irq_remap_table *table = NULL;
 	struct irq_remap_table *new_table = NULL;
+	struct amd_iommu *iommu;
 	struct amd_iommu_pci_seg *pci_seg;
 	unsigned long flags;
 	u16 alias;
 
 	spin_lock_irqsave(&iommu_table_lock, flags);
+
+	iommu = amd_iommu_rlookup_table[devid];
+	if (!iommu)
+		goto out_unlock;
 
 	pci_seg = iommu->pci_seg;
 	table = pci_seg->irq_lookup_table[devid];
@@ -2875,7 +2879,7 @@ static int alloc_irq_index(u16 devid, int count, bool align,
 	if (!iommu)
 		return -ENODEV;
 
-	table = alloc_irq_table(iommu, devid, pdev);
+	table = alloc_irq_table(devid, pdev);
 	if (!table)
 		return -ENODEV;
 
@@ -3247,7 +3251,7 @@ static int irq_remapping_alloc(struct irq_domain *domain, unsigned int virq,
 	if (info->type == X86_IRQ_ALLOC_TYPE_IOAPIC) {
 		struct irq_remap_table *table;
 
-		table = alloc_irq_table(iommu, devid, NULL);
+		table = alloc_irq_table(devid, NULL);
 		if (table) {
 			if (!table->min_index) {
 				/*
@@ -3396,8 +3400,8 @@ static int irq_remapping_select(struct irq_domain *d, struct irq_fwspec *fwspec,
 
 	if (devid < 0)
 		return 0;
-	iommu = __rlookup_amd_iommu((devid >> 16), (devid & 0xffff));
 
+	iommu = amd_iommu_rlookup_table[devid];
 	return iommu && iommu->ir_domain == d;
 }
 
