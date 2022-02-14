@@ -357,8 +357,6 @@ static bool pci_iommuv2_capable(struct pci_dev *pdev)
  */
 static bool check_device(struct device *dev)
 {
-	struct amd_iommu_pci_seg *pci_seg;
-	struct amd_iommu *iommu;
 	int devid;
 
 	if (!dev)
@@ -368,13 +366,11 @@ static bool check_device(struct device *dev)
 	if (devid < 0)
 		return false;
 
-	iommu = rlookup_amd_iommu(dev);
-	if (!iommu)
+	/* Out of our scope? */
+	if (devid > amd_iommu_last_bdf)
 		return false;
 
-	/* Out of our scope? */
-	pci_seg = iommu->pci_seg;
-	if ((devid & 0xffff) > pci_seg->last_bdf)
+	if (rlookup_amd_iommu(dev) == NULL)
 		return false;
 
 	return true;
