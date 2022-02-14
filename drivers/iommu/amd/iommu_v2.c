@@ -87,11 +87,8 @@ static void free_pasid_states(struct device_state *dev_state);
 
 static int device_id(struct pci_dev *pdev)
 {
-	u16 devid;
+	u16 devid = pci_dev_id(pdev);
 	int seg_id = pci_domain_nr(pdev->bus);
-
-	devid = pdev->bus->number;
-	devid = (devid << 8) | pdev->devfn;
 
 	return ((seg_id << 16) | (devid & 0xffff));
 }
