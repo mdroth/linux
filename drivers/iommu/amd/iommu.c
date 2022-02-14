@@ -2713,18 +2713,16 @@ static void set_dte_irq_entry(u16 devid, struct irq_remap_table *table)
 	amd_iommu_dev_table[devid].data[2] = dte;
 }
 
-static struct irq_remap_table *get_irq_table(struct amd_iommu *iommu, u16 devid)
+static struct irq_remap_table *get_irq_table(u16 devid)
 {
 	struct irq_remap_table *table;
-	struct amd_iommu_pci_seg *pci_seg = iommu->pci_seg;
 
 	if (WARN_ONCE(!amd_iommu_rlookup_table[devid],
 		      "%s: no iommu for devid %x\n", __func__, devid))
 		return NULL;
 
-	table = pci_seg->irq_lookup_table[devid];
-	if (WARN_ONCE(!table, "%s: no table for devid %x:%x\n",
-		      __func__, pci_seg->id, devid))
+	table = irq_lookup_table[devid];
+	if (WARN_ONCE(!table, "%s: no table for devid %x\n", __func__, devid))
 		return NULL;
 
 	return table;
@@ -2757,9 +2755,7 @@ static struct irq_remap_table *__alloc_irq_table(void)
 static void set_remap_table_entry(struct amd_iommu *iommu, u16 devid,
 				  struct irq_remap_table *table)
 {
-	struct amd_iommu_pci_seg *pci_seg = iommu->pci_seg;
-
-	pci_seg->irq_lookup_table[devid] = table;
+	irq_lookup_table[devid] = table;
 	set_dte_irq_entry(devid, table);
 	iommu_flush_dte(iommu, devid);
 }
@@ -2768,14 +2764,8 @@ static int set_remap_table_entry_alias(struct pci_dev *pdev, u16 alias,
 				       void *data)
 {
 	struct irq_remap_table *table = data;
-	struct amd_iommu_pci_seg *pci_seg;
-	struct amd_iommu *iommu = rlookup_amd_iommu(&pdev->dev);
 
-	if (!iommu)
-		return -EINVAL;
-
-	pci_seg = iommu->pci_seg;
-	pci_seg->irq_lookup_table[alias] = table;
+	irq_lookup_table[alias] = table;
 	set_dte_irq_entry(alias, table);
 
 	iommu_flush_dte(amd_iommu_rlookup_table[alias], alias);
@@ -2788,7 +2778,6 @@ static struct irq_remap_table *alloc_irq_table(u16 devid, struct pci_dev *pdev)
 	struct irq_remap_table *table = NULL;
 	struct irq_remap_table *new_table = NULL;
 	struct amd_iommu *iommu;
-	struct amd_iommu_pci_seg *pci_seg;
 	unsigned long flags;
 	u16 alias;
 
@@ -2798,13 +2787,12 @@ static struct irq_remap_table *alloc_irq_table(u16 devid, struct pci_dev *pdev)
 	if (!iommu)
 		goto out_unlock;
 
-	pci_seg = iommu->pci_seg;
-	table = pci_seg->irq_lookup_table[devid];
+	table = irq_lookup_table[devid];
 	if (table)
 		goto out_unlock;
 
 	alias = pci_seg->alias_table[devid];
-	table = pci_seg->irq_lookup_table[alias];
+	table = irq_lookup_table[alias];
 	if (table) {
 		set_remap_table_entry(iommu, devid, table);
 		goto out_wait;
@@ -2818,11 +2806,11 @@ static struct irq_remap_table *alloc_irq_table(u16 devid, struct pci_dev *pdev)
 
 	spin_lock_irqsave(&iommu_table_lock, flags);
 
-	table = pci_seg->irq_lookup_table[devid];
+	table = irq_lookup_table[devid];
 	if (table)
 		goto out_unlock;
 
-	table = pci_seg->irq_lookup_table[alias];
+	table = irq_lookup_table[alias];
 	if (table) {
 		set_remap_table_entry(iommu, devid, table);
 		goto out_wait;
@@ -2916,7 +2904,7 @@ static int modify_irte_ga(u16 devid, int index, struct irte_ga *irte,
 	if (iommu == NULL)
 		return -EINVAL;
 
-	table = get_irq_table(iommu, devid);
+	table = get_irq_table(devid);
 	if (!table)
 		return -ENOMEM;
 
@@ -2957,7 +2945,7 @@ static int modify_irte(u16 devid, int index, union irte *irte)
 	if (iommu == NULL)
 		return -EINVAL;
 
-	table = get_irq_table(iommu, devid);
+	table = get_irq_table(devid);
 	if (!table)
 		return -ENOMEM;
 
@@ -2981,7 +2969,7 @@ static void free_irte(u16 devid, int index)
 	if (iommu == NULL)
 		return;
 
-	table = get_irq_table(iommu, devid);
+	table = get_irq_table(devid);
 	if (!table)
 		return;
 
@@ -3616,7 +3604,7 @@ int amd_iommu_update_ga(int cpu, bool is_run, void *data)
 	if (!iommu)
 		return -ENODEV;
 
-	table = get_irq_table(iommu, devid);
+	table = get_irq_table(devid);
 	if (!table)
 		return -ENODEV;
 
