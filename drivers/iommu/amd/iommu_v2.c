@@ -52,7 +52,7 @@ struct pasid_state {
 
 struct device_state {
 	struct list_head list;
-	u16 devid;
+	u32 devid;
 	atomic_t count;
 	struct pci_dev *pdev;
 	struct pasid_state **states;
@@ -85,17 +85,18 @@ static struct workqueue_struct *iommu_wq;
 
 static void free_pasid_states(struct device_state *dev_state);
 
-static u16 device_id(struct pci_dev *pdev)
+static int device_id(struct pci_dev *pdev)
 {
 	u16 devid;
+	int seg_id = pci_domain_nr(pdev->bus);
 
 	devid = pdev->bus->number;
 	devid = (devid << 8) | pdev->devfn;
 
-	return devid;
+	return ((seg_id << 16) | (devid & 0xffff));
 }
 
-static struct device_state *__get_device_state(u16 devid)
+static struct device_state *__get_device_state(u32 devid)
 {
 	struct device_state *dev_state;
 
@@ -107,7 +108,7 @@ static struct device_state *__get_device_state(u16 devid)
 	return NULL;
 }
 
-static struct device_state *get_device_state(u16 devid)
+static struct device_state *get_device_state(u32 devid)
 {
 	struct device_state *dev_state;
 	unsigned long flags;
@@ -603,7 +604,7 @@ int amd_iommu_bind_pasid(struct pci_dev *pdev, u32 pasid,
 	struct pasid_state *pasid_state;
 	struct device_state *dev_state;
 	struct mm_struct *mm;
-	u16 devid;
+	u32 devid;
 	int ret;
 
 	might_sleep();
@@ -686,7 +687,7 @@ void amd_iommu_unbind_pasid(struct pci_dev *pdev, u32 pasid)
 {
 	struct pasid_state *pasid_state;
 	struct device_state *dev_state;
-	u16 devid;
+	u32 devid;
 
 	might_sleep();
 
@@ -736,7 +737,7 @@ int amd_iommu_init_device(struct pci_dev *pdev, int pasids)
 	struct iommu_group *group;
 	unsigned long flags;
 	int ret, tmp;
-	u16 devid;
+	u32 devid;
 
 	might_sleep();
 
@@ -832,7 +833,7 @@ void amd_iommu_free_device(struct pci_dev *pdev)
 {
 	struct device_state *dev_state;
 	unsigned long flags;
-	u16 devid;
+	u32 devid;
 
 	if (!amd_iommu_v2_supported())
 		return;
@@ -869,7 +870,7 @@ int amd_iommu_set_invalid_ppr_cb(struct pci_dev *pdev,
 {
 	struct device_state *dev_state;
 	unsigned long flags;
-	u16 devid;
+	u32 devid;
 	int ret;
 
 	if (!amd_iommu_v2_supported())
@@ -900,7 +901,7 @@ int amd_iommu_set_invalidate_ctx_cb(struct pci_dev *pdev,
 {
 	struct device_state *dev_state;
 	unsigned long flags;
-	u16 devid;
+	u32 devid;
 	int ret;
 
 	if (!amd_iommu_v2_supported())
