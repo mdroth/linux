@@ -1838,6 +1838,14 @@ void amd_iommu_domain_update(struct protection_domain *domain)
 	amd_iommu_domain_flush_complete(domain);
 }
 
+static void __init amd_iommu_init_dma_ops(void)
+{
+	if (iommu_default_passthrough() || sme_me_mask)
+		x86_swiotlb_enable = true;
+	else
+		x86_swiotlb_enable = false;
+}
+
 int __init amd_iommu_init_api(void)
 {
 	int err;
