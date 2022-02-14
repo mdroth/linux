@@ -681,26 +681,6 @@ static inline void free_rlookup_table(struct amd_iommu_pci_seg *pci_seg)
 	pci_seg->rlookup_table = NULL;
 }
 
-static inline int __init alloc_irq_lookup_table(struct amd_iommu_pci_seg *pci_seg)
-{
-	pci_seg->irq_lookup_table = (void *)__get_free_pages(
-					     GFP_KERNEL | __GFP_ZERO,
-					     get_order(rlookup_table_size));
-	kmemleak_alloc(pci_seg->irq_lookup_table,
-		       rlookup_table_size, 1, GFP_KERNEL);
-	if (pci_seg->irq_lookup_table == NULL)
-		return -ENOMEM;
-
-	return 0;
-}
-
-static inline void free_irq_lookup_table(struct amd_iommu_pci_seg *pci_seg)
-{
-	kmemleak_free(pci_seg->irq_lookup_table);
-	free_pages((unsigned long)pci_seg->irq_lookup_table,
-		   get_order(rlookup_table_size));
-	pci_seg->irq_lookup_table = NULL;
-}
 
 /*
  * Allocates the command buffer. This buffer is per AMD IOMMU. We can
@@ -1540,7 +1520,6 @@ static void __init free_pci_segment(void)
 
 	for_each_pci_segment_safe(pci_seg, next) {
 		list_del(&pci_seg->list);
-		free_irq_lookup_table(pci_seg);
 		free_rlookup_table(pci_seg);
 		free_dev_table(pci_seg);
 		kfree(pci_seg);
@@ -2886,7 +2865,6 @@ static int __init early_amd_iommu_init(void)
 		amd_iommu_irq_remap = check_ioapic_information();
 
 	if (amd_iommu_irq_remap) {
-		struct amd_iommu_pci_seg *pci_seg;
 		/*
 		 * Interrupt remapping enabled, create kmem_cache for the
 		 * remapping tables.
@@ -2902,11 +2880,6 @@ static int __init early_amd_iommu_init(void)
 							0, NULL);
 		if (!amd_iommu_irq_cache)
 			goto out;
-
-		for_each_pci_segment(pci_seg) {
-			if (alloc_irq_lookup_table(pci_seg))
-				goto out;
-		}
 
 		irq_lookup_table = (void *)__get_free_pages(
 				GFP_KERNEL | __GFP_ZERO,
