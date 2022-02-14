@@ -549,7 +549,6 @@ static int __init find_last_devid_from_ivhd(struct ivhd_header *h)
 {
 	u8 *p = (void *)h, *end = (void *)h;
 	struct ivhd_entry *dev;
-	int last_bdf = -EINVAL;
 
 	u32 ivhd_size = get_ivhd_header_size(h);
 
@@ -567,7 +566,6 @@ static int __init find_last_devid_from_ivhd(struct ivhd_header *h)
 		case IVHD_DEV_ALL:
 			/* Use maximum BDF value for DEV_ALL */
 			update_last_devid(0xffff);
-			return 0xffff;
 			break;
 		case IVHD_DEV_SELECT:
 		case IVHD_DEV_RANGE_END:
@@ -575,8 +573,6 @@ static int __init find_last_devid_from_ivhd(struct ivhd_header *h)
 		case IVHD_DEV_EXT_SELECT:
 			/* all the above subfield types refer to device ids */
 			update_last_devid(dev->devid);
-			if (dev->devid > last_bdf)
-				last_bdf = dev->devid;
 			break;
 		default:
 			break;
@@ -586,7 +582,7 @@ static int __init find_last_devid_from_ivhd(struct ivhd_header *h)
 
 	WARN_ON(p != end);
 
-	return last_bdf;
+	return 0;
 }
 
 static int __init check_ivrs_checksum(struct acpi_table_header *table)
@@ -610,29 +606,27 @@ static int __init check_ivrs_checksum(struct acpi_table_header *table)
  * id which we need to handle. This is the first of three functions which parse
  * the ACPI table. So we check the checksum here.
  */
-static int __init find_last_devid_acpi(struct acpi_table_header *table, u16 pci_seg)
+static int __init find_last_devid_acpi(struct acpi_table_header *table)
 {
 	u8 *p = (u8 *)table, *end = (u8 *)table;
 	struct ivhd_header *h;
-	int last_bdf = -EINVAL;
 
 	p += IVRS_HEADER_LENGTH;
 
 	end += table->length;
 	while (p < end) {
 		h = (struct ivhd_header *)p;
-		if (h->pci_seg == pci_seg &&
-		    h->type == amd_iommu_target_ivhd_type) {
-			last_bdf = find_last_devid_from_ivhd(h);
+		if (h->type == amd_iommu_target_ivhd_type) {
+			int ret = find_last_devid_from_ivhd(h);
 
-			if (last_bdf < 0)
-				return last_bdf;
+			if (ret)
+				return ret;
 		}
 		p += h->length;
 	}
 	WARN_ON(p != end);
 
-	return last_bdf;
+	return 0;
 }
 
 /****************************************************************************
@@ -1544,29 +1538,13 @@ static int __init init_iommu_from_acpi(struct amd_iommu *iommu,
 }
 
 /* Allocate PCI segment data structure */
-static struct amd_iommu_pci_seg *__init alloc_pci_segment(u16 id,
-					  struct acpi_table_header *ivrs_base)
+static struct amd_iommu_pci_seg *__init alloc_pci_segment(u16 id)
 {
 	struct amd_iommu_pci_seg *pci_seg;
-	int last_bdf;
 
 	pci_seg = kzalloc(sizeof(struct amd_iommu_pci_seg), GFP_KERNEL);
 	if (pci_seg == NULL)
 		return NULL;
-
-	/*
-	 * First parse ACPI tables to find the largest Bus/Dev/Func we need to
-	 * handle in this PCI segment. Upon this information the shared data
-	 * structures for the PCI segments in the system will be allocated
-	 */
-	last_bdf = find_last_devid_acpi(ivrs_base, id);
-	if (last_bdf < 0) {
-		kfree(pci_seg);
-		return NULL;
-	}
-
-	pci_seg->last_bdf = last_bdf;
-	DUMP_printk("PCI segment : 0x%0x, last bdf : 0x%04x\n", id, last_bdf);
 
 	if (alloc_dev_table(pci_seg))
 		return NULL;
@@ -1583,8 +1561,7 @@ static struct amd_iommu_pci_seg *__init alloc_pci_segment(u16 id,
 	return pci_seg;
 }
 
-static struct amd_iommu_pci_seg *__init get_pci_segment(u16 id,
-					struct acpi_table_header *ivrs_base)
+static struct amd_iommu_pci_seg *__init get_pci_segment(u16 id)
 {
 	struct amd_iommu_pci_seg *pci_seg;
 
@@ -1593,7 +1570,7 @@ static struct amd_iommu_pci_seg *__init get_pci_segment(u16 id,
 			return pci_seg;
 	}
 
-	return alloc_pci_segment(id, ivrs_base);
+	return alloc_pci_segment(id);
 }
 
 static void __init free_pci_segment(void)
@@ -1694,13 +1671,12 @@ static void amd_iommu_ats_write_check_workaround(struct amd_iommu *iommu)
  * together and also allocates the command buffer and programs the
  * hardware. It does NOT enable the IOMMU. This is done afterwards.
  */
-static int __init init_iommu_one(struct amd_iommu *iommu, struct ivhd_header *h,
-				 struct acpi_table_header *ivrs_base)
+static int __init init_iommu_one(struct amd_iommu *iommu, struct ivhd_header *h)
 {
 	struct amd_iommu_pci_seg *pci_seg;
 	int ret;
 
-	pci_seg = get_pci_segment(h->pci_seg, ivrs_base);
+	pci_seg = get_pci_segment(h->pci_seg);
 	if (pci_seg == NULL)
 		return -ENOMEM;
 	iommu->pci_seg = pci_seg;
@@ -1875,7 +1851,7 @@ static int __init init_iommu_all(struct acpi_table_header *table)
 			if (iommu == NULL)
 				return -ENOMEM;
 
-			ret = init_iommu_one(iommu, h, table);
+			ret = init_iommu_one(iommu, h);
 			if (ret)
 				return ret;
 		}
@@ -2401,14 +2377,13 @@ static void __init free_unity_maps(void)
 }
 
 /* called for unity map ACPI definition */
-static int __init init_unity_map_range(struct ivmd_header *m,
-				       struct acpi_table_header *ivrs_base)
+static int __init init_unity_map_range(struct ivmd_header *m)
 {
 	struct unity_map_entry *e = NULL;
 	struct amd_iommu_pci_seg *pci_seg;
 	char *s;
 
-	pci_seg = get_pci_segment(m->pci_seg, ivrs_base);
+	pci_seg = get_pci_segment(m->pci_seg);
 	if (pci_seg == NULL)
 		return -ENOMEM;
 
@@ -2475,7 +2450,7 @@ static int __init init_memory_definitions(struct acpi_table_header *table)
 	while (p < end) {
 		m = (struct ivmd_header *)p;
 		if (m->flags & (IVMD_FLAG_UNITY_MAP | IVMD_FLAG_EXCL_RANGE))
-			init_unity_map_range(m, table);
+			init_unity_map_range(m);
 
 		p += m->length;
 	}
@@ -2898,6 +2873,15 @@ static int __init early_amd_iommu_init(void)
 
 	amd_iommu_target_ivhd_type = get_highest_supported_ivhd_type(ivrs_base);
 	DUMP_printk("Using IVHD type %#x\n", amd_iommu_target_ivhd_type);
+
+	/*
+	 * First parse ACPI tables to find the largest Bus/Dev/Func
+	 * we need to handle. Upon this information the shared data
+	 * structures for the IOMMUs in the system will be allocated
+	 */
+	ret = find_last_devid_acpi(ivrs_base);
+	if (ret)
+		goto out;
 
 	dev_table_size     = tbl_size(DEV_TABLE_ENTRY_SIZE);
 	alias_table_size   = tbl_size(ALIAS_TABLE_ENTRY_SIZE);
