@@ -828,6 +828,12 @@ struct unity_map_entry {
  */
 
 /*
+ * Device table used by hardware. Read and write accesses by software are
+ * locked with the amd_iommu_pd_table lock.
+ */
+extern struct dev_table_entry *amd_iommu_dev_table;
+
+/*
  * Alias table to find requestor ids to device ids. Not locked because only
  * read on runtime.
  */
