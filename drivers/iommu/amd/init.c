@@ -574,7 +574,7 @@ static int __init find_last_devid_acpi(struct acpi_table_header *table, u16 pci_
 {
 	u8 *p = (u8 *)table, *end = (u8 *)table;
 	struct ivhd_header *h;
-	int last_bdf = 0, last_devid;
+	int last_bdf = -EINVAL;
 
 	p += IVRS_HEADER_LENGTH;
 
@@ -583,13 +583,10 @@ static int __init find_last_devid_acpi(struct acpi_table_header *table, u16 pci_
 		h = (struct ivhd_header *)p;
 		if (h->pci_seg == pci_seg &&
 		    h->type == amd_iommu_target_ivhd_type) {
-			last_devid = find_last_devid_from_ivhd(h);
+			last_bdf = find_last_devid_from_ivhd(h);
 
-			if (last_devid < 0)
-				return -EINVAL;
-
-			if (last_devid > last_bdf)
-				last_bdf = last_devid;
+			if (last_bdf < 0)
+				return last_bdf;
 		}
 		p += h->length;
 	}
