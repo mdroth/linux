@@ -234,7 +234,7 @@ static enum iommu_init_state init_state = IOMMU_START_STATE;
 
 static int amd_iommu_enable_interrupts(void);
 static int __init iommu_go_to_state(enum iommu_init_state state);
-static void init_device_table_dma(struct amd_iommu_pci_seg *pci_seg);
+static void init_device_table_dma(void);
 
 static bool amd_iommu_pre_enabled = true;
 
@@ -2099,7 +2099,6 @@ static void print_iommu_info(void)
 static int __init amd_iommu_init_pci(void)
 {
 	struct amd_iommu *iommu;
-	struct amd_iommu_pci_seg *pci_seg;
 	int ret;
 
 	for_each_iommu(iommu) {
@@ -2123,8 +2122,7 @@ static int __init amd_iommu_init_pci(void)
 	 */
 	ret = amd_iommu_init_api();
 
-	for_each_pci_segment(pci_seg)
-		init_device_table_dma(pci_seg);
+	init_device_table_dma();
 
 	for_each_iommu(iommu)
 		iommu_flush_all_caches(iommu);
@@ -2476,31 +2474,23 @@ static int __init init_memory_definitions(struct acpi_table_header *table)
 /*
  * Init the device table to not allow DMA access for devices
  */
-static void init_device_table_dma(struct amd_iommu_pci_seg *pci_seg)
+static void init_device_table_dma(void)
 {
 	u32 devid;
-	struct dev_table_entry *dev_table = pci_seg->dev_table;
-
-	if (dev_table == NULL)
-		return;
 
 	for (devid = 0; devid <= amd_iommu_last_bdf; ++devid) {
-		__set_dev_entry_bit(dev_table, devid, DEV_ENTRY_VALID);
-		__set_dev_entry_bit(dev_table, devid, DEV_ENTRY_TRANSLATION);
+		set_dev_entry_bit(devid, DEV_ENTRY_VALID);
+		set_dev_entry_bit(devid, DEV_ENTRY_TRANSLATION);
 	}
 }
 
-static void __init uninit_device_table_dma(struct amd_iommu_pci_seg *pci_seg)
+static void __init uninit_device_table_dma(void)
 {
 	u32 devid;
-	struct dev_table_entry *dev_table = pci_seg->dev_table;
-
-	if (dev_table == NULL)
-		return;
 
 	for (devid = 0; devid <= amd_iommu_last_bdf; ++devid) {
-		dev_table[devid].data[0] = 0ULL;
-		dev_table[devid].data[1] = 0ULL;
+		amd_iommu_dev_table[devid].data[0] = 0ULL;
+		amd_iommu_dev_table[devid].data[1] = 0ULL;
 	}
 }
 
@@ -3090,11 +3080,8 @@ static int __init state_next(void)
 			free_iommu_resources();
 		} else {
 			struct amd_iommu *iommu;
-			struct amd_iommu_pci_seg *pci_seg;
 
-			for_each_pci_segment(pci_seg)
-				uninit_device_table_dma(pci_seg);
-
+			uninit_device_table_dma();
 			for_each_iommu(iommu)
 				iommu_flush_all_caches(iommu);
 		}
