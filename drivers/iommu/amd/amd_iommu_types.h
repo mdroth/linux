@@ -827,6 +827,12 @@ struct unity_map_entry {
  * Data structures for device handling
  */
 
+/*
+ * Alias table to find requestor ids to device ids. Not locked because only
+ * read on runtime.
+ */
+extern u16 *amd_iommu_alias_table;
+
 /* size of the dma_ops aperture as power of 2 */
 extern unsigned amd_iommu_aperture_order;
 

@@ -185,6 +185,13 @@ static bool amd_iommu_pc_present __read_mostly;
 bool amd_iommu_force_isolation __read_mostly;
 
 /*
+ * The alias table is a driver specific data structure which contains the
+ * mappings of the PCI device ids to the actual requestor ids on the IOMMU.
+ * More than one device can share the same requestor id.
+ */
+u16 *amd_iommu_alias_table;
+
+/*
  * AMD IOMMU allows up to 2^16 different protection domains. This is a bitmap
  * to know which ones are already in use.
  */
@@ -2751,6 +2758,10 @@ static void __init free_iommu_resources(void)
 	kmem_cache_destroy(amd_iommu_irq_cache);
 	amd_iommu_irq_cache = NULL;
 
+	free_pages((unsigned long)amd_iommu_alias_table,
+		   get_order(alias_table_size));
+	amd_iommu_alias_table = NULL;
+
 	free_iommu_all();
 	free_pci_segment();
 }
@@ -2881,6 +2892,15 @@ static int __init early_amd_iommu_init(void)
 
 	/* Device table - directly used by all IOMMUs */
 	ret = -ENOMEM;
+
+	/*
+	 * Alias table - map PCI Bus/Dev/Func to Bus/Dev/Func the
+	 * IOMMU see for that device
+	 */
+	amd_iommu_alias_table = (void *)__get_free_pages(GFP_KERNEL,
+			get_order(alias_table_size));
+	if (amd_iommu_alias_table == NULL)
+		goto out;
 
 	amd_iommu_pd_alloc_bitmap = (void *)__get_free_pages(
 					    GFP_KERNEL | __GFP_ZERO,
