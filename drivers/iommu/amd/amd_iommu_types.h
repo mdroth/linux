@@ -971,13 +971,12 @@ struct irte_ga {
 };
 
 struct irq_2_irte {
-	u32 devid; /* Device ID for IRTE table */
+	u16 devid; /* Device ID for IRTE table */
 	u16 index; /* Index into IRTE table*/
 };
 
 struct amd_ir_data {
 	u32 cached_ga_tag;
-	struct amd_iommu *iommu;
 	struct irq_2_irte irq_2_irte;
 	struct msi_msg msi_entry;
 	void *entry;    /* Pointer to union irte or struct irte_ga */
@@ -995,9 +994,9 @@ struct amd_ir_data {
 
 struct amd_irte_ops {
 	void (*prepare)(void *, u32, bool, u8, u32, int);
-	void (*activate)(struct amd_iommu *iommu, void *, u16, u16);
-	void (*deactivate)(struct amd_iommu *iommu, void *, u16, u16);
-	void (*set_affinity)(struct amd_iommu *iommu, void *, u16, u16, u8, u32);
+	void (*activate)(void *, u16, u16);
+	void (*deactivate)(void *, u16, u16);
+	void (*set_affinity)(void *, u16, u16, u8, u32);
 	void *(*get)(struct irq_remap_table *, int);
 	void (*set_allocated)(struct irq_remap_table *, int);
 	bool (*is_allocated)(struct irq_remap_table *, int);
