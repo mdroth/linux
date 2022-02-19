@@ -620,7 +620,17 @@ void avic_post_state_restore(struct kvm_vcpu *vcpu)
 
 void svm_set_virtual_apic_mode(struct kvm_vcpu *vcpu)
 {
-	return;
+	struct vcpu_svm *svm = to_svm(vcpu);
+
+	if (!lapic_in_kernel(vcpu) || (avic_mode == AVIC_MODE_NONE))
+		return;
+
+	if (kvm_get_apic_mode(vcpu) == LAPIC_MODE_INVALID) {
+		WARN_ONCE(true, "Invalid local APIC state (vcpu_id=%d)", vcpu->vcpu_id);
+		return;
+	}
+
+	kvm_vcpu_update_apicv(&svm->vcpu);
 }
 
 void svm_hwapic_irr_update(struct kvm_vcpu *vcpu, int max_irr)
