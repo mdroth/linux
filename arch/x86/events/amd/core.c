@@ -1056,17 +1056,6 @@ amd_get_event_constraints_f15h(struct cpu_hw_events *cpuc, int idx,
 	}
 }
 
-/* Overcounting of Retire Based Events Erratum */
-static struct event_constraint retire_event_constraints[] __read_mostly = {
-	EVENT_CONSTRAINT_RANGE(0xC0, 0xC5, 0x4, AMD64_EVENTSEL_EVENT),
-	EVENT_CONSTRAINT_RANGE(0xC8, 0xCA, 0x4, AMD64_EVENTSEL_EVENT),
-	EVENT_CONSTRAINT(0xCC, 0x4, AMD64_EVENTSEL_EVENT),
-	EVENT_CONSTRAINT(0xD1, 0x4, AMD64_EVENTSEL_EVENT),
-	EVENT_CONSTRAINT(0x1000000C7, 0x4, AMD64_EVENTSEL_EVENT),
-	EVENT_CONSTRAINT(0x1000000D0, 0x4, AMD64_EVENTSEL_EVENT),
-	EVENT_CONSTRAINT_END
-};
-
 static struct event_constraint pair_constraint;
 
 static struct event_constraint *
@@ -1074,30 +1063,10 @@ amd_get_event_constraints_f17h(struct cpu_hw_events *cpuc, int idx,
 			       struct perf_event *event)
 {
 	struct hw_perf_event *hwc = &event->hw;
-	struct event_constraint *c;
 
 	if (amd_is_pair_event_code(hwc))
 		return &pair_constraint;
 
-	/*
-	 * Although 'Overcounting of Retire Based Events' erratum exists
-	 * for older generation cpus, workaround to set bit 43 works only
-	 * for Family 19h Model 00-0Fh as per the Revision Guide.
-	 */
-	if (boot_cpu_data.x86 == 0x19 && boot_cpu_data.x86_model <= 0xf) {
-		if (is_sampling_event(event))
-			goto out;
-
-		for_each_event_constraint(c, retire_event_constraints) {
-			if (constraint_match(c, event->hw.config)) {
-				event->hw.config |= (1ULL << 43);
-				event->hw.config &= ~(1ULL << 20);
-				return c;
-			}
-		}
-	}
-
-out:
 	return &unconstrained;
 }
 
