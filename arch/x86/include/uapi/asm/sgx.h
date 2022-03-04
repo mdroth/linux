@@ -35,6 +35,8 @@ enum sgx_page_flags {
 	_IOWR(SGX_MAGIC, 0x06, struct sgx_enclave_modt)
 #define SGX_IOC_ENCLAVE_REMOVE_PAGES \
 	_IOWR(SGX_MAGIC, 0x08, struct sgx_enclave_remove_pages)
+#define SGX_IOC_ENCLAVE_AUGMENT_PAGES \
+	_IOWR(SGX_MAGIC, 0x09, struct sgx_enclave_augment_pages)
 
 /**
  * struct sgx_enclave_create - parameter structure for the
@@ -133,6 +135,18 @@ struct sgx_enclave_modt {
  * %SGX_IOC_ENCLAVE_REMOVE_PAGES can be used to complete the page removal.
  */
 struct sgx_enclave_remove_pages {
+	__u64 offset;
+	__u64 length;
+	__u64 count;
+};
+
+/**
+ * struct sgx_enclave_augment_pages - parameter structure for the %SGX_IOC_ENCLAVE_ADD_PAGE ioctl
+ * @offset:	starting page offset
+ * @length:	length of the data (multiple of the page size)
+ * @count:	number of bytes added (multiple of the page size)
+ */
+struct sgx_enclave_augment_pages {
 	__u64 offset;
 	__u64 length;
 	__u64 count;
