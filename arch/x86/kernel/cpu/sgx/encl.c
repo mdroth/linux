@@ -201,12 +201,11 @@ static vm_fault_t sgx_encl_eaug_page(struct vm_area_struct *vma,
 	encl_page->encl = encl;
 
 	/*
-	 * Adding a regular page that is architecturally allowed to only
-	 * be created with RW permissions.
-	 * TBD: Interface with user space policy to support max permissions
-	 * of RWX.
+	 * Dynamic pages do not contribute to MRSIGNATURE, i.e. they are
+	 * controlled only by PTE and EPCM permissions. Thus, the no limit
+	 * is set here.
 	 */
-	prot = PROT_READ | PROT_WRITE;
+	prot = PROT_READ | PROT_WRITE | PROT_EXEC;
 	encl_page->vm_run_prot_bits = calc_vm_prot_bits(prot, 0);
 	encl_page->vm_max_prot_bits = encl_page->vm_run_prot_bits;
 
