@@ -624,12 +624,6 @@ static void kvm_null_fn(void)
 }
 #define IS_KVM_NULL_FN(fn) ((fn) == (void *)kvm_null_fn)
 
-/* Iterate over each memslot intersecting [start, last] (inclusive) range */
-#define kvm_for_each_memslot_in_hva_range(node, slots, start, last)	     \
-	for (node = interval_tree_iter_first(&slots->hva_tree, start, last); \
-	     node;							     \
-	     node = interval_tree_iter_next(node, start, last))	     \
-
 static __always_inline int __kvm_handle_hva_range(struct kvm *kvm,
 						  const struct kvm_hva_range *range)
 {
