@@ -27,8 +27,7 @@
 
 struct sgx_encl_page {
 	unsigned long desc;
-	unsigned long vm_max_prot_bits:8;
-	unsigned long vm_run_prot_bits:8;
+	unsigned long vm_max_prot_bits:16;
 	enum sgx_page_type type:16;
 	struct sgx_epc_page *epc_page;
 	struct sgx_encl *encl;

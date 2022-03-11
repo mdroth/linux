@@ -198,12 +198,6 @@ static struct sgx_encl_page *sgx_encl_page_alloc(struct sgx_encl *encl,
 	/* Calculate maximum of the VM flags for the page. */
 	encl_page->vm_max_prot_bits = calc_vm_prot_bits(prot, 0);
 
-	/*
-	 * At time of allocation, the runtime protection bits are the same
-	 * as the maximum protection bits.
-	 */
-	encl_page->vm_run_prot_bits = encl_page->vm_max_prot_bits;
-
 	return encl_page;
 }
 
@@ -764,12 +758,6 @@ static long sgx_enclave_relax_perm(struct sgx_encl *encl,
 			goto out_unlock;
 		}
 
-		/*
-		 * Change runtime protection before zapping PTEs to ensure
-		 * any new #PF uses new permissions.
-		 */
-		entry->vm_run_prot_bits = vm_prot;
-
 		mutex_unlock(&encl->lock);
 		/*
 		 * Do not keep encl->lock because of dependency on
@@ -946,9 +934,9 @@ static long sgx_enclave_restrict_perm(struct sgx_encl *encl,
 				      struct sgx_enclave_restrict_perm *modp,
 				      u64 secinfo_perm)
 {
-	unsigned long vm_prot, run_prot_restore;
 	struct sgx_encl_page *entry;
 	struct sgx_secinfo secinfo;
+	unsigned long vm_prot;
 	unsigned long addr;
 	unsigned long c;
 	void *epc_virt;
@@ -1002,14 +990,6 @@ static long sgx_enclave_restrict_perm(struct sgx_encl *encl,
 			goto out_unlock;
 		}
 
-		/*
-		 * Change runtime protection before zapping PTEs to ensure
-		 * any new #PF uses new permissions. EPCM permissions (if
-		 * needed) not changed yet.
-		 */
-		run_prot_restore = entry->vm_run_prot_bits;
-		entry->vm_run_prot_bits = vm_prot;
-
 		mutex_unlock(&encl->lock);
 		/*
 		 * Do not keep encl->lock because of dependency on
@@ -1033,12 +1013,12 @@ static long sgx_enclave_restrict_perm(struct sgx_encl *encl,
 			pr_err_once("EMODPR encountered exception %d\n",
 				    ENCLS_TRAPNR(ret));
 			ret = -EFAULT;
-			goto out_prot_restore;
+			goto out_reclaim;
 		}
 		if (encls_failed(ret)) {
 			modp->result = ret;
 			ret = -EFAULT;
-			goto out_prot_restore;
+			goto out_reclaim;
 		}
 
 		ret = sgx_enclave_etrack(encl);
@@ -1054,8 +1034,6 @@ static long sgx_enclave_restrict_perm(struct sgx_encl *encl,
 	ret = 0;
 	goto out;
 
-out_prot_restore:
-	entry->vm_run_prot_bits = run_prot_restore;
 out_reclaim:
 	sgx_mark_page_reclaimable(entry->epc_page);
 out_unlock:
@@ -1136,7 +1114,7 @@ static long sgx_enclave_modt(struct sgx_encl *encl,
 			     struct sgx_enclave_modt *modt,
 			     enum sgx_page_type page_type)
 {
-	unsigned long max_prot_restore, run_prot_restore;
+	unsigned long max_prot_restore;
 	struct sgx_encl_page *entry;
 	struct sgx_secinfo secinfo;
 	unsigned long prot;
@@ -1182,7 +1160,6 @@ static long sgx_enclave_modt(struct sgx_encl *encl,
 		}
 
 		max_prot_restore = entry->vm_max_prot_bits;
-		run_prot_restore = entry->vm_run_prot_bits;
 
 		/*
 		 * Once a regular page becomes a TCS page it cannot be
@@ -1200,7 +1177,6 @@ static long sgx_enclave_modt(struct sgx_encl *encl,
 			}
 			prot = PROT_READ | PROT_WRITE;
 			entry->vm_max_prot_bits = calc_vm_prot_bits(prot, 0);
-			entry->vm_run_prot_bits = entry->vm_max_prot_bits;
 
 			/*
 			 * Prevent page from being reclaimed while mutex
@@ -1262,7 +1238,6 @@ static long sgx_enclave_modt(struct sgx_encl *encl,
 
 out_entry_changed:
 	entry->vm_max_prot_bits = max_prot_restore;
-	entry->vm_run_prot_bits = run_prot_restore;
 out_unlock:
 	mutex_unlock(&encl->lock);
 out:
