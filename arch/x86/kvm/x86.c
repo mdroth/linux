@@ -3161,9 +3161,9 @@ static int kvm_guest_time_update(struct kvm_vcpu *v)
 
 	if (vcpu->pv_time.active)
 		kvm_setup_guest_pvclock(v, &vcpu->pv_time, 0);
-	if (vcpu->xen.vcpu_info_set)
-		kvm_setup_pvclock_page(v, &vcpu->xen.vcpu_info_cache,
-				       offsetof(struct compat_vcpu_info, time));
+	if (vcpu->xen.vcpu_info_cache.active)
+		kvm_setup_guest_pvclock(v, &vcpu->xen.vcpu_info_cache,
+					offsetof(struct compat_vcpu_info, time));
 	if (vcpu->xen.vcpu_time_info_set)
 		kvm_setup_pvclock_page(v, &vcpu->xen.vcpu_time_info_cache, 0);
 	kvm_hv_setup_tsc_page(v->kvm, &vcpu->hv_clock);
@@ -4337,7 +4337,8 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 		r = KVM_XEN_HVM_CONFIG_HYPERCALL_MSR |
 		    KVM_XEN_HVM_CONFIG_INTERCEPT_HCALL |
 		    KVM_XEN_HVM_CONFIG_SHARED_INFO |
-		    KVM_XEN_HVM_CONFIG_EVTCHN_2LEVEL;
+		    KVM_XEN_HVM_CONFIG_EVTCHN_2LEVEL |
+		    KVM_XEN_HVM_CONFIG_EVTCHN_SEND;
 		if (sched_info_on())
 			r |= KVM_XEN_HVM_CONFIG_RUNSTATE;
 		break;
@@ -6564,6 +6565,15 @@ set_pit2_out:
 		if (copy_from_user(&xha, argp, sizeof(xha)))
 			goto out;
 		r = kvm_xen_hvm_set_attr(kvm, &xha);
+		break;
+	}
+	case KVM_XEN_HVM_EVTCHN_SEND: {
+		struct kvm_irq_routing_xen_evtchn uxe;
+
+		r = -EFAULT;
+		if (copy_from_user(&uxe, argp, sizeof(uxe)))
+			goto out;
+		r = kvm_xen_hvm_evtchn_send(kvm, &uxe);
 		break;
 	}
 #endif
@@ -10432,6 +10442,9 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
 			break;
 
 		kvm_clear_request(KVM_REQ_UNBLOCK, vcpu);
+		if (kvm_xen_has_pending_events(vcpu))
+			kvm_xen_inject_pending_events(vcpu);
+
 		if (kvm_cpu_has_pending_timer(vcpu))
 			kvm_inject_pending_timer_irqs(vcpu);
 
@@ -11327,6 +11340,7 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
 
 	vcpu->arch.arch_capabilities = kvm_get_arch_capabilities();
 	vcpu->arch.msr_platform_info = MSR_PLATFORM_INFO_CPUID_FAULT;
+	kvm_xen_init_vcpu(vcpu);
 	kvm_vcpu_mtrr_init(vcpu);
 	vcpu_load(vcpu);
 	kvm_set_tsc_khz(vcpu, max_tsc_khz);
@@ -12252,6 +12266,9 @@ static inline bool kvm_vcpu_has_events(struct kvm_vcpu *vcpu)
 	if (is_guest_mode(vcpu) &&
 	    kvm_x86_ops.nested_ops->hv_timer_pending &&
 	    kvm_x86_ops.nested_ops->hv_timer_pending(vcpu))
+		return true;
+
+	if (kvm_xen_has_pending_events(vcpu))
 		return true;
 
 	return false;

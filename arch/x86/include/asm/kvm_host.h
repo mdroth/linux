@@ -607,15 +607,19 @@ struct kvm_vcpu_hv {
 struct kvm_vcpu_xen {
 	u64 hypercall_rip;
 	u32 current_runstate;
-	bool vcpu_info_set;
 	bool vcpu_time_info_set;
-	struct gfn_to_hva_cache vcpu_info_cache;
+	struct gfn_to_pfn_cache vcpu_info_cache;
 	struct gfn_to_hva_cache vcpu_time_info_cache;
 	struct gfn_to_pfn_cache runstate_cache;
 	u64 last_steal;
 	u64 runstate_entry_time;
 	u64 runstate_times[4];
 	unsigned long evtchn_pending_sel;
+	u32 vcpu_id; /* The Xen / ACPI vCPU ID */
+	u32 timer_virq;
+	u64 timer_expires; /* In guest epoch */
+	atomic_t timer_pending;
+	struct hrtimer timer;
 };
 
 struct kvm_vcpu_arch {
@@ -1022,9 +1026,11 @@ struct msr_bitmap_range {
 
 /* Xen emulation context */
 struct kvm_xen {
+	u32 xen_version;
 	bool long_mode;
 	u8 upcall_vector;
 	struct gfn_to_pfn_cache shinfo_cache;
+	struct idr evtchn_ports;
 };
 
 enum kvm_irqchip_mode {
