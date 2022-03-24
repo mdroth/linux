@@ -188,6 +188,14 @@ union cpuid28_ecx {
  * AMD "Extended Performance Monitoring and Debug" CPUID
  * detection/enumeration details:
  */
+union cpuid80000022_eax {
+	struct {
+		/* Performance Monitoring Version 2 Supported */
+		unsigned int	perfmon_v2:1;
+	} split;
+	unsigned int		full;
+};
+
 union cpuid80000022_ebx {
 	struct {
 		/* Number of Core Performance Counters */

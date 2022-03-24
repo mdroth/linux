@@ -1065,7 +1065,7 @@ static inline int __do_cpuid_func(struct kvm_cpuid_array *array, u32 function)
 		entry->edx = 0;
 		break;
 	case 0x80000000:
-		entry->eax = min(entry->eax, 0x8000001f);
+		entry->eax = min(entry->eax, 0x80000022);
 		break;
 	case 0x80000001:
 		cpuid_entry_override(entry, CPUID_8000_0001_EDX);
@@ -1136,6 +1136,34 @@ static inline int __do_cpuid_func(struct kvm_cpuid_array *array, u32 function)
 			entry->ebx &= ~GENMASK(11, 6);
 		}
 		break;
+	case 0x80000020:
+	case 0x80000021:
+		entry->eax = entry->ebx = entry->ecx = entry->edx = 0;
+		break;
+	/* AMD Extended Performance Monitoring and Debug */
+	case 0x80000022: {
+		struct x86_pmu_capability cap;
+		union cpuid80000022_eax eax;
+		union cpuid80000022_ebx ebx;
+
+		perf_get_x86_pmu_capability(&cap);
+
+		if (!enable_pmu)
+			memset(&cap, 0, sizeof(cap));
+
+		if (cap.version >= 2) {
+			eax.split.perfmon_v2 = 1;
+			ebx.split.num_core_pmc = cap.num_counters_gp;
+		} else {
+			eax.full = 0;
+			ebx.full = 0;
+		}
+
+		entry->eax = eax.full;
+		entry->ebx = ebx.full;
+		entry->ecx = entry->edx = 0;
+		break;
+	}
 	/*Add support for Centaur's CPUID instruction*/
 	case 0xC0000000:
 		/*Just support up to 0xC0000004 now*/
