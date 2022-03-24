@@ -259,6 +259,8 @@ static int sev_guest_init(struct kvm *kvm, struct kvm_sev_cmd *argp)
 
 	INIT_LIST_HEAD(&sev->regions_list);
 
+	kvm_request_apicv_update(kvm, false, APICV_INHIBIT_REASON_SEV);
+
 	return 0;
 
 e_free:
