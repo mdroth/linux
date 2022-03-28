@@ -18,7 +18,6 @@
 #ifndef __MAC_H__
 #define __MAC_H__
 
-#include "tmacro.h"
 #include "upc.h"
 
 /*---------------------  Export Definitions -------------------------*/
@@ -541,7 +540,7 @@
 #define MACvRegBitsOn(iobase, byRegOfs, byBits)			\
 do {									\
 	unsigned char byData;						\
-	VNSvInPortB(iobase + byRegOfs, &byData);			\
+	byData = ioread8(iobase + byRegOfs);				\
 	VNSvOutPortB(iobase + byRegOfs, byData | (byBits));		\
 } while (0)
 
@@ -555,7 +554,7 @@ do {									\
 #define MACvRegBitsOff(iobase, byRegOfs, byBits)			\
 do {									\
 	unsigned char byData;						\
-	VNSvInPortB(iobase + byRegOfs, &byData);			\
+	byData = ioread8(iobase + byRegOfs);				\
 	VNSvOutPortB(iobase + byRegOfs, byData & ~(byBits));		\
 } while (0)
 
@@ -597,18 +596,12 @@ do {								\
 #define MACvReadEtherAddress(iobase, pbyEtherAddr)		\
 do {								\
 	VNSvOutPortB(iobase + MAC_REG_PAGE1SEL, 1);		\
-	VNSvInPortB(iobase + MAC_REG_PAR0,			\
-		    (unsigned char *)pbyEtherAddr);		\
-	VNSvInPortB(iobase + MAC_REG_PAR0 + 1,		\
-		    pbyEtherAddr + 1);				\
-	VNSvInPortB(iobase + MAC_REG_PAR0 + 2,		\
-		    pbyEtherAddr + 2);				\
-	VNSvInPortB(iobase + MAC_REG_PAR0 + 3,		\
-		    pbyEtherAddr + 3);				\
-	VNSvInPortB(iobase + MAC_REG_PAR0 + 4,		\
-		    pbyEtherAddr + 4);				\
-	VNSvInPortB(iobase + MAC_REG_PAR0 + 5,		\
-		    pbyEtherAddr + 5);				\
+	pbyEtherAddr[0] = ioread8(iobase + MAC_REG_PAR0);	\
+	pbyEtherAddr[1] = ioread8(iobase + MAC_REG_PAR0 + 1);	\
+	pbyEtherAddr[2] = ioread8(iobase + MAC_REG_PAR0 + 2);	\
+	pbyEtherAddr[3] = ioread8(iobase + MAC_REG_PAR0 + 3);	\
+	pbyEtherAddr[4] = ioread8(iobase + MAC_REG_PAR0 + 4);	\
+	pbyEtherAddr[5] = ioread8(iobase + MAC_REG_PAR0 + 5);	\
 	VNSvOutPortB(iobase + MAC_REG_PAGE1SEL, 0);		\
 } while (0)
 
@@ -668,7 +661,7 @@ do {									\
 #define MACvClearStckDS(iobase)					\
 do {									\
 	unsigned char byOrgValue;					\
-	VNSvInPortB(iobase + MAC_REG_STICKHW, &byOrgValue);		\
+	byOrgValue = ioread8(iobase + MAC_REG_STICKHW);			\
 	byOrgValue = byOrgValue & 0xFC;					\
 	VNSvOutPortB(iobase + MAC_REG_STICKHW, byOrgValue);		\
 } while (0)
@@ -735,11 +728,11 @@ do {									\
 	VNSvOutPortD(iobase + MAC_REG_ENCFG, dwOrgValue);		\
 } while (0)
 
-#define MACvGPIOIn(iobase, pbyValue)					\
-	VNSvInPortB(iobase + MAC_REG_GPIOCTL1, pbyValue)
-
 #define MACvSetRFLE_LatchBase(iobase)                                 \
 	MACvWordRegBitsOn(iobase, MAC_REG_SOFTPWRCTL, SOFTPWRCTL_RFLEOPT)
+
+#define MAKEWORD(lb, hb) \
+	((unsigned short)(((unsigned char)(lb)) | (((unsigned short)((unsigned char)(hb))) << 8)))
 
 bool MACbIsRegBitsOff(struct vnt_private *priv, unsigned char byRegOfs,
 		      unsigned char byTestBits);
