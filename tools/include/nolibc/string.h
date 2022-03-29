@@ -47,7 +47,10 @@ void *_nolibc_memcpy_down(void *dst, const void *src, size_t len)
 	return dst;
 }
 
-static __attribute__((unused))
+/* might be ignored by the compiler without -ffreestanding, then found as
+ * missing.
+ */
+__attribute__((weak,unused,section(".text.nolibc_memmove")))
 void *memmove(void *dst, const void *src, size_t len)
 {
 	size_t dir, pos;
@@ -75,7 +78,10 @@ void *memcpy(void *dst, const void *src, size_t len)
 	return _nolibc_memcpy_up(dst, src, len);
 }
 
-static __attribute__((unused))
+/* might be ignored by the compiler without -ffreestanding, then found as
+ * missing.
+ */
+__attribute__((weak,unused,section(".text.nolibc_memset")))
 void *memset(void *dst, int b, size_t len)
 {
 	char *p = dst;
@@ -97,6 +103,17 @@ char *strchr(const char *s, int c)
 }
 
 static __attribute__((unused))
+int strcmp(const char *a, const char *b)
+{
+	unsigned int c;
+	int diff;
+
+	while (!(diff = (unsigned char)*a++ - (c = (unsigned char)*b++)) && c)
+		;
+	return diff;
+}
+
+static __attribute__((unused))
 char *strcpy(char *dst, const char *src)
 {
 	char *ret = dst;
@@ -105,7 +122,9 @@ char *strcpy(char *dst, const char *src)
 	return ret;
 }
 
-/* this function is only used with arguments that are not constants */
+/* this function is only used with arguments that are not constants or when
+ * it's not known because optimizations are disabled.
+ */
 static __attribute__((unused))
 size_t nolibc_strlen(const char *str)
 {
@@ -115,11 +134,18 @@ size_t nolibc_strlen(const char *str)
 	return len;
 }
 
+/* do not trust __builtin_constant_p() at -O0, as clang will emit a test and
+ * the two branches, then will rely on an external definition of strlen().
+ */
+#if defined(__OPTIMIZE__)
 #define strlen(str) ({                          \
 	__builtin_constant_p((str)) ?           \
 		__builtin_strlen((str)) :       \
 		nolibc_strlen((str));           \
 })
+#else
+#define strlen(str) nolibc_strlen((str))
+#endif
 
 static __attribute__((unused))
 size_t strlcat(char *dst, const char *src, size_t size)
@@ -178,6 +204,18 @@ char *strncat(char *dst, const char *src, size_t size)
 	return orig;
 }
 
+static __attribute__((unused))
+int strncmp(const char *a, const char *b, size_t size)
+{
+	unsigned int c;
+	int diff = 0;
+
+	while (size-- &&
+	       !(diff = (unsigned char)*a++ - (c = (unsigned char)*b++)) && c)
+		;
+
+	return diff;
+}
 
 static __attribute__((unused))
 char *strncpy(char *dst, const char *src, size_t size)

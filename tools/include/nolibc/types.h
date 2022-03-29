@@ -49,6 +49,17 @@
 #define FD_SETSIZE     256
 #endif
 
+/* PATH_MAX and MAXPATHLEN are often used and found with plenty of different
+ * values.
+ */
+#ifndef PATH_MAX
+#define PATH_MAX       4096
+#endif
+
+#ifndef MAXPATHLEN
+#define MAXPATHLEN     (PATH_MAX)
+#endif
+
 /* Special FD used by all the *at functions */
 #ifndef AT_FDCWD
 #define AT_FDCWD       (-100)
@@ -70,6 +81,9 @@
 /* Macros used on waitpid()'s return status */
 #define WEXITSTATUS(status) (((status) & 0xff00) >> 8)
 #define WIFEXITED(status)   (((status) & 0x7f) == 0)
+
+/* waitpid() flags */
+#define WNOHANG      1
 
 /* standard exit() codes */
 #define EXIT_SUCCESS 0
@@ -111,6 +125,13 @@ typedef struct {
 	} while (0)
 
 /* for poll() */
+#define POLLIN          0x0001
+#define POLLPRI         0x0002
+#define POLLOUT         0x0004
+#define POLLERR         0x0008
+#define POLLHUP         0x0010
+#define POLLNVAL        0x0020
+
 struct pollfd {
 	int fd;
 	short int events;
