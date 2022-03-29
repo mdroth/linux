@@ -23,6 +23,14 @@ static __attribute__((unused)) char itoa_buffer[21];
  * As much as possible, please keep functions alphabetically sorted.
  */
 
+/* must be exported, as it's used by libgcc for various divide functions */
+__attribute__((weak,unused,noreturn,section(".text.nolibc_abort")))
+void abort(void)
+{
+	sys_kill(sys_getpid(), SIGABRT);
+	for (;;);
+}
+
 static __attribute__((unused))
 long atol(const char *s)
 {
@@ -50,6 +58,37 @@ static __attribute__((unused))
 int atoi(const char *s)
 {
 	return atol(s);
+}
+
+/* getenv() tries to find the environment variable named <name> in the
+ * environment array pointed to by global variable "environ" which must be
+ * declared as a char **, and must be terminated by a NULL (it is recommended
+ * to set this variable to the "envp" argument of main()). If the requested
+ * environment variable exists its value is returned otherwise NULL is
+ * returned. getenv() is forcefully inlined so that the reference to "environ"
+ * will be dropped if unused, even at -O0.
+ */
+static __attribute__((unused))
+char *_getenv(const char *name, char **environ)
+{
+	int idx, i;
+
+	if (environ) {
+		for (idx = 0; environ[idx]; idx++) {
+			for (i = 0; name[i] && name[i] == environ[idx][i];)
+				i++;
+			if (!name[i] && environ[idx][i] == '=')
+				return &environ[idx][i+1];
+		}
+	}
+	return NULL;
+}
+
+static inline __attribute__((unused,always_inline))
+char *getenv(const char *name)
+{
+	extern char **environ;
+	return _getenv(name, environ);
 }
 
 /* Converts the unsigned long integer <in> to its hex representation into
@@ -298,43 +337,6 @@ char *u64toa(uint64_t in)
 {
 	u64toa_r(in, itoa_buffer);
 	return itoa_buffer;
-}
-
-static __attribute__((unused))
-int msleep(unsigned int msecs)
-{
-	struct timeval my_timeval = { msecs / 1000, (msecs % 1000) * 1000 };
-
-	if (sys_select(0, 0, 0, 0, &my_timeval) < 0)
-		return (my_timeval.tv_sec * 1000) +
-			(my_timeval.tv_usec / 1000) +
-			!!(my_timeval.tv_usec % 1000);
-	else
-		return 0;
-}
-
-/* This one is not marked static as it's needed by libgcc for divide by zero */
-__attribute__((weak,unused,section(".text.nolibc_raise")))
-int raise(int signal)
-{
-	return sys_kill(sys_getpid(), signal);
-}
-
-static __attribute__((unused))
-unsigned int sleep(unsigned int seconds)
-{
-	struct timeval my_timeval = { seconds, 0 };
-
-	if (sys_select(0, 0, 0, 0, &my_timeval) < 0)
-		return my_timeval.tv_sec + !!my_timeval.tv_usec;
-	else
-		return 0;
-}
-
-static __attribute__((unused))
-int tcsetpgrp(int fd, pid_t pid)
-{
-	return ioctl(fd, TIOCSPGRP, &pid);
 }
 
 #endif /* _NOLIBC_STDLIB_H */
