@@ -1224,8 +1224,8 @@ void amd_pmu_enable_virt(void)
 	cpuc->perf_ctr_virt_mask = 0;
 
 	/* Reload all events */
-	amd_pmu_disable_all();
-	x86_pmu_enable_all(0);
+	amd_pmu.disable_all();
+	amd_pmu.enable_all(0);
 }
 EXPORT_SYMBOL_GPL(amd_pmu_enable_virt);
 
@@ -1242,7 +1242,7 @@ void amd_pmu_disable_virt(void)
 	cpuc->perf_ctr_virt_mask = AMD64_EVENTSEL_HOSTONLY;
 
 	/* Reload all events */
-	amd_pmu_disable_all();
-	x86_pmu_enable_all(0);
+	amd_pmu.disable_all();
+	amd_pmu.enable_all(0);
 }
 EXPORT_SYMBOL_GPL(amd_pmu_disable_virt);

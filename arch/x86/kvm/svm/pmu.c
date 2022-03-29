@@ -138,6 +138,17 @@ static inline struct kvm_pmc *get_gp_pmc_amd(struct kvm_pmu *pmu, u32 msr,
 	return &pmu->gp_counters[msr_to_index(msr)];
 }
 
+static void amd_pmu_global_ctl_update(struct kvm_pmu *pmu, u64 data)
+{
+	int bit;
+	u64 diff = pmu->global_ctrl ^ data;
+
+	pmu->global_ctrl = data;
+
+	for_each_set_bit(bit, (unsigned long *)&diff, pmu->nr_arch_gp_counters)
+		reprogram_counter(pmu, bit);
+}
+
 static unsigned int amd_pmc_perf_hw_id(struct kvm_pmc *pmc)
 {
 	u8 event_select = pmc->eventsel & ARCH_PERFMON_EVENTSEL_EVENT;
@@ -159,12 +170,19 @@ static unsigned int amd_pmc_perf_hw_id(struct kvm_pmc *pmc)
 	return amd_event_mapping[i].event_type;
 }
 
-/* check if a PMC is enabled by comparing it against global_ctrl bits. Because
- * AMD CPU doesn't have global_ctrl MSR, all PMCs are enabled (return TRUE).
- */
+/* Check if a PMC is enabled by comparing it against global_ctrl bits. */
 static bool amd_pmc_is_enabled(struct kvm_pmc *pmc)
 {
-	return true;
+	struct kvm_pmu *pmu = pmc_to_pmu(pmc);
+
+	/*
+	 * On processors that do not support PerfMonV2, advertise all PMCs as
+	 * enabled
+	 */
+	if (pmu->version < 2)
+		return true;
+
+	return test_bit(pmc->idx, (unsigned long *)&pmu->global_ctrl);
 }
 
 static struct kvm_pmc *amd_pmc_idx_to_pmc(struct kvm_pmu *pmu, int pmc_idx)
@@ -209,6 +227,16 @@ static struct kvm_pmc *amd_rdpmc_ecx_to_pmc(struct kvm_vcpu *vcpu,
 
 static bool amd_is_valid_msr(struct kvm_vcpu *vcpu, u32 msr)
 {
+	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
+
+	switch (msr) {
+	case MSR_AMD64_PERF_CNTR_GLOBAL_CTL:
+	case MSR_AMD64_PERF_CNTR_GLOBAL_STATUS:
+	case MSR_AMD64_PERF_CNTR_GLOBAL_STATUS_CLR:
+		return pmu->version >= 2;
+		break;
+	}
+
 	/* All MSRs refer to exactly one PMC, so msr_idx_to_pmc is enough.  */
 	return false;
 }
@@ -243,6 +271,18 @@ static int amd_pmu_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		return 0;
 	}
 
+	switch (msr) {
+	case MSR_AMD64_PERF_CNTR_GLOBAL_CTL:
+		msr_info->data = pmu->global_ctrl;
+		return 0;
+	case MSR_AMD64_PERF_CNTR_GLOBAL_STATUS:
+		msr_info->data = pmu->global_status;
+		return 0;
+	case MSR_AMD64_PERF_CNTR_GLOBAL_STATUS_CLR:	/* write-only */
+		msr_info->data = 0;
+		return 0;
+	}
+
 	return 1;
 }
 
@@ -270,25 +310,51 @@ static int amd_pmu_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		}
 	}
 
+	switch (msr) {
+	case MSR_AMD64_PERF_CNTR_GLOBAL_STATUS:	/* read-only */
+		return 0;
+	case MSR_AMD64_PERF_CNTR_GLOBAL_CTL:
+		if (pmu->global_ctrl != data &&
+		    kvm_valid_perf_global_ctrl(pmu, data))
+			amd_pmu_global_ctl_update(pmu, data);
+		return 0;
+	case MSR_AMD64_PERF_CNTR_GLOBAL_STATUS_CLR:
+		if (!(data & pmu->global_ctrl_mask)) {
+			pmu->global_status &= ~data;
+			return 0;
+		}
+		break;
+	}
+
 	return 1;
 }
 
 static void amd_pmu_refresh(struct kvm_vcpu *vcpu)
 {
 	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
+	struct x86_pmu_capability cap;
+
+	perf_get_x86_pmu_capability(&cap);
 
 	if (guest_cpuid_has(vcpu, X86_FEATURE_PERFCTR_CORE))
 		pmu->nr_arch_gp_counters = AMD64_NUM_COUNTERS_CORE;
+	else if (cap.version >= 2)
+		pmu->nr_arch_gp_counters = cap.num_counters_gp;
 	else
 		pmu->nr_arch_gp_counters = AMD64_NUM_COUNTERS;
 
 	pmu->counter_bitmask[KVM_PMC_GP] = ((u64)1 << 48) - 1;
 	pmu->reserved_bits = 0xfffffff000280000ull;
 	pmu->version = 1;
+
+	if (cap.version >= 2)
+		pmu->version = cap.version;
+
+	pmu->global_ctrl = ((1ull << pmu->nr_arch_gp_counters) - 1);
+
 	/* not applicable to AMD; but clean them to prevent any fall out */
 	pmu->counter_bitmask[KVM_PMC_FIXED] = 0;
 	pmu->nr_arch_fixed_counters = 0;
-	pmu->global_status = 0;
 	bitmap_set(pmu->all_valid_pmc_idx, 0, pmu->nr_arch_gp_counters);
 }
 
@@ -318,6 +384,9 @@ static void amd_pmu_reset(struct kvm_vcpu *vcpu)
 		pmc_stop_counter(pmc);
 		pmc->counter = pmc->eventsel = 0;
 	}
+
+	pmu->global_ctrl = 0;
+	pmu->global_status = 0;
 }
 
 struct kvm_pmu_ops amd_pmu_ops = {
