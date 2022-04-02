@@ -1572,6 +1572,11 @@ static const u8 edid_header[] = {
 	0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00
 };
 
+static void edid_header_fix(void *edid)
+{
+	memcpy(edid, edid_header, sizeof(edid_header));
+}
+
 /**
  * drm_edid_header_is_valid - sanity check the header of the base EDID block
  * @raw_edid: pointer to raw base EDID block
@@ -1580,13 +1585,15 @@ static const u8 edid_header[] = {
  *
  * Return: 8 if the header is perfect, down to 0 if it's totally wrong.
  */
-int drm_edid_header_is_valid(const u8 *raw_edid)
+int drm_edid_header_is_valid(const void *_edid)
 {
+	const struct edid *edid = _edid;
 	int i, score = 0;
 
-	for (i = 0; i < sizeof(edid_header); i++)
-		if (raw_edid[i] == edid_header[i])
+	for (i = 0; i < sizeof(edid_header); i++) {
+		if (edid->header[i] == edid_header[i])
 			score++;
+	}
 
 	return score;
 }
@@ -1597,33 +1604,37 @@ module_param_named(edid_fixup, edid_fixup, int, 0400);
 MODULE_PARM_DESC(edid_fixup,
 		 "Minimum number of valid EDID header bytes (0-8, default 6)");
 
-static int drm_edid_block_checksum(const u8 *raw_edid)
+static int edid_block_compute_checksum(const void *_block)
 {
+	const u8 *block = _block;
 	int i;
 	u8 csum = 0, crc = 0;
 
 	for (i = 0; i < EDID_LENGTH - 1; i++)
-		csum += raw_edid[i];
+		csum += block[i];
 
 	crc = 0x100 - csum;
 
 	return crc;
 }
 
-static bool drm_edid_block_checksum_diff(const u8 *raw_edid, u8 real_checksum)
+static int edid_block_get_checksum(const void *_block)
 {
-	if (raw_edid[EDID_LENGTH - 1] != real_checksum)
-		return true;
-	else
-		return false;
+	const struct edid *block = _block;
+
+	return block->checksum;
 }
 
-static bool drm_edid_is_zero(const u8 *in_edid, int length)
+static int edid_block_tag(const void *_block)
 {
-	if (memchr_inv(in_edid, 0, length))
-		return false;
+	const u8 *block = _block;
 
-	return true;
+	return block[0];
+}
+
+static bool edid_is_zero(const void *edid, int length)
+{
+	return !memchr_inv(edid, 0, length);
 }
 
 /**
@@ -1657,10 +1668,62 @@ bool drm_edid_are_equal(const struct edid *edid1, const struct edid *edid2)
 }
 EXPORT_SYMBOL(drm_edid_are_equal);
 
+enum edid_block_status {
+	EDID_BLOCK_OK = 0,
+	EDID_BLOCK_NULL,
+	EDID_BLOCK_HEADER_CORRUPT,
+	EDID_BLOCK_HEADER_REPAIR,
+	EDID_BLOCK_HEADER_FIXED,
+	EDID_BLOCK_CHECKSUM,
+	EDID_BLOCK_VERSION,
+};
+
+static enum edid_block_status edid_block_check(const void *_block,
+					       bool is_base_block)
+{
+	const struct edid *block = _block;
+
+	if (!block)
+		return EDID_BLOCK_NULL;
+
+	if (is_base_block) {
+		int score = drm_edid_header_is_valid(block);
+
+		if (score < clamp(edid_fixup, 0, 8))
+			return EDID_BLOCK_HEADER_CORRUPT;
+
+		if (score < 8)
+			return EDID_BLOCK_HEADER_REPAIR;
+	}
+
+	if (edid_block_compute_checksum(block) != edid_block_get_checksum(block))
+		return EDID_BLOCK_CHECKSUM;
+
+	if (is_base_block) {
+		if (block->version != 1)
+			return EDID_BLOCK_VERSION;
+	}
+
+	return EDID_BLOCK_OK;
+}
+
+static bool edid_block_status_valid(enum edid_block_status status, int tag)
+{
+	return status == EDID_BLOCK_OK ||
+		status == EDID_BLOCK_HEADER_FIXED ||
+		(status == EDID_BLOCK_CHECKSUM && tag == CEA_EXT);
+}
+
+static bool edid_block_valid(const void *block, bool base)
+{
+	return edid_block_status_valid(edid_block_check(block, base),
+				       edid_block_tag(block));
+}
+
 /**
  * drm_edid_block_valid - Sanity check the EDID block (base or extension)
  * @raw_edid: pointer to raw EDID block
- * @block: type of block to validate (0 for base, extension otherwise)
+ * @block_num: type of block to validate (0 for base, extension otherwise)
  * @print_bad_edid: if true, dump bad EDID blocks to the console
  * @edid_corrupt: if true, the header or checksum is invalid
  *
@@ -1669,88 +1732,70 @@ EXPORT_SYMBOL(drm_edid_are_equal);
  *
  * Return: True if the block is valid, false otherwise.
  */
-bool drm_edid_block_valid(u8 *raw_edid, int block, bool print_bad_edid,
+bool drm_edid_block_valid(u8 *_block, int block_num, bool print_bad_edid,
 			  bool *edid_corrupt)
 {
-	u8 csum;
-	struct edid *edid = (struct edid *)raw_edid;
+	struct edid *block = (struct edid *)_block;
+	enum edid_block_status status;
+	bool is_base_block = block_num == 0;
+	bool valid;
 
-	if (WARN_ON(!raw_edid))
+	if (WARN_ON(!block))
 		return false;
 
-	if (edid_fixup > 8 || edid_fixup < 0)
-		edid_fixup = 6;
+	status = edid_block_check(block, is_base_block);
+	if (status == EDID_BLOCK_HEADER_REPAIR) {
+		DRM_DEBUG("Fixing EDID header, your hardware may be failing\n");
+		edid_header_fix(block);
 
-	if (block == 0) {
-		int score = drm_edid_header_is_valid(raw_edid);
-
-		if (score == 8) {
-			if (edid_corrupt)
-				*edid_corrupt = false;
-		} else if (score >= edid_fixup) {
-			/* Displayport Link CTS Core 1.2 rev1.1 test 4.2.2.6
-			 * The corrupt flag needs to be set here otherwise, the
-			 * fix-up code here will correct the problem, the
-			 * checksum is correct and the test fails
-			 */
-			if (edid_corrupt)
-				*edid_corrupt = true;
-			DRM_DEBUG("Fixing EDID header, your hardware may be failing\n");
-			memcpy(raw_edid, edid_header, sizeof(edid_header));
-		} else {
-			if (edid_corrupt)
-				*edid_corrupt = true;
-			goto bad;
-		}
+		/* Retry with fixed header, update status if that worked. */
+		status = edid_block_check(block, is_base_block);
+		if (status == EDID_BLOCK_OK)
+			status = EDID_BLOCK_HEADER_FIXED;
 	}
 
-	csum = drm_edid_block_checksum(raw_edid);
-	if (drm_edid_block_checksum_diff(raw_edid, csum)) {
-		if (edid_corrupt)
+	if (edid_corrupt) {
+		/*
+		 * Unknown major version isn't corrupt but we can't use it. Only
+		 * the base block can reset edid_corrupt to false.
+		 */
+		if (is_base_block &&
+		    (status == EDID_BLOCK_OK || status == EDID_BLOCK_VERSION))
+			*edid_corrupt = false;
+		else if (status != EDID_BLOCK_OK)
 			*edid_corrupt = true;
-
-		/* allow CEA to slide through, switches mangle this */
-		if (raw_edid[0] == CEA_EXT) {
-			DRM_DEBUG("EDID checksum is invalid, remainder is %d\n", csum);
-			DRM_DEBUG("Assuming a KVM switch modified the CEA block but left the original checksum\n");
-		} else {
-			if (print_bad_edid)
-				DRM_NOTE("EDID checksum is invalid, remainder is %d\n", csum);
-
-			goto bad;
-		}
 	}
 
-	/* per-block-type checks */
-	switch (raw_edid[0]) {
-	case 0: /* base */
-		if (edid->version != 1) {
-			DRM_NOTE("EDID has major version %d, instead of 1\n", edid->version);
-			goto bad;
+	/* Determine whether we can use this block with this status. */
+	valid = edid_block_status_valid(status, edid_block_tag(block));
+
+	/* Some fairly random status printouts. */
+	if (status == EDID_BLOCK_CHECKSUM) {
+		if (valid) {
+			DRM_DEBUG("EDID block checksum is invalid, remainder is %d\n",
+				  edid_block_compute_checksum(block));
+			DRM_DEBUG("Assuming a KVM switch modified the block but left the original checksum\n");
+		} else if (print_bad_edid) {
+			DRM_NOTE("EDID block checksum is invalid, remainder is %d\n",
+				 edid_block_compute_checksum(block));
 		}
-
-		if (edid->revision > 4)
-			DRM_DEBUG("EDID minor > 4, assuming backward compatibility\n");
-		break;
-
-	default:
-		break;
+	} else if (status == EDID_BLOCK_VERSION) {
+		DRM_NOTE("EDID has major version %d, instead of 1\n",
+			 block->version);
 	}
 
-	return true;
-
-bad:
-	if (print_bad_edid) {
-		if (drm_edid_is_zero(raw_edid, EDID_LENGTH)) {
+	if (!valid && print_bad_edid) {
+		if (edid_is_zero(block, EDID_LENGTH)) {
 			pr_notice("EDID block is all zeroes\n");
 		} else {
 			pr_notice("Raw EDID:\n");
 			print_hex_dump(KERN_NOTICE,
 				       " \t", DUMP_PREFIX_NONE, 16, 1,
-				       raw_edid, EDID_LENGTH, false);
+				       block, EDID_LENGTH, false);
 		}
 	}
-	return false;
+
+	return valid;
 }
 EXPORT_SYMBOL(drm_edid_block_valid);
 
@@ -1777,6 +1822,34 @@ bool drm_edid_is_valid(struct edid *edid)
 	return true;
 }
 EXPORT_SYMBOL(drm_edid_is_valid);
+
+static struct edid *edid_filter_invalid_blocks(const struct edid *edid,
+					       int invalid_blocks)
+{
+	struct edid *new, *dest_block;
+	int valid_extensions = edid->extensions - invalid_blocks;
+	int i;
+
+	new = kmalloc_array(valid_extensions + 1, EDID_LENGTH, GFP_KERNEL);
+	if (!new)
+		goto out;
+
+	dest_block = new;
+	for (i = 0; i <= edid->extensions; i++) {
+		const void *block = edid + i;
+
+		if (edid_block_valid(block, i == 0))
+			memcpy(dest_block++, block, EDID_LENGTH);
+	}
+
+	new->extensions = valid_extensions;
+	new->checksum = edid_block_compute_checksum(new);
+
+out:
+	kfree(edid);
+
+	return new;
+}
 
 #define DDC_SEGMENT_ADDR 0x30
 /**
@@ -1859,7 +1932,7 @@ static void connector_bad_edid(struct drm_connector *connector,
 	/* Calculate real checksum for the last edid extension block data */
 	if (last_block < num_blocks)
 		connector->real_edid_checksum =
-			drm_edid_block_checksum(edid + last_block * EDID_LENGTH);
+			edid_block_compute_checksum(edid + last_block * EDID_LENGTH);
 
 	if (connector->bad_edid_counter++ && !drm_debug_enabled(DRM_UT_KMS))
 		return;
@@ -1869,7 +1942,7 @@ static void connector_bad_edid(struct drm_connector *connector,
 		u8 *block = edid + i * EDID_LENGTH;
 		char prefix[20];
 
-		if (drm_edid_is_zero(block, EDID_LENGTH))
+		if (edid_is_zero(block, EDID_LENGTH))
 			sprintf(prefix, "\t[%02x] ZERO ", i);
 		else if (!drm_edid_block_valid(block, i, false, NULL))
 			sprintf(prefix, "\t[%02x] BAD  ", i);
@@ -1934,25 +2007,25 @@ static struct edid *drm_do_get_edid_base_block(struct drm_connector *connector,
 	int *null_edid_counter = connector ? &connector->null_edid_counter : NULL;
 	bool *edid_corrupt = connector ? &connector->edid_corrupt : NULL;
 	void *edid;
-	int i;
+	int try;
 
 	edid = kmalloc(EDID_LENGTH, GFP_KERNEL);
 	if (edid == NULL)
 		return NULL;
 
 	/* base block fetch */
-	for (i = 0; i < 4; i++) {
+	for (try = 0; try < 4; try++) {
 		if (get_edid_block(data, edid, 0, EDID_LENGTH))
 			goto out;
 		if (drm_edid_block_valid(edid, 0, false, edid_corrupt))
 			break;
-		if (i == 0 && drm_edid_is_zero(edid, EDID_LENGTH)) {
+		if (try == 0 && edid_is_zero(edid, EDID_LENGTH)) {
 			if (null_edid_counter)
 				(*null_edid_counter)++;
 			goto carp;
 		}
 	}
-	if (i == 4)
+	if (try == 4)
 		goto carp;
 
 	return edid;
@@ -1990,71 +2063,47 @@ struct edid *drm_do_get_edid(struct drm_connector *connector,
 			      size_t len),
 	void *data)
 {
-	int i, j = 0, valid_extensions = 0;
-	u8 *edid, *new;
-	struct edid *override;
+	int j, invalid_blocks = 0;
+	struct edid *edid, *new, *override;
 
 	override = drm_get_override_edid(connector);
 	if (override)
 		return override;
 
-	edid = (u8 *)drm_do_get_edid_base_block(connector, get_edid_block, data);
+	edid = drm_do_get_edid_base_block(connector, get_edid_block, data);
 	if (!edid)
 		return NULL;
 
-	/* if there's no extensions or no connector, we're done */
-	valid_extensions = edid[0x7e];
-	if (valid_extensions == 0)
-		return (struct edid *)edid;
+	if (edid->extensions == 0)
+		return edid;
 
-	new = krealloc(edid, (valid_extensions + 1) * EDID_LENGTH, GFP_KERNEL);
+	new = krealloc(edid, (edid->extensions + 1) * EDID_LENGTH, GFP_KERNEL);
 	if (!new)
 		goto out;
 	edid = new;
 
-	for (j = 1; j <= edid[0x7e]; j++) {
-		u8 *block = edid + j * EDID_LENGTH;
+	for (j = 1; j <= edid->extensions; j++) {
+		void *block = edid + j;
+		int try;
 
-		for (i = 0; i < 4; i++) {
+		for (try = 0; try < 4; try++) {
 			if (get_edid_block(data, block, j, EDID_LENGTH))
 				goto out;
 			if (drm_edid_block_valid(block, j, false, NULL))
 				break;
 		}
 
-		if (i == 4)
-			valid_extensions--;
+		if (try == 4)
+			invalid_blocks++;
 	}
 
-	if (valid_extensions != edid[0x7e]) {
-		u8 *base;
+	if (invalid_blocks) {
+		connector_bad_edid(connector, (u8 *)edid, edid->extensions + 1);
 
-		connector_bad_edid(connector, edid, edid[0x7e] + 1);
-
-		new = kmalloc_array(valid_extensions + 1, EDID_LENGTH,
-				    GFP_KERNEL);
-		if (!new)
-			goto out;
-
-		base = new;
-		for (i = 0; i <= edid[0x7e]; i++) {
-			u8 *block = edid + i * EDID_LENGTH;
-
-			if (!drm_edid_block_valid(block, i, false, NULL))
-				continue;
-
-			memcpy(base, block, EDID_LENGTH);
-			base += EDID_LENGTH;
-		}
-
-		new[EDID_LENGTH - 1] += new[0x7e] - valid_extensions;
-		new[0x7e] = valid_extensions;
-
-		kfree(edid);
-		edid = new;
+		edid = edid_filter_invalid_blocks(edid, invalid_blocks);
 	}
 
-	return (struct edid *)edid;
+	return edid;
 
 out:
 	kfree(edid);
@@ -3367,7 +3416,7 @@ const u8 *drm_find_edid_extension(const struct edid *edid,
 	/* Find CEA extension */
 	for (i = *ext_index; i < edid->extensions; i++) {
 		edid_ext = (const u8 *)edid + EDID_LENGTH * (i + 1);
-		if (edid_ext[0] == ext_id)
+		if (edid_block_tag(edid_ext) == ext_id)
 			break;
 	}
 
