@@ -6085,6 +6085,8 @@ should put the acknowledged interrupt vector into the 'epr' field.
   #define KVM_SYSTEM_EVENT_SHUTDOWN       1
   #define KVM_SYSTEM_EVENT_RESET          2
   #define KVM_SYSTEM_EVENT_CRASH          3
+  #define KVM_SYSTEM_EVENT_SEV_TERM       4
+  #define KVM_SYSTEM_EVENT_NDATA_VALID    (1u << 31)
 			__u32 type;
                         __u32 ndata;
                         __u64 data[16];
@@ -6095,8 +6097,7 @@ a system-level event using some architecture specific mechanism (hypercall
 or some special instruction). In case of ARM64, this is triggered using
 HVC instruction based PSCI call from the vcpu.
 
-The 'type' field describes the system-level event type.
-Valid values for 'type' are:
+Valid values for bits 30:0 of 'type' are:
 
  - KVM_SYSTEM_EVENT_SHUTDOWN -- the guest has requested a shutdown of the
    VM. Userspace is not obliged to honour this, and if it does honour
@@ -6109,6 +6110,8 @@ Valid values for 'type' are:
    has requested a crash condition maintenance. Userspace can choose
    to ignore the request, or to gather VM memory core dump and/or
    reset/shutdown of the VM.
+ - KVM_SYSTEM_EVENT_SEV_TERM -- an AMD SEV guest requested termination.
+   The guest physical address of the guest's GHCB is stored in `data[0]`.
 
 If KVM_CAP_SYSTEM_EVENT_DATA is present, the 'data' field can contain
 architecture specific information for the system-level event.  Only
@@ -6124,6 +6127,10 @@ the first `ndata` items (possibly zero) of the data array are valid.
 Previous versions of Linux defined a `flags` member in this struct.  The
 field is now aliased to `data[0]`.  Userspace can assume that it is only
 written if ndata is greater than 0.
+
+Extra data for this event is stored in the `data[]` array, up to index
+`ndata-1` included, if bit 31 is set in `type`.  The data depends on the
+`type` field.  There is no extra data if bit 31 is clear or `ndata` is zero.
 
 ::
 
