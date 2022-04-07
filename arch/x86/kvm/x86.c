@@ -9293,8 +9293,20 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 		if (!(vcpu->kvm->arch.hypercall_exit_enabled & (1 << KVM_HC_MAP_GPA_RANGE)))
 			break;
 
-		if (!PAGE_ALIGNED(gpa) || !npages ||
-		    gpa_to_gfn(gpa) + npages <= gpa_to_gfn(gpa)) {
+		if (!PAGE_ALIGNED(gpa) ||
+			gpa_to_gfn(gpa) + npages < gpa_to_gfn(gpa)) {
+			ret = -KVM_EINVAL;
+			break;
+		}
+
+		if (attrs & KVM_MARK_GPA_RANGE_ENC_ACCESS) {
+			vcpu->priv_gfn = gpa_to_gfn(gpa);
+			vcpu->priv_pages = npages;
+			ret = 0;
+			break;
+		}
+
+		if (!npages) {
 			ret = -KVM_EINVAL;
 			break;
 		}
