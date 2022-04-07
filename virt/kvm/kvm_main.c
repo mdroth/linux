@@ -1531,7 +1531,7 @@ static void kvm_replace_memslot(struct kvm *kvm,
 
 bool __weak kvm_arch_private_mem_supported(struct kvm *kvm)
 {
-	return false;
+	return true;
 }
 
 static int check_memory_region_flags(struct kvm *kvm,
