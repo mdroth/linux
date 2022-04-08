@@ -155,6 +155,83 @@ static struct test_run_helper priv_memfd_testsuite[] = {
 	},
 };
 
+static void handle_vm_exit_hypercall(struct kvm_run *run,
+	uint32_t test_id)
+{
+	uint64_t gpa, npages, attrs;
+	int priv_memfd =
+		priv_memfd_testsuite[test_id].priv_memfd;
+	int ret;
+	int fallocate_mode;
+
+	if (run->hypercall.nr != KVM_HC_MAP_GPA_RANGE) {
+		TEST_FAIL("Unhandled Hypercall %lld\n",
+					run->hypercall.nr);
+	}
+
+	gpa = run->hypercall.args[0];
+	npages = run->hypercall.args[1];
+	attrs = run->hypercall.args[2];
+
+	if ((gpa < TEST_MEM_GPA) || ((gpa +
+		(npages << MIN_PAGE_SHIFT)) > TEST_MEM_END)) {
+		TEST_FAIL("Unhandled gpa 0x%lx npages %ld\n",
+			gpa, npages);
+	}
+
+	if (attrs & KVM_MAP_GPA_RANGE_ENCRYPTED)
+		fallocate_mode = 0;
+	else {
+		fallocate_mode = (FALLOC_FL_PUNCH_HOLE |
+			FALLOC_FL_KEEP_SIZE);
+	}
+	pr_info("Converting off 0x%lx pages 0x%lx to %s\n",
+		(gpa - TEST_MEM_GPA), npages,
+		fallocate_mode ?
+			"shared" : "private");
+	ret = fallocate(priv_memfd, fallocate_mode,
+		(gpa - TEST_MEM_GPA),
+		npages << MIN_PAGE_SHIFT);
+	TEST_ASSERT(ret != -1,
+		"fallocate failed in hc handling");
+	run->hypercall.ret = 0;
+}
+
+static void handle_vm_exit_memory_error(struct kvm_run *run,
+	uint32_t test_id)
+{
+	uint64_t gpa, size, flags;
+	int ret;
+	int priv_memfd =
+		priv_memfd_testsuite[test_id].priv_memfd;
+	int fallocate_mode;
+
+	gpa = run->memory.gpa;
+	size = run->memory.size;
+	flags = run->memory.flags;
+
+	if ((gpa < TEST_MEM_GPA) || ((gpa + size)
+					> TEST_MEM_END)) {
+		TEST_FAIL("Unhandled gpa 0x%lx size 0x%lx\n",
+			gpa, size);
+	}
+
+	if (flags & KVM_MEMORY_EXIT_FLAG_PRIVATE)
+		fallocate_mode = 0;
+	else {
+		fallocate_mode = (FALLOC_FL_PUNCH_HOLE |
+				FALLOC_FL_KEEP_SIZE);
+	}
+	pr_info("Converting off 0x%lx size 0x%lx to %s\n",
+		(gpa - TEST_MEM_GPA), size,
+		fallocate_mode ?
+			"shared" : "private");
+	ret = fallocate(priv_memfd, fallocate_mode,
+		(gpa - TEST_MEM_GPA), size);
+	TEST_ASSERT(ret != -1,
+		"fallocate failed in memory error handling");
+}
+
 static void vcpu_work(struct kvm_vm *vm, uint32_t test_id)
 {
 	struct kvm_run *run;
@@ -178,6 +255,16 @@ static void vcpu_work(struct kvm_vm *vm, uint32_t test_id)
 				vm, &priv_memfd_testsuite[test_id], uc.args[1]))
 				break;
 
+			continue;
+		}
+
+		if (run->exit_reason == KVM_EXIT_HYPERCALL) {
+			handle_vm_exit_hypercall(run, test_id);
+			continue;
+		}
+
+		if (run->exit_reason == KVM_EXIT_MEMORY_FAULT) {
+			handle_vm_exit_memory_error(run, test_id);
 			continue;
 		}
 
