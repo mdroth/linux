@@ -338,11 +338,9 @@ static int macb_mdio_read(struct mii_bus *bus, int mii_id, int regnum)
 	struct macb *bp = bus->priv;
 	int status;
 
-	status = pm_runtime_get_sync(&bp->pdev->dev);
-	if (status < 0) {
-		pm_runtime_put_noidle(&bp->pdev->dev);
+	status = pm_runtime_resume_and_get(&bp->pdev->dev);
+	if (status < 0)
 		goto mdio_pm_exit;
-	}
 
 	status = macb_mdio_wait_for_idle(bp);
 	if (status < 0)
@@ -392,11 +390,9 @@ static int macb_mdio_write(struct mii_bus *bus, int mii_id, int regnum,
 	struct macb *bp = bus->priv;
 	int status;
 
-	status = pm_runtime_get_sync(&bp->pdev->dev);
-	if (status < 0) {
-		pm_runtime_put_noidle(&bp->pdev->dev);
+	status = pm_runtime_resume_and_get(&bp->pdev->dev);
+	if (status < 0)
 		goto mdio_pm_exit;
-	}
 
 	status = macb_mdio_wait_for_idle(bp);
 	if (status < 0)
@@ -2785,9 +2781,9 @@ static int macb_open(struct net_device *dev)
 
 	netdev_dbg(bp->dev, "open\n");
 
-	err = pm_runtime_get_sync(&bp->pdev->dev);
+	err = pm_runtime_resume_and_get(&bp->pdev->dev);
 	if (err < 0)
-		goto pm_exit;
+		return err;
 
 	/* RX buffers initialization */
 	macb_init_rx_buffer_size(bp, bufsz);
@@ -4174,11 +4170,9 @@ static int at91ether_open(struct net_device *dev)
 	u32 ctl;
 	int ret;
 
-	ret = pm_runtime_get_sync(&lp->pdev->dev);
-	if (ret < 0) {
-		pm_runtime_put_noidle(&lp->pdev->dev);
+	ret = pm_runtime_resume_and_get(&lp->pdev->dev);
+	if (ret < 0)
 		return ret;
-	}
 
 	/* Clear internal statistics */
 	ctl = macb_readl(lp, NCR);
