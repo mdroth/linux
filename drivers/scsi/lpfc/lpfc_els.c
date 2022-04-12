@@ -1534,6 +1534,8 @@ lpfc_initial_flogi(struct lpfc_vport *vport)
 		lpfc_enqueue_node(vport, ndlp);
 	}
 
+	/* Reset the Fabric flag, topology change may have happened */
+	vport->fc_flag &= ~FC_FABRIC;
 	if (lpfc_issue_els_flogi(vport, ndlp, 0)) {
 		/* A node reference should be retained while registered with a
 		 * transport or dev-loss-evt work is pending.
