@@ -47,6 +47,7 @@ enum {
 	HEADER_CLOCK_DATA,
 	HEADER_HYBRID_TOPOLOGY,
 	HEADER_HYBRID_CPU_PMU_CAPS,
+	HEADER_CPUID_LEAVES,
 	HEADER_LAST_FEATURE,
 	HEADER_FEAT_BITS	= 256,
 };
@@ -165,4 +166,6 @@ int get_cpuid(char *buffer, size_t sz);
 
 char *get_cpuid_str(struct perf_pmu *pmu __maybe_unused);
 int strcmp_cpuid_str(const char *s1, const char *s2);
+
+u16 get_cpuid_leaves(char *vendor, struct cpuid_leaf **cpuid_leaves);
 #endif /* __PERF_HEADER_H */

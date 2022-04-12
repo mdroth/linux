@@ -222,6 +222,8 @@ void perf_env__exit(struct perf_env *env)
 		zfree(&env->hybrid_cpc_nodes[i].pmu_name);
 	}
 	zfree(&env->hybrid_cpc_nodes);
+
+	zfree(&env->cpuid_leaves);
 }
 
 void perf_env__init(struct perf_env *env)
@@ -526,4 +528,25 @@ int perf_env__numa_node(struct perf_env *env, struct perf_cpu cpu)
 	}
 
 	return cpu.cpu >= 0 && cpu.cpu < env->nr_numa_map ? env->numa_map[cpu.cpu] : -1;
+}
+
+int perf_env__find_cpuid_leaf(struct perf_env *env, u32 leaf, u8 sub_leaf,
+			      u32 *eax, u32 *ebx, u32 *ecx, u32 *edx)
+{
+	int i;
+
+	if (!env || !env->nr_leaves)
+		return -1;
+
+	for (i = 0; i < env->nr_leaves; i++) {
+		if (env->cpuid_leaves[i].leaf == leaf &&
+		    env->cpuid_leaves[i].sub_leaf == sub_leaf) {
+			*eax = env->cpuid_leaves[i].eax;
+			*ebx = env->cpuid_leaves[i].ebx;
+			*ecx = env->cpuid_leaves[i].ecx;
+			*edx = env->cpuid_leaves[i].edx;
+			return 0;
+		}
+	}
+	return -1;
 }

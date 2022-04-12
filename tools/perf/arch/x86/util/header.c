@@ -6,9 +6,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <regex.h>
+#include <linux/string.h>
 
 #include "../../../util/debug.h"
 #include "../../../util/header.h"
+
+struct cpuid_leaf amd_cpuid_leaves[] = {
+	{ .leaf = 0x8000001B, .sub_leaf = 0x0 },
+};
 
 static inline void
 cpuid(unsigned int op, unsigned int *a, unsigned int *b, unsigned int *c,
@@ -21,6 +26,38 @@ cpuid(unsigned int op, unsigned int *a, unsigned int *b, unsigned int *c,
 			"=c" (*c),
 			"=d" (*d)
 			: "a" (op));
+}
+
+static inline void
+cpuid_count(unsigned int op, unsigned int sub_op, unsigned int *a,
+	    unsigned int *b, unsigned int *c, unsigned int *d)
+{
+	__asm__ __volatile__ (".byte 0x53\n\tcpuid\n\t"
+			      "movl %%ebx, %%esi\n\t.byte 0x5b"
+			: "=a" (*a),
+			"=S" (*b),
+			"=c" (*c),
+			"=d" (*d)
+			: "a" (op),
+			"c" (sub_op));
+}
+
+u16 get_cpuid_leaves(char *vendor, struct cpuid_leaf **cpuid_leaves)
+{
+	int i = 0;
+
+	if (strstarts(vendor, "AuthenticAMD")) {
+		int nr_leaves = ARRAY_SIZE(amd_cpuid_leaves);
+		*cpuid_leaves = amd_cpuid_leaves;
+
+		for (i = 0; i < nr_leaves; i++) {
+			cpuid_count(amd_cpuid_leaves[i].leaf, amd_cpuid_leaves[i].sub_leaf,
+				    &amd_cpuid_leaves[i].eax, &amd_cpuid_leaves[i].ebx,
+				    &amd_cpuid_leaves[i].ecx, &amd_cpuid_leaves[i].edx);
+		}
+		return nr_leaves;
+	}
+	return 0;
 }
 
 static int

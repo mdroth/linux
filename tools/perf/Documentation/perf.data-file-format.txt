@@ -435,6 +435,22 @@ struct {
 	} [nr_pmu];
 };
 
+	HEADER_CPUID_LEAVES = 32
+
+	List of pmu specific cpuid leaves.
+
+struct cpuid_leaves {
+	u8 nr_leaves;
+	struct cpuid_leaf {
+		u32 leaf;
+		u8 sub_leaf;
+		u32 eax;
+		u32 ebx;
+		u32 ecx;
+		u32 edx;
+	} [nr_leaves];
+};
+
 	other bits are reserved and should ignored for now
 	HEADER_FEAT_BITS	= 256,
 

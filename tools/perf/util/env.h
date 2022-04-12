@@ -50,6 +50,15 @@ struct hybrid_cpc_node {
 	char            *pmu_name;
 };
 
+struct cpuid_leaf {
+	u32 leaf;
+	u8 sub_leaf;
+	u32 eax;
+	u32 ebx;
+	u32 ecx;
+	u32 edx;
+};
+
 struct perf_env {
 	char			*hostname;
 	char			*os_release;
@@ -75,6 +84,7 @@ struct perf_env {
 	int			nr_cpu_pmu_caps;
 	int			nr_hybrid_nodes;
 	int			nr_hybrid_cpc_nodes;
+	int			nr_leaves;
 	char			*cmdline;
 	const char		**cmdline_argv;
 	char			*sibling_cores;
@@ -95,6 +105,7 @@ struct perf_env {
 	unsigned long long	 memory_bsize;
 	struct hybrid_node	*hybrid_nodes;
 	struct hybrid_cpc_node	*hybrid_cpc_nodes;
+	struct cpuid_leaf	*cpuid_leaves;
 #ifdef HAVE_LIBBPF_SUPPORT
 	/*
 	 * bpf_info_lock protects bpf rbtrees. This is needed because the
@@ -172,4 +183,6 @@ bool perf_env__insert_btf(struct perf_env *env, struct btf_node *btf_node);
 struct btf_node *perf_env__find_btf(struct perf_env *env, __u32 btf_id);
 
 int perf_env__numa_node(struct perf_env *env, struct perf_cpu cpu);
+int perf_env__find_cpuid_leaf(struct perf_env *env, u32 leaf, u8 sub_leaf,
+			      u32 *eax, u32 *ebx, u32 *ecx, u32 *edx);
 #endif /* __PERF_ENV_H */

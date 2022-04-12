@@ -1529,6 +1529,73 @@ static int write_hybrid_cpu_pmu_caps(struct feat_fd *ff,
 	return 0;
 }
 
+u16 __weak get_cpuid_leaves(char *vendor __maybe_unused,
+			    struct cpuid_leaf **cpuid_leaves __maybe_unused)
+{
+	return 0;
+}
+
+/*
+ * File format:
+ *
+ * struct cpuid_leaves {
+ *	u8 nr_leaves;
+ *	struct cpuid_leaf {
+ *		u32 leaf;
+ *		u8 sub_leaf;
+ *		u32 eax;
+ *		u32 ebx;
+ *		u32 ecx;
+ *		u32 edx;
+ *	} [nr_leaves];
+ * };
+ */
+static int write_cpuid_leaves(struct feat_fd *ff,
+			      struct evlist *evlist __maybe_unused)
+{
+	struct cpuid_leaf *cpuid_leaves = NULL;
+	char vendor[64];
+	u8 nr_leaves;
+	int ret;
+	int i;
+
+	ret = get_cpuid(vendor, sizeof(vendor));
+	if (ret)
+		return -1;
+
+	nr_leaves = get_cpuid_leaves(vendor, &cpuid_leaves);
+	ret = do_write(ff, &nr_leaves, sizeof(nr_leaves));
+	if (ret < 0)
+		return ret;
+
+	for (i = 0; i < nr_leaves; i++) {
+		ret = do_write(ff, &cpuid_leaves[i].leaf, sizeof(cpuid_leaves[i].leaf));
+		if (ret < 0)
+			return ret;
+
+		ret = do_write(ff, &cpuid_leaves[i].sub_leaf, sizeof(cpuid_leaves[i].sub_leaf));
+		if (ret < 0)
+			return ret;
+
+		ret = do_write(ff, &cpuid_leaves[i].eax, sizeof(cpuid_leaves[i].eax));
+		if (ret < 0)
+			return ret;
+
+		ret = do_write(ff, &cpuid_leaves[i].ebx, sizeof(cpuid_leaves[i].ebx));
+		if (ret < 0)
+			return ret;
+
+		ret = do_write(ff, &cpuid_leaves[i].ecx, sizeof(cpuid_leaves[i].ecx));
+		if (ret < 0)
+			return ret;
+
+		ret = do_write(ff, &cpuid_leaves[i].edx, sizeof(cpuid_leaves[i].edx));
+		if (ret < 0)
+			return ret;
+	}
+	return 0;
+}
+
 static void print_hostname(struct feat_fd *ff, FILE *fp)
 {
 	fprintf(fp, "# hostname : %s\n", ff->ph->env.hostname);
@@ -2155,6 +2222,22 @@ static void print_mem_topology(struct feat_fd *ff, FILE *fp)
 
 	for (i = 0; i < nr; i++) {
 		memory_node__fprintf(&nodes[i], ff->ph->env.memory_bsize, fp);
+	}
+}
+
+static void print_cpuid_leaves(struct feat_fd *ff, FILE *fp)
+{
+	struct cpuid_leaf *cpuid_leaves = ff->ph->env.cpuid_leaves;
+	u8 nr_leaves = ff->ph->env.nr_leaves;
+	int i;
+
+	fprintf(fp, "# cpuid leaves :%s\n", nr_leaves ? "" : " (no cpuid leaves recorded)");
+
+	for (i = 0; i < nr_leaves; i++) {
+		fprintf(fp, "   0x%08x 0x%02x: eax=0x%08x ebx=0x%08x ecx=0x%08x edx=0x%08x\n",
+			cpuid_leaves[i].leaf, cpuid_leaves[i].sub_leaf,
+			cpuid_leaves[i].eax, cpuid_leaves[i].ebx,
+			cpuid_leaves[i].ecx, cpuid_leaves[i].edx);
 	}
 }
 
@@ -3267,6 +3350,51 @@ err:
 	return ret;
 }
 
+static int process_cpuid_leaves(struct feat_fd *ff,
+				void *data __maybe_unused)
+{
+	struct cpuid_leaf *cpuid_leaves = NULL;
+	u8 nr_leaves;
+	int i;
+
+	ff->ph->env.nr_leaves = 0;
+	ff->ph->env.cpuid_leaves = NULL;
+
+	if (__do_read(ff, &nr_leaves, sizeof(nr_leaves)))
+		return -1;
+
+	cpuid_leaves = zalloc(sizeof(struct cpuid_leaf) * nr_leaves);
+	if (!cpuid_leaves)
+		return -ENOMEM;
+
+	for (i = 0; i < nr_leaves; i++) {
+		if (do_read_u32(ff, &cpuid_leaves[i].leaf))
+			goto err;
+
+		if (__do_read(ff, &cpuid_leaves[i].sub_leaf, sizeof(cpuid_leaves[i].sub_leaf)))
+			goto err;
+
+		if (do_read_u32(ff, &cpuid_leaves[i].eax))
+			goto err;
+
+		if (do_read_u32(ff, &cpuid_leaves[i].ebx))
+			goto err;
+
+		if (do_read_u32(ff, &cpuid_leaves[i].ecx))
+			goto err;
+
+		if (do_read_u32(ff, &cpuid_leaves[i].edx))
+			goto err;
+	}
+
+	ff->ph->env.nr_leaves = nr_leaves;
+	ff->ph->env.cpuid_leaves = cpuid_leaves;
+	return 0;
+err:
+	free(cpuid_leaves);
+	return -1;
+}
+
 #define FEAT_OPR(n, func, __full_only) \
 	[HEADER_##n] = {					\
 		.name	    = __stringify(n),			\
@@ -3330,6 +3458,7 @@ const struct perf_header_feature_ops feat_ops[HEADER_LAST_FEATURE] = {
 	FEAT_OPR(CLOCK_DATA,	clock_data,	false),
 	FEAT_OPN(HYBRID_TOPOLOGY,	hybrid_topology,	true),
 	FEAT_OPR(HYBRID_CPU_PMU_CAPS,	hybrid_cpu_pmu_caps,	false),
+	FEAT_OPR(CPUID_LEAVES,	cpuid_leaves,	false),
 };
 
 struct header_print_data {
