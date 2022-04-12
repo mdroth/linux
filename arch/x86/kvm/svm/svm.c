@@ -4808,6 +4808,9 @@ static struct kvm_x86_ops svm_x86_ops __initdata = {
 	.rmp_page_level_adjust = sev_rmp_page_level_adjust,
 
 	.update_protected_guest_state = sev_snp_update_protected_guest_state,
+
+	.alloc_memslot_metadata = sev_alloc_memslot_metadata,
+	.free_memslot = sev_free_memslot,
 };
 
 /*

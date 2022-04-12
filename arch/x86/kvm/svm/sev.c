@@ -4531,3 +4531,38 @@ out:
 unlock:
 	write_unlock(&kvm->mmu_lock);
 }
+
+void sev_free_memslot(struct kvm *kvm, struct kvm_memory_slot *slot)
+{
+	struct kvm_arch_memory_slot *aslot = &slot->arch;
+
+	if (!sev_guest(kvm) || !kvm_slot_is_private(slot))
+		return;
+
+	if (aslot->shared_bitmap) {
+		kvfree(aslot->shared_bitmap);
+		aslot->shared_bitmap = NULL;
+	}
+}
+
+int sev_alloc_memslot_metadata(struct kvm *kvm,
+			       const struct kvm_memory_slot *old,
+			       struct kvm_memory_slot *new)
+{
+	struct kvm_arch_memory_slot *aslot = &new->arch;
+
+	if (!sev_guest(kvm) || !kvm_slot_is_private(new))
+		return 0;
+
+	if (old && old->arch.shared_bitmap) {
+		WARN_ON(old->npages != new->npages);
+		aslot->shared_bitmap = old->arch.shared_bitmap;
+		return 0;
+	}
+
+	aslot->shared_bitmap = kvzalloc(BITS_TO_BYTES(new->npages), GFP_KERNEL_ACCOUNT);
+	if (!aslot->shared_bitmap)
+		return -ENOMEM;
+
+	return 0;
+}

@@ -731,4 +731,10 @@ int sev_snp_update_protected_guest_state(struct kvm_vcpu *vcpu);
 void __svm_sev_es_vcpu_run(unsigned long vmcb_pa);
 void __svm_vcpu_run(unsigned long vmcb_pa, unsigned long *regs);
 
+int sev_alloc_memslot_metadata(struct kvm *kvm,
+			       const struct kvm_memory_slot *old,
+			       struct kvm_memory_slot *new);
+void sev_free_memslot(struct kvm *kvm,
+		      struct kvm_memory_slot *slot);
+
 #endif
