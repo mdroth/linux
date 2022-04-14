@@ -28,15 +28,6 @@
 #include <asm/tlbflush.h>
 #include <variant/tie-asm.h>
 
-/* Unimplemented features. */
-
-#undef KERNEL_STACK_OVERFLOW_CHECK
-
-/* Not well tested.
- *
- * - fast_coprocessor
- */
-
 /*
  * Macro to find first bit set in WINDOWBASE from the left + 1
  *
@@ -350,15 +341,6 @@ KABI_W	_bbsi.l	a2, 3, 1f
 	l32i	a0, a1, PT_AREG0	# restore saved a0
 	wsr	a0, depc
 
-#ifdef KERNEL_STACK_OVERFLOW_CHECK
-
-	/*  Stack overflow check, for debugging  */
-	extui	a2, a1, TASK_SIZE_BITS,XX
-	movi	a3, SIZE??
-	_bge	a2, a3, out_of_stack_panic
-
-#endif
-
 /*
  * This is the common exception handler.
  * We get here from the user exception handler or simply by falling through
@@ -442,7 +424,6 @@ KABI_W	or	a3, a3, a0
 	moveqz	a3, a0, a2		# a3 = LOCKLEVEL iff interrupt
 KABI_W	movi	a2, PS_WOE_MASK
 KABI_W	or	a3, a3, a2
-	rsr	a2, exccause
 #endif
 
 	/* restore return address (or 0 if return to userspace) */
@@ -469,42 +450,56 @@ KABI_W	or	a3, a3, a2
 
 	save_xtregs_opt a1 a3 a4 a5 a6 a7 PT_XTREGS_OPT
 	
+#ifdef CONFIG_TRACE_IRQFLAGS
+	rsr		abi_tmp0, ps
+	extui		abi_tmp0, abi_tmp0, PS_INTLEVEL_SHIFT, PS_INTLEVEL_WIDTH
+	beqz		abi_tmp0, 1f
+	abi_call	trace_hardirqs_off
+1:
+#endif
+#ifdef CONFIG_CONTEXT_TRACKING
+	l32i		abi_tmp0, a1, PT_PS
+	bbci.l		abi_tmp0, PS_UM_BIT, 1f
+	abi_call	context_tracking_user_exit
+1:
+#endif
+
 	/* Go to second-level dispatcher. Set up parameters to pass to the
 	 * exception handler and call the exception handler.
 	 */
 
-	rsr	a4, excsave1
-	addx4	a4, a2, a4
-	l32i	a4, a4, EXC_TABLE_DEFAULT		# load handler
-	mov	abi_arg1, a2			# pass EXCCAUSE
-	mov	abi_arg0, a1			# pass stack frame
+	l32i		abi_arg1, a1, PT_EXCCAUSE	# pass EXCCAUSE
+	rsr		abi_tmp0, excsave1
+	addx4		abi_tmp0, abi_arg1, abi_tmp0
+	l32i		abi_tmp0, abi_tmp0, EXC_TABLE_DEFAULT	# load handler
+	mov		abi_arg0, a1			# pass stack frame
 
 	/* Call the second-level handler */
 
-	abi_callx	a4
+	abi_callx	abi_tmp0
 
 	/* Jump here for exception exit */
 	.global common_exception_return
 common_exception_return:
 
 #if XTENSA_FAKE_NMI
-	l32i	abi_tmp0, a1, PT_EXCCAUSE
-	movi	abi_tmp1, EXCCAUSE_MAPPED_NMI
-	l32i	abi_saved1, a1, PT_PS
-	beq	abi_tmp0, abi_tmp1, .Lrestore_state
+	l32i		abi_tmp0, a1, PT_EXCCAUSE
+	movi		abi_tmp1, EXCCAUSE_MAPPED_NMI
+	l32i		abi_saved1, a1, PT_PS
+	beq		abi_tmp0, abi_tmp1, .Lrestore_state
 #endif
 .Ltif_loop:
-	irq_save a2, a3
+	irq_save	abi_tmp0, abi_tmp1
 #ifdef CONFIG_TRACE_IRQFLAGS
 	abi_call	trace_hardirqs_off
 #endif
 
 	/* Jump if we are returning from kernel exceptions. */
 
-	l32i	abi_saved1, a1, PT_PS
-	GET_THREAD_INFO(a2, a1)
-	l32i	a4, a2, TI_FLAGS
-	_bbci.l	abi_saved1, PS_UM_BIT, .Lexit_tif_loop_kernel
+	l32i		abi_saved1, a1, PT_PS
+	GET_THREAD_INFO(abi_tmp0, a1)
+	l32i		abi_saved0, abi_tmp0, TI_FLAGS
+	_bbci.l		abi_saved1, PS_UM_BIT, .Lexit_tif_loop_kernel
 
 	/* Specific to a user exception exit:
 	 * We need to check some flags for signal handling and rescheduling,
@@ -513,75 +508,80 @@ common_exception_return:
 	 * Note that we don't disable interrupts here. 
 	 */
 
-	_bbsi.l	a4, TIF_NEED_RESCHED, .Lresched
-	movi	a2, _TIF_SIGPENDING | _TIF_NOTIFY_RESUME | _TIF_NOTIFY_SIGNAL
-	bnone	a4, a2, .Lexit_tif_loop_user
+	_bbsi.l		abi_saved0, TIF_NEED_RESCHED, .Lresched
+	movi		abi_tmp0, _TIF_SIGPENDING | _TIF_NOTIFY_RESUME | _TIF_NOTIFY_SIGNAL
+	bnone		abi_saved0, abi_tmp0, .Lexit_tif_loop_user
 
-	l32i	a4, a1, PT_DEPC
-	bgeui	a4, VALID_DOUBLE_EXCEPTION_ADDRESS, .Lrestore_state
+	l32i		abi_tmp0, a1, PT_DEPC
+	bgeui		abi_tmp0, VALID_DOUBLE_EXCEPTION_ADDRESS, .Lrestore_state
 
 	/* Call do_signal() */
 
 #ifdef CONFIG_TRACE_IRQFLAGS
 	abi_call	trace_hardirqs_on
 #endif
-	rsil	a2, 0
-	mov	abi_arg0, a1
+	rsil		abi_tmp0, 0
+	mov		abi_arg0, a1
 	abi_call	do_notify_resume	# int do_notify_resume(struct pt_regs*)
-	j	.Ltif_loop
+	j		.Ltif_loop
 
 .Lresched:
 #ifdef CONFIG_TRACE_IRQFLAGS
 	abi_call	trace_hardirqs_on
 #endif
-	rsil	a2, 0
+	rsil		abi_tmp0, 0
 	abi_call	schedule	# void schedule (void)
-	j	.Ltif_loop
+	j		.Ltif_loop
 
 .Lexit_tif_loop_kernel:
 #ifdef CONFIG_PREEMPTION
-	_bbci.l	a4, TIF_NEED_RESCHED, .Lrestore_state
+	_bbci.l		abi_saved0, TIF_NEED_RESCHED, .Lrestore_state
 
 	/* Check current_thread_info->preempt_count */
 
-	l32i	a4, a2, TI_PRE_COUNT
-	bnez	a4, .Lrestore_state
+	l32i		abi_tmp1, abi_tmp0, TI_PRE_COUNT
+	bnez		abi_tmp1, .Lrestore_state
 	abi_call	preempt_schedule_irq
 #endif
-	j	.Lrestore_state
+	j		.Lrestore_state
 
 .Lexit_tif_loop_user:
+#ifdef CONFIG_CONTEXT_TRACKING
+	abi_call	context_tracking_user_enter
+#endif
 #ifdef CONFIG_HAVE_HW_BREAKPOINT
-	_bbci.l	a4, TIF_DB_DISABLED, 1f
+	_bbci.l		abi_saved0, TIF_DB_DISABLED, 1f
 	abi_call	restore_dbreak
 1:
 #endif
 #ifdef CONFIG_DEBUG_TLB_SANITY
-	l32i	a4, a1, PT_DEPC
-	bgeui	a4, VALID_DOUBLE_EXCEPTION_ADDRESS, .Lrestore_state
+	l32i		abi_tmp0, a1, PT_DEPC
+	bgeui		abi_tmp0, VALID_DOUBLE_EXCEPTION_ADDRESS, .Lrestore_state
 	abi_call	check_tlb_sanity
 #endif
 
 .Lrestore_state:
 #ifdef CONFIG_TRACE_IRQFLAGS
-	extui	a4, abi_saved1, PS_INTLEVEL_SHIFT, PS_INTLEVEL_WIDTH
-	bgei	a4, LOCKLEVEL, 1f
+	extui		abi_tmp0, abi_saved1, PS_INTLEVEL_SHIFT, PS_INTLEVEL_WIDTH
+	bgei		abi_tmp0, LOCKLEVEL, 1f
 	abi_call	trace_hardirqs_on
 1:
 #endif
-	/* Restore optional registers. */
+	/*
+	 * Restore optional registers.
+	 * abi_arg* are used as temporary registers here.
+	 */
 
-	load_xtregs_opt a1 a2 a4 a5 a6 a7 PT_XTREGS_OPT
+	load_xtregs_opt a1 abi_tmp0 abi_arg0 abi_arg1 abi_arg2 abi_arg3 PT_XTREGS_OPT
 
 	/* Restore SCOMPARE1 */
 
 #if XCHAL_HAVE_S32C1I
-	l32i    a2, a1, PT_SCOMPARE1
-	wsr     a2, scompare1
+	l32i		abi_tmp0, a1, PT_SCOMPARE1
+	wsr		abi_tmp0, scompare1
 #endif
-	wsr	abi_saved1, ps		/* disable interrupts */
-
-	_bbci.l	abi_saved1, PS_UM_BIT, kernel_exception_exit
+	wsr		abi_saved1, ps		/* disable interrupts */
+	_bbci.l		abi_saved1, PS_UM_BIT, kernel_exception_exit
 
 user_exception_exit:
 
