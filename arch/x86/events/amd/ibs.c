@@ -586,6 +586,374 @@ static struct perf_ibs perf_ibs_op = {
 	.get_count		= get_ibs_op_count,
 };
 
+/* IBS_OP_DATA2 */
+#define IBS_DATA_SRC_HI_SHIFT			6
+#define IBS_DATA_SRC_HI_MASK			(0x3ull << IBS_DATA_SRC_HI_SHIFT)
+#define IBS_CACHE_HIT_ST_SHIFT			5
+#define IBS_CACHE_HIT_ST_MASK			(0x1ull << IBS_CACHE_HIT_ST_SHIFT)
+#define IBS_RMT_NODE_SHIFT			4
+#define IBS_RMT_NODE_MASK			(0x1ull << IBS_RMT_NODE_SHIFT)
+#define IBS_DATA_SRC_LO_SHIFT			0
+#define IBS_DATA_SRC_LO_MASK			(0x7ull << IBS_DATA_SRC_LO_SHIFT)
+
+/* IBS_OP_DATA3 */
+#define IBS_TLB_REFILL_LAT_SHIFT		48
+#define IBS_TLB_REFILL_LAT_MASK			(0xFFFFull << IBS_TLB_REFILL_LAT_SHIFT)
+#define IBS_DC_MISS_LAT_SHIFT			32
+#define IBS_DC_MISS_LAT_MASK			(0xFFFFull << IBS_DC_MISS_LAT_SHIFT)
+#define IBS_OP_DC_MISS_OPEN_MEM_REQS_SHIFT	26
+#define IBS_OP_DC_MISS_OPEN_MEM_REQS_MASK	(0x3Full << IBS_OP_DC_MISS_OPEN_MEM_REQS_SHIFT)
+#define IBS_OP_MEM_WIDTH_SHIFT			22
+#define IBS_OP_MEM_WIDTH_MASK			(0xFull << IBS_OP_MEM_WIDTH_SHIFT)
+#define IBS_SW_PF_SHIFT				21
+#define IBS_SW_PF_MASK				(0x1ull << IBS_SW_PF_SHIFT)
+#define IBS_L2_MISS_SHIFT			20
+#define IBS_L2_MISS_MASK			(0x1ull << IBS_L2_MISS_SHIFT)
+#define IBS_DC_L2_TLB_HIT_1G_SHIFT		19
+#define IBS_DC_L2_TLB_HIT_1G_MASK		(0x1ull << IBS_DC_L2_TLB_HIT_1G_SHIFT)
+#define IBS_DC_PHY_ADDR_VALID_SHIFT		18
+#define IBS_DC_PHY_ADDR_VALID_MASK		(0x1ull << IBS_DC_PHY_ADDR_VALID_SHIFT)
+#define IBS_DC_LIN_ADDR_VALID_SHIFT		17
+#define IBS_DC_LIN_ADDR_VALID_MASK		(0x1ull << IBS_DC_LIN_ADDR_VALID_SHIFT)
+#define IBS_DC_MISS_NO_MAB_ALLOC_SHIFT		16
+#define IBS_DC_MISS_NO_MAB_ALLOC_MASK		(0x1ull << IBS_DC_MISS_NO_MAB_ALLOC_SHIFT)
+#define IBS_DC_LOCKED_OP_SHIFT			15
+#define IBS_DC_LOCKED_OP_MASK			(0x1ull << IBS_DC_LOCKED_OP_SHIFT)
+#define IBS_DC_UC_MEM_ACC_SHIFT			14
+#define IBS_DC_UC_MEM_ACC_MASK			(0x1ull << IBS_DC_UC_MEM_ACC_SHIFT)
+#define IBS_DC_WC_MEM_ACC_SHIFT			13
+#define IBS_DC_WC_MEM_ACC_MASK			(0x1ull << IBS_DC_WC_MEM_ACC_SHIFT)
+#define IBS_DC_MIS_ACC_SHIFT			8
+#define IBS_DC_MIS_ACC_MASK			(0x1ull << IBS_DC_MIS_ACC_SHIFT)
+#define IBS_DC_MISS_SHIFT			7
+#define IBS_DC_MISS_MASK			(0x1ull << IBS_DC_MISS_SHIFT)
+#define IBS_DC_L2_TLB_HIT_2M_SHIFT		6
+#define IBS_DC_L2_TLB_HIT_2M_MASK		(0x1ull << IBS_DC_L2_TLB_HIT_2M_SHIFT)
+#define IBS_DC_L1_TLB_HIT_1G_SHIFT		5
+#define IBS_DC_L1_TLB_HIT_1G_MASK		(0x1ull << IBS_DC_L1_TLB_HIT_1G_SHIFT)
+#define IBS_DC_L1_TLB_HIT_2M_SHIFT		4
+#define IBS_DC_L1_TLB_HIT_2M_MASK		(0x1ull << IBS_DC_L1_TLB_HIT_2M_SHIFT)
+#define IBS_DC_L2_TLB_MISS_SHIFT		3
+#define IBS_DC_L2_TLB_MISS_MASK			(0x1ull << IBS_DC_L2_TLB_MISS_SHIFT)
+#define IBS_DC_L1_TLB_MISS_SHIFT		2
+#define IBS_DC_L1_TLB_MISS_MASK			(0x1ull << IBS_DC_L1_TLB_MISS_SHIFT)
+#define IBS_ST_OP_SHIFT				1
+#define IBS_ST_OP_MASK				(0x1ull << IBS_ST_OP_SHIFT)
+#define IBS_LD_OP_SHIFT				0
+#define IBS_LD_OP_MASK				(0x1ull << IBS_LD_OP_SHIFT)
+
+static int amd_zen_version(void)
+{
+	static int zen_ver = 0;
+
+	if (zen_ver)
+		return zen_ver;
+
+	if (boot_cpu_data.x86 == 0x17 && boot_cpu_data.x86_model >= 0x30 &&
+	    boot_cpu_data.x86_model <= 0x3F)
+		zen_ver = 2;
+	else if (boot_cpu_data.x86 == 0x19 && boot_cpu_data.x86_model < 0x10)
+		zen_ver = 3;
+	else if (boot_cpu_data.x86 == 0x19 && boot_cpu_data.x86_model >= 0x10)
+		zen_ver = 4;
+
+	return zen_ver;
+}
+
+static void perf_ibs_get_mem_op(u64 op_data3, struct perf_sample_data *data)
+{
+	union perf_mem_data_src *data_src = &data->data_src;
+
+	data_src->mem_op = PERF_MEM_OP_NA;
+
+	if (op_data3 & IBS_LD_OP_MASK)
+		data_src->mem_op = PERF_MEM_OP_LOAD;
+	else if (op_data3 & IBS_ST_OP_MASK)
+		data_src->mem_op = PERF_MEM_OP_STORE;
+}
+
+static u8 perf_ibs_data_src(u64 op_data2)
+{
+	if (amd_zen_version() == 4)
+		return ((op_data2 & IBS_DATA_SRC_HI_MASK) >> (IBS_DATA_SRC_HI_SHIFT - 3)) |
+		       ((op_data2 & IBS_DATA_SRC_LO_MASK) >> IBS_DATA_SRC_LO_SHIFT);
+
+	return (op_data2 & IBS_DATA_SRC_LO_MASK) >> IBS_DATA_SRC_LO_SHIFT;
+}
+
+
+static void perf_ibs_get_mem_lvl(struct perf_event *event, u64 op_data2,
+				 u64 op_data3, struct perf_sample_data *data)
+{
+	union perf_mem_data_src *data_src = &data->data_src;
+	u8 ibs_data_src = perf_ibs_data_src(op_data2);
+
+	data_src->mem_lvl = PERF_MEM_LVL_NA;
+
+	/* L1 Hit */
+	if ((op_data3 & IBS_DC_MISS_MASK) == 0) {
+		data_src->mem_lvl = PERF_MEM_LVL_L1 | PERF_MEM_LVL_HIT;
+		return;
+	}
+
+	/* Load latency (Data cache miss latency) */
+	if (data_src->mem_op == PERF_MEM_OP_LOAD &&
+	    event->attr.sample_type & PERF_SAMPLE_WEIGHT) {
+		data->weight.full = (op_data3 & IBS_DC_MISS_LAT_MASK) >> IBS_DC_MISS_LAT_SHIFT;
+	}
+
+	/* LFB Hit. DC miss with no MAB allocated */
+	if (op_data3 & IBS_DC_MISS_NO_MAB_ALLOC_MASK) {
+		data_src->mem_lvl = PERF_MEM_LVL_LFB | PERF_MEM_LVL_HIT;
+		return;
+	}
+
+	/* L2 Hit */
+	if ((op_data3 & IBS_L2_MISS_MASK) == 0) {
+		/* Erratum #1293 */
+		if (amd_zen_version() != 3 || !(op_data3 & IBS_SW_PF_MASK ||
+		    op_data3 & IBS_DC_MISS_NO_MAB_ALLOC_MASK)) {
+			data_src->mem_lvl = PERF_MEM_LVL_L2 | PERF_MEM_LVL_HIT;
+			return;
+		}
+	}
+
+	/* L3 Hit */
+	if (amd_zen_version() == 4) {
+		if (data_src->mem_op == PERF_MEM_OP_LOAD && ibs_data_src == 0x1) {
+			data_src->mem_lvl = PERF_MEM_LVL_L3 | PERF_MEM_LVL_HIT;
+			return;
+		}
+	} else if (amd_zen_version() == 3 || amd_zen_version() == 2) {
+		if (data_src->mem_op == PERF_MEM_OP_LOAD && ibs_data_src == 0x2) {
+			data_src->mem_lvl = PERF_MEM_LVL_L3 | PERF_MEM_LVL_REM_CCE1 | PERF_MEM_LVL_HIT;
+			return;
+		}
+	}
+
+	/* A peer cache in a near CCX. */
+	if (amd_zen_version() == 4) {
+		if (data_src->mem_op == PERF_MEM_OP_LOAD && ibs_data_src == 0x2) {
+			data_src->mem_lvl = PERF_MEM_LVL_REM_CCE1 | PERF_MEM_LVL_HIT;
+			return;
+		}
+	}
+
+	/* A peer cache in a far CCX. */
+	if (amd_zen_version() == 4) {
+		if (data_src->mem_op == PERF_MEM_OP_LOAD && ibs_data_src == 0x5) {
+			data_src->mem_lvl = PERF_MEM_LVL_REM_CCE2 | PERF_MEM_LVL_HIT;
+			return;
+		}
+	} else if (amd_zen_version() == 3 || amd_zen_version() == 2) {
+		if (data_src->mem_op == PERF_MEM_OP_LOAD && ibs_data_src == 0x4) {
+			data_src->mem_lvl = PERF_MEM_LVL_REM_CCE2 | PERF_MEM_LVL_HIT;
+			return;
+		}
+	}
+
+	/* DRAM */
+	if (data_src->mem_op == PERF_MEM_OP_LOAD && ibs_data_src == 0x3) {
+		if ((op_data2 & IBS_RMT_NODE_MASK) == 0)
+			data_src->mem_lvl = PERF_MEM_LVL_LOC_RAM | PERF_MEM_LVL_HIT;
+		else
+			data_src->mem_lvl = PERF_MEM_LVL_REM_RAM1 | PERF_MEM_LVL_HIT;
+
+		/* Uncacheable memory */
+		if (op_data3 & IBS_DC_UC_MEM_ACC_MASK)
+			data_src->mem_lvl |= PERF_MEM_LVL_UNC | PERF_MEM_LVL_HIT;
+		return;
+	}
+
+	/* PMEM */
+	if (amd_zen_version() == 4) {
+		if (data_src->mem_op == PERF_MEM_OP_LOAD && ibs_data_src == 0x6) {
+			data_src->mem_lvl_num = PERF_MEM_LVLNUM_PMEM;
+			if (op_data2 & IBS_RMT_NODE_MASK) {
+				data_src->mem_remote = PERF_MEM_REMOTE_REMOTE;
+				/* IBS doesn't provide Remote socket detail */
+				data_src->mem_hops = PERF_MEM_HOPS_1;
+			}
+
+			/* Uncacheable memory */
+			if (op_data3 & IBS_DC_UC_MEM_ACC_MASK)
+				data_src->mem_lvl |= PERF_MEM_LVL_UNC | PERF_MEM_LVL_HIT;
+			return;
+		}
+	}
+
+	/* Extension Memory */
+	if (amd_zen_version() == 4) {
+		if (data_src->mem_op == PERF_MEM_OP_LOAD && ibs_data_src == 0x8) {
+			data_src->mem_lvl_num = PERF_MEM_LVLNUM_EXTN_MEM;
+			if (op_data2 & IBS_RMT_NODE_MASK) {
+				data_src->mem_remote = PERF_MEM_REMOTE_REMOTE;
+				/* IBS doesn't provide Remote socket detail */
+				data_src->mem_hops = PERF_MEM_HOPS_1;
+			}
+
+			/* Uncacheable memory */
+			if (op_data3 & IBS_DC_UC_MEM_ACC_MASK)
+				data_src->mem_lvl |= PERF_MEM_LVL_UNC | PERF_MEM_LVL_HIT;
+			return;
+		}
+	}
+
+	/* IO */
+	if (data_src->mem_op == PERF_MEM_OP_LOAD && ibs_data_src == 0x7) {
+		data_src->mem_lvl = PERF_MEM_LVL_IO | PERF_MEM_LVL_HIT;
+		if (op_data2 & IBS_RMT_NODE_MASK)
+			data_src->mem_remote = PERF_MEM_REMOTE_REMOTE;
+		return;
+	}
+
+	if (data_src->mem_op == PERF_MEM_OP_STORE) {
+		/* Store to uncacheable memory */
+		if (op_data3 & IBS_DC_UC_MEM_ACC_MASK)
+			data_src->mem_lvl = PERF_MEM_LVL_UNC | PERF_MEM_LVL_HIT;
+		return;
+	}
+}
+
+static void
+perf_ibs_get_mem_snoop(u64 op_data2, struct perf_sample_data *data)
+{
+	union perf_mem_data_src *data_src = &data->data_src;
+	u8 ibs_data_src = perf_ibs_data_src(op_data2);
+
+	data_src->mem_snoop = PERF_MEM_SNOOP_NA;
+
+	if (data_src->mem_op != PERF_MEM_OP_LOAD ||
+	    op_data2 & IBS_CACHE_HIT_ST_MASK ||
+	    data_src->mem_lvl & PERF_MEM_LVL_L1 ||
+	    data_src->mem_lvl & PERF_MEM_LVL_L2)
+		return;
+
+	if ((amd_zen_version() == 2 && ibs_data_src == 2) ||
+	    (amd_zen_version() == 4 && (ibs_data_src == 1 ||
+	     ibs_data_src == 2 || ibs_data_src == 5))) {
+		data_src->mem_snoop = PERF_MEM_SNOOP_HITM;
+	}
+}
+
+static void perf_ibs_get_tlb_lvl(u64 op_data3, struct perf_sample_data *data)
+{
+	union perf_mem_data_src *data_src = &data->data_src;
+	u64 ibs_dc_l1_tlb_miss = op_data3 & IBS_DC_L1_TLB_MISS_MASK;
+	u64 ibs_dc_lin_addr_valid = op_data3 & IBS_DC_LIN_ADDR_VALID_MASK;
+	u64 ibs_dc_l2_tlb_miss = op_data3 & IBS_DC_L2_TLB_MISS_MASK;
+
+	data_src->mem_dtlb = PERF_MEM_TLB_NA;
+
+	if (!ibs_dc_lin_addr_valid)
+		return;
+
+	if (!ibs_dc_l1_tlb_miss) {
+		data_src->mem_dtlb = PERF_MEM_TLB_L1 | PERF_MEM_TLB_HIT;
+		return;
+	}
+
+	if (!ibs_dc_l2_tlb_miss) {
+		data_src->mem_dtlb = PERF_MEM_TLB_L2 | PERF_MEM_TLB_HIT;
+		return;
+	}
+
+	data_src->mem_dtlb = PERF_MEM_TLB_L2 | PERF_MEM_TLB_MISS;
+}
+
+static void
+perf_ibs_get_mem_lock(u64 op_data3, struct perf_sample_data *data)
+{
+	union perf_mem_data_src *data_src = &data->data_src;
+
+	data_src->mem_lock = PERF_MEM_LOCK_NA;
+
+	if (op_data3 & IBS_DC_LOCKED_OP_MASK)
+		data_src->mem_lock = PERF_MEM_LOCK_LOCKED;
+}
+
+#define ibs_op_msr_idx(msr)	(msr - MSR_AMD64_IBSOPCTL)
+
+static bool perf_ibs_get_data_src(struct perf_event *event,
+				  struct perf_ibs_data *ibs_data,
+				  struct perf_sample_data *data)
+{
+	union perf_mem_data_src *data_src = &data->data_src;
+	u64 op_data2 = ibs_data->regs[ibs_op_msr_idx(MSR_AMD64_IBSOPDATA2)];
+	u64 op_data3 = ibs_data->regs[ibs_op_msr_idx(MSR_AMD64_IBSOPDATA3)];
+
+	perf_ibs_get_mem_op(op_data3, data);
+	if (data_src->mem_op != PERF_MEM_OP_LOAD &&
+	    data_src->mem_op != PERF_MEM_OP_STORE)
+		return true;
+
+	/* Erratum #1293 */
+	if (amd_zen_version() == 3 && (op_data3 & IBS_SW_PF_MASK ||
+	    op_data3 & IBS_DC_MISS_NO_MAB_ALLOC_MASK)) {
+		/*
+		 * OP_DATA2 has only two fields on Zen3: DataSrc and RmtNode.
+		 * DataSrc=0 is No valid status and RmtNode is invalid when
+		 * DataSrc=0.
+		 */
+		op_data2 = 0;
+	}
+
+	perf_ibs_get_mem_lvl(event, op_data2, op_data3, data);
+	perf_ibs_get_mem_snoop(op_data2, data);
+	perf_ibs_get_tlb_lvl(op_data3, data);
+	perf_ibs_get_mem_lock(op_data3, data);
+
+	return false;
+}
+
+static void perf_ibs_get_data_addr(struct perf_ibs_data *ibs_data,
+				   struct perf_sample_data *data)
+{
+	union perf_mem_data_src *data_src = &data->data_src;
+	u64 ibs_dc_lin_addr_valid = ibs_data->regs[ibs_op_msr_idx(MSR_AMD64_IBSOPDATA3)] &
+					IBS_DC_LIN_ADDR_VALID_MASK;
+
+	if ((data_src->mem_op != PERF_MEM_OP_LOAD &&
+	    data_src->mem_op != PERF_MEM_OP_STORE) ||
+	    !ibs_dc_lin_addr_valid) {
+		data->addr = 0x0;
+		return;
+	}
+
+	data->addr = ibs_data->regs[ibs_op_msr_idx(MSR_AMD64_IBSDCLINAD)];
+}
+
+static void perf_ibs_get_phy_addr(struct perf_ibs_data *ibs_data,
+				  struct perf_sample_data *data)
+{
+	union perf_mem_data_src *data_src = &data->data_src;
+	u64 ibs_dc_phy_addr_valid = ibs_data->regs[ibs_op_msr_idx(MSR_AMD64_IBSOPDATA3)] &
+					IBS_DC_PHY_ADDR_VALID_MASK;
+
+	if ((data_src->mem_op != PERF_MEM_OP_LOAD &&
+	    data_src->mem_op != PERF_MEM_OP_STORE) ||
+	    !ibs_dc_phy_addr_valid) {
+		data->phys_addr = 0x0;
+		return;
+	}
+
+	data->phys_addr = ibs_data->regs[ibs_op_msr_idx(MSR_AMD64_IBSDCPHYSAD)];
+}
+
+static int perf_ibs_get_offset_max(struct perf_ibs *perf_ibs, u64 sample_type,
+				   int check_rip)
+{
+	if (sample_type & PERF_SAMPLE_RAW ||
+	    (perf_ibs == &perf_ibs_op &&
+	    (sample_type & PERF_SAMPLE_DATA_SRC ||
+	    sample_type & PERF_SAMPLE_ADDR ||
+	    sample_type & PERF_SAMPLE_PHYS_ADDR)))
+		return perf_ibs->offset_max;
+	else if (check_rip)
+		return 3;
+	return 1;
+}
+
 static int perf_ibs_handle_irq(struct perf_ibs *perf_ibs, struct pt_regs *iregs)
 {
 	struct cpu_perf_ibs *pcpu = this_cpu_ptr(perf_ibs->pcpu);
@@ -633,12 +1001,9 @@ fail:
 	size = 1;
 	offset = 1;
 	check_rip = (perf_ibs == &perf_ibs_op && (ibs_caps & IBS_CAPS_RIPINVALIDCHK));
-	if (event->attr.sample_type & PERF_SAMPLE_RAW)
-		offset_max = perf_ibs->offset_max;
-	else if (check_rip)
-		offset_max = 3;
-	else
-		offset_max = 1;
+
+	offset_max = perf_ibs_get_offset_max(perf_ibs, event->attr.sample_type, check_rip);
+
 	do {
 		rdmsrl(msr + offset, *buf++);
 		size++;
@@ -691,7 +1056,17 @@ fail:
 		data.raw = &raw;
 	}
 
+	if (perf_ibs == &perf_ibs_op) {
+		if (event->attr.sample_type & PERF_SAMPLE_DATA_SRC)
+			perf_ibs_get_data_src(event, &ibs_data, &data);
+		if (event->attr.sample_type & PERF_SAMPLE_ADDR)
+			perf_ibs_get_data_addr(&ibs_data, &data);
+		if (event->attr.sample_type & PERF_SAMPLE_PHYS_ADDR)
+			perf_ibs_get_phy_addr(&ibs_data, &data);
+	}
+
 	throttle = perf_event_overflow(event, &data, &regs);
+
 out:
 	if (throttle) {
 		perf_ibs_stop(event, 0);
