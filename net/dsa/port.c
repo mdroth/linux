@@ -459,9 +459,7 @@ int dsa_port_bridge_join(struct dsa_port *dp, struct net_device *br,
 			 struct netlink_ext_ack *extack)
 {
 	struct dsa_notifier_bridge_info info = {
-		.tree_index = dp->ds->dst->index,
-		.sw_index = dp->ds->index,
-		.port = dp->index,
+		.dp = dp,
 		.extack = extack,
 	};
 	struct net_device *dev = dp->slave;
@@ -531,9 +529,7 @@ void dsa_port_pre_bridge_leave(struct dsa_port *dp, struct net_device *br)
 void dsa_port_bridge_leave(struct dsa_port *dp, struct net_device *br)
 {
 	struct dsa_notifier_bridge_info info = {
-		.tree_index = dp->ds->dst->index,
-		.sw_index = dp->ds->index,
-		.port = dp->index,
+		.dp = dp,
 	};
 	int err;
 
@@ -563,8 +559,7 @@ int dsa_port_lag_change(struct dsa_port *dp,
 			struct netdev_lag_lower_state_info *linfo)
 {
 	struct dsa_notifier_lag_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
+		.dp = dp,
 	};
 	bool tx_enabled;
 
@@ -633,8 +628,7 @@ int dsa_port_lag_join(struct dsa_port *dp, struct net_device *lag_dev,
 		      struct netlink_ext_ack *extack)
 {
 	struct dsa_notifier_lag_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
+		.dp = dp,
 		.info = uinfo,
 	};
 	struct net_device *bridge_dev;
@@ -679,8 +673,7 @@ void dsa_port_lag_leave(struct dsa_port *dp, struct net_device *lag_dev)
 {
 	struct net_device *br = dsa_port_bridge_dev_get(dp);
 	struct dsa_notifier_lag_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
+		.dp = dp,
 	};
 	int err;
 
@@ -942,9 +935,8 @@ int dsa_port_mtu_change(struct dsa_port *dp, int new_mtu,
 			bool targeted_match)
 {
 	struct dsa_notifier_mtu_info info = {
-		.sw_index = dp->ds->index,
+		.dp = dp,
 		.targeted_match = targeted_match,
-		.port = dp->index,
 		.mtu = new_mtu,
 	};
 
@@ -955,8 +947,7 @@ int dsa_port_fdb_add(struct dsa_port *dp, const unsigned char *addr,
 		     u16 vid)
 {
 	struct dsa_notifier_fdb_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
+		.dp = dp,
 		.addr = addr,
 		.vid = vid,
 		.db = {
@@ -979,8 +970,7 @@ int dsa_port_fdb_del(struct dsa_port *dp, const unsigned char *addr,
 		     u16 vid)
 {
 	struct dsa_notifier_fdb_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
+		.dp = dp,
 		.addr = addr,
 		.vid = vid,
 		.db = {
@@ -1000,8 +990,7 @@ static int dsa_port_host_fdb_add(struct dsa_port *dp,
 				 struct dsa_db db)
 {
 	struct dsa_notifier_fdb_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
+		.dp = dp,
 		.addr = addr,
 		.vid = vid,
 		.db = db,
@@ -1052,8 +1041,7 @@ static int dsa_port_host_fdb_del(struct dsa_port *dp,
 				 struct dsa_db db)
 {
 	struct dsa_notifier_fdb_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
+		.dp = dp,
 		.addr = addr,
 		.vid = vid,
 		.db = db,
@@ -1148,8 +1136,7 @@ int dsa_port_mdb_add(const struct dsa_port *dp,
 		     const struct switchdev_obj_port_mdb *mdb)
 {
 	struct dsa_notifier_mdb_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
+		.dp = dp,
 		.mdb = mdb,
 		.db = {
 			.type = DSA_DB_BRIDGE,
@@ -1167,8 +1154,7 @@ int dsa_port_mdb_del(const struct dsa_port *dp,
 		     const struct switchdev_obj_port_mdb *mdb)
 {
 	struct dsa_notifier_mdb_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
+		.dp = dp,
 		.mdb = mdb,
 		.db = {
 			.type = DSA_DB_BRIDGE,
@@ -1187,8 +1173,7 @@ static int dsa_port_host_mdb_add(const struct dsa_port *dp,
 				 struct dsa_db db)
 {
 	struct dsa_notifier_mdb_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
+		.dp = dp,
 		.mdb = mdb,
 		.db = db,
 	};
@@ -1232,8 +1217,7 @@ static int dsa_port_host_mdb_del(const struct dsa_port *dp,
 				 struct dsa_db db)
 {
 	struct dsa_notifier_mdb_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
+		.dp = dp,
 		.mdb = mdb,
 		.db = db,
 	};
@@ -1277,8 +1261,7 @@ int dsa_port_vlan_add(struct dsa_port *dp,
 		      struct netlink_ext_ack *extack)
 {
 	struct dsa_notifier_vlan_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
+		.dp = dp,
 		.vlan = vlan,
 		.extack = extack,
 	};
@@ -1290,8 +1273,7 @@ int dsa_port_vlan_del(struct dsa_port *dp,
 		      const struct switchdev_obj_port_vlan *vlan)
 {
 	struct dsa_notifier_vlan_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
+		.dp = dp,
 		.vlan = vlan,
 	};
 
@@ -1303,8 +1285,7 @@ int dsa_port_host_vlan_add(struct dsa_port *dp,
 			   struct netlink_ext_ack *extack)
 {
 	struct dsa_notifier_vlan_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
+		.dp = dp,
 		.vlan = vlan,
 		.extack = extack,
 	};
@@ -1324,8 +1305,7 @@ int dsa_port_host_vlan_del(struct dsa_port *dp,
 			   const struct switchdev_obj_port_vlan *vlan)
 {
 	struct dsa_notifier_vlan_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
+		.dp = dp,
 		.vlan = vlan,
 	};
 	struct dsa_port *cpu_dp = dp->cpu_dp;
@@ -1746,9 +1726,7 @@ void dsa_port_hsr_leave(struct dsa_port *dp, struct net_device *hsr)
 int dsa_port_tag_8021q_vlan_add(struct dsa_port *dp, u16 vid, bool broadcast)
 {
 	struct dsa_notifier_tag_8021q_vlan_info info = {
-		.tree_index = dp->ds->dst->index,
-		.sw_index = dp->ds->index,
-		.port = dp->index,
+		.dp = dp,
 		.vid = vid,
 	};
 
@@ -1761,9 +1739,7 @@ int dsa_port_tag_8021q_vlan_add(struct dsa_port *dp, u16 vid, bool broadcast)
 void dsa_port_tag_8021q_vlan_del(struct dsa_port *dp, u16 vid, bool broadcast)
 {
 	struct dsa_notifier_tag_8021q_vlan_info info = {
-		.tree_index = dp->ds->dst->index,
-		.sw_index = dp->ds->index,
-		.port = dp->index,
+		.dp = dp,
 		.vid = vid,
 	};
 	int err;
