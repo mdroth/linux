@@ -22,6 +22,7 @@
 #include "intel_fbdev.h"
 #include "intel_hdcp.h"
 #include "intel_hdmi.h"
+#include "intel_panel.h"
 #include "intel_pm.h"
 #include "intel_psr.h"
 #include "intel_sprite.h"
@@ -435,79 +436,6 @@ static int i915_power_domain_info(struct seq_file *m, void *unused)
 	return 0;
 }
 
-static int i915_dmc_info(struct seq_file *m, void *unused)
-{
-	struct drm_i915_private *dev_priv = node_to_i915(m->private);
-	intel_wakeref_t wakeref;
-	struct intel_dmc *dmc;
-	i915_reg_t dc5_reg, dc6_reg = {};
-
-	if (!HAS_DMC(dev_priv))
-		return -ENODEV;
-
-	dmc = &dev_priv->dmc;
-
-	wakeref = intel_runtime_pm_get(&dev_priv->runtime_pm);
-
-	seq_printf(m, "fw loaded: %s\n",
-		   str_yes_no(intel_dmc_has_payload(dev_priv)));
-	seq_printf(m, "path: %s\n", dmc->fw_path);
-	seq_printf(m, "Pipe A fw support: %s\n",
-		   str_yes_no(GRAPHICS_VER(dev_priv) >= 12));
-	seq_printf(m, "Pipe A fw loaded: %s\n",
-		   str_yes_no(dmc->dmc_info[DMC_FW_PIPEA].payload));
-	seq_printf(m, "Pipe B fw support: %s\n",
-		   str_yes_no(IS_ALDERLAKE_P(dev_priv)));
-	seq_printf(m, "Pipe B fw loaded: %s\n",
-		   str_yes_no(dmc->dmc_info[DMC_FW_PIPEB].payload));
-
-	if (!intel_dmc_has_payload(dev_priv))
-		goto out;
-
-	seq_printf(m, "version: %d.%d\n", DMC_VERSION_MAJOR(dmc->version),
-		   DMC_VERSION_MINOR(dmc->version));
-
-	if (DISPLAY_VER(dev_priv) >= 12) {
-		if (IS_DGFX(dev_priv)) {
-			dc5_reg = DG1_DMC_DEBUG_DC5_COUNT;
-		} else {
-			dc5_reg = TGL_DMC_DEBUG_DC5_COUNT;
-			dc6_reg = TGL_DMC_DEBUG_DC6_COUNT;
-		}
-
-		/*
-		 * NOTE: DMC_DEBUG3 is a general purpose reg.
-		 * According to B.Specs:49196 DMC f/w reuses DC5/6 counter
-		 * reg for DC3CO debugging and validation,
-		 * but TGL DMC f/w is using DMC_DEBUG3 reg for DC3CO counter.
-		 */
-		seq_printf(m, "DC3CO count: %d\n", intel_de_read(dev_priv, IS_DGFX(dev_priv) ?
-					DG1_DMC_DEBUG3 : TGL_DMC_DEBUG3));
-	} else {
-		dc5_reg = IS_BROXTON(dev_priv) ? BXT_DMC_DC3_DC5_COUNT :
-						 SKL_DMC_DC3_DC5_COUNT;
-		if (!IS_GEMINILAKE(dev_priv) && !IS_BROXTON(dev_priv))
-			dc6_reg = SKL_DMC_DC5_DC6_COUNT;
-	}
-
-	seq_printf(m, "DC3 -> DC5 count: %d\n",
-		   intel_de_read(dev_priv, dc5_reg));
-	if (dc6_reg.reg)
-		seq_printf(m, "DC5 -> DC6 count: %d\n",
-			   intel_de_read(dev_priv, dc6_reg));
-
-out:
-	seq_printf(m, "program base: 0x%08x\n",
-		   intel_de_read(dev_priv, DMC_PROGRAM(dmc->dmc_info[DMC_FW_MAIN].start_mmioaddr, 0)));
-	seq_printf(m, "ssp base: 0x%08x\n",
-		   intel_de_read(dev_priv, DMC_SSP_BASE));
-	seq_printf(m, "htp: 0x%08x\n", intel_de_read(dev_priv, DMC_HTP_SKL));
-
-	intel_runtime_pm_put(&dev_priv->runtime_pm, wakeref);
-
-	return 0;
-}
-
 static void intel_seq_print_mode(struct seq_file *m, int tabs,
 				 const struct drm_display_mode *mode)
 {
@@ -544,11 +472,18 @@ static void intel_encoder_info(struct seq_file *m,
 	drm_connector_list_iter_end(&conn_iter);
 }
 
-static void intel_panel_info(struct seq_file *m, struct intel_panel *panel)
+static void intel_panel_info(struct seq_file *m,
+			     struct intel_connector *connector)
 {
-	const struct drm_display_mode *mode = panel->fixed_mode;
+	const struct drm_display_mode *fixed_mode;
 
-	seq_printf(m, "\tfixed mode: " DRM_MODE_FMT "\n", DRM_MODE_ARG(mode));
+	if (list_empty(&connector->panel.fixed_modes))
+		return;
+
+	seq_puts(m, "\tfixed modes:\n");
+
+	list_for_each_entry(fixed_mode, &connector->panel.fixed_modes, head)
+		intel_seq_print_mode(m, 2, fixed_mode);
 }
 
 static void intel_hdcp_info(struct seq_file *m,
@@ -586,8 +521,6 @@ static void intel_dp_info(struct seq_file *m,
 	seq_printf(m, "\tDPCD rev: %x\n", intel_dp->dpcd[DP_DPCD_REV]);
 	seq_printf(m, "\taudio support: %s\n",
 		   str_yes_no(intel_dp->has_audio));
-	if (intel_connector->base.connector_type == DRM_MODE_CONNECTOR_eDP)
-		intel_panel_info(m, &intel_connector->panel);
 
 	drm_dp_downstream_debug(m, intel_dp->dpcd, intel_dp->downstream_ports,
 				edid ? edid->data : NULL, &intel_dp->aux);
@@ -609,12 +542,6 @@ static void intel_hdmi_info(struct seq_file *m,
 
 	seq_printf(m, "\taudio support: %s\n",
 		   str_yes_no(intel_hdmi->has_audio));
-}
-
-static void intel_lvds_info(struct seq_file *m,
-			    struct intel_connector *intel_connector)
-{
-	intel_panel_info(m, &intel_connector->panel);
 }
 
 static void intel_connector_info(struct seq_file *m,
@@ -651,10 +578,6 @@ static void intel_connector_info(struct seq_file *m,
 		else
 			intel_dp_info(m, intel_connector);
 		break;
-	case DRM_MODE_CONNECTOR_LVDS:
-		if (encoder->type == INTEL_OUTPUT_LVDS)
-			intel_lvds_info(m, intel_connector);
-		break;
 	case DRM_MODE_CONNECTOR_HDMIA:
 		if (encoder->type == INTEL_OUTPUT_HDMI ||
 		    encoder->type == INTEL_OUTPUT_DDI)
@@ -666,6 +589,8 @@ static void intel_connector_info(struct seq_file *m,
 
 	seq_puts(m, "\tHDCP version: ");
 	intel_hdcp_info(m, intel_connector);
+
+	intel_panel_info(m, intel_connector);
 
 	seq_printf(m, "\tmodes:\n");
 	list_for_each_entry(mode, &connector->modes, head)
@@ -1127,13 +1052,13 @@ static int i915_ddb_info(struct seq_file *m, void *unused)
 		seq_printf(m, "Pipe %c\n", pipe_name(pipe));
 
 		for_each_plane_id_on_crtc(crtc, plane_id) {
-			entry = &crtc_state->wm.skl.plane_ddb_y[plane_id];
+			entry = &crtc_state->wm.skl.plane_ddb[plane_id];
 			seq_printf(m, "  Plane%-8d%8u%8u%8u\n", plane_id + 1,
 				   entry->start, entry->end,
 				   skl_ddb_entry_size(entry));
 		}
 
-		entry = &crtc_state->wm.skl.plane_ddb_y[PLANE_CURSOR];
+		entry = &crtc_state->wm.skl.plane_ddb[PLANE_CURSOR];
 		seq_printf(m, "  %-13s%8u%8u%8u\n", "Cursor", entry->start,
 			   entry->end, skl_ddb_entry_size(entry));
 	}
@@ -1143,87 +1068,48 @@ static int i915_ddb_info(struct seq_file *m, void *unused)
 	return 0;
 }
 
-static void drrs_status_per_crtc(struct seq_file *m,
-				 struct drm_device *dev,
-				 struct intel_crtc *crtc)
+static int i915_drrs_status(struct seq_file *m, void *unused)
 {
-	struct drm_i915_private *dev_priv = to_i915(dev);
-	struct i915_drrs *drrs = &dev_priv->drrs;
-	struct drm_connector *connector;
+	struct drm_i915_private *dev_priv = node_to_i915(m->private);
 	struct drm_connector_list_iter conn_iter;
+	struct intel_connector *connector;
+	struct intel_crtc *crtc;
 
-	drm_connector_list_iter_begin(dev, &conn_iter);
-	drm_for_each_connector_iter(connector, &conn_iter) {
-		bool supported = false;
-
-		if (connector->state->crtc != &crtc->base)
-			continue;
-
-		seq_printf(m, "%s:\n", connector->name);
-
-		if (connector->connector_type == DRM_MODE_CONNECTOR_eDP &&
-		    drrs->type == DRRS_TYPE_SEAMLESS)
-			supported = true;
-
-		seq_printf(m, "\tDRRS Supported: %s\n", str_yes_no(supported));
+	drm_connector_list_iter_begin(&dev_priv->drm, &conn_iter);
+	for_each_intel_connector_iter(connector, &conn_iter) {
+		seq_printf(m, "[CONNECTOR:%d:%s] DRRS type: %s\n",
+			   connector->base.base.id, connector->base.name,
+			   intel_drrs_type_str(intel_panel_drrs_type(connector)));
 	}
 	drm_connector_list_iter_end(&conn_iter);
 
 	seq_puts(m, "\n");
 
-	if (to_intel_crtc_state(crtc->base.state)->has_drrs) {
-		struct intel_panel *panel;
+	for_each_intel_crtc(&dev_priv->drm, crtc) {
+		const struct intel_crtc_state *crtc_state =
+			to_intel_crtc_state(crtc->base.state);
 
-		mutex_lock(&drrs->mutex);
+		seq_printf(m, "[CRTC:%d:%s]:\n",
+			   crtc->base.base.id, crtc->base.name);
+
+		mutex_lock(&crtc->drrs.mutex);
+
 		/* DRRS Supported */
-		seq_puts(m, "\tDRRS Enabled: Yes\n");
+		seq_printf(m, "\tDRRS Enabled: %s\n",
+			   str_yes_no(crtc_state->has_drrs));
 
-		/* disable_drrs() will make drrs->dp NULL */
-		if (!drrs->dp) {
-			seq_puts(m, "Idleness DRRS: Disabled\n");
-			mutex_unlock(&drrs->mutex);
-			return;
-		}
+		seq_printf(m, "\tDRRS Active: %s\n",
+			   str_yes_no(intel_drrs_is_active(crtc)));
 
-		panel = &drrs->dp->attached_connector->panel;
-		seq_printf(m, "\t\tBusy_frontbuffer_bits: 0x%X",
-					drrs->busy_frontbuffer_bits);
+		seq_printf(m, "\tBusy_frontbuffer_bits: 0x%X\n",
+			   crtc->drrs.busy_frontbuffer_bits);
 
-		seq_puts(m, "\n\t\t");
-
-		seq_printf(m, "DRRS refresh rate: %s\n",
-			   drrs->refresh_rate == DRRS_REFRESH_RATE_LOW ?
+		seq_printf(m, "\tDRRS refresh rate: %s\n",
+			   crtc->drrs.refresh_rate == DRRS_REFRESH_RATE_LOW ?
 			   "low" : "high");
-		seq_puts(m, "\n\t\t");
 
-		mutex_unlock(&drrs->mutex);
-	} else {
-		/* DRRS not supported. Print the VBT parameter*/
-		seq_puts(m, "\tDRRS Enabled : No");
+		mutex_unlock(&crtc->drrs.mutex);
 	}
-	seq_puts(m, "\n");
-}
-
-static int i915_drrs_status(struct seq_file *m, void *unused)
-{
-	struct drm_i915_private *dev_priv = node_to_i915(m->private);
-	struct drm_device *dev = &dev_priv->drm;
-	struct intel_crtc *crtc;
-	int active_crtc_cnt = 0;
-
-	drm_modeset_lock_all(dev);
-	for_each_intel_crtc(dev, crtc) {
-		if (crtc->base.state->active) {
-			active_crtc_cnt++;
-			seq_printf(m, "\nCRTC %d:  ", active_crtc_cnt);
-
-			drrs_status_per_crtc(m, dev, crtc);
-		}
-	}
-	drm_modeset_unlock_all(dev);
-
-	if (!active_crtc_cnt)
-		seq_puts(m, "No active crtc found\n");
 
 	return 0;
 }
@@ -1888,13 +1774,8 @@ static int i915_drrs_ctl_set(void *data, u64 val)
 	struct drm_device *dev = &dev_priv->drm;
 	struct intel_crtc *crtc;
 
-	if (DISPLAY_VER(dev_priv) < 7)
-		return -ENODEV;
-
 	for_each_intel_crtc(dev, crtc) {
-		struct drm_connector_list_iter conn_iter;
 		struct intel_crtc_state *crtc_state;
-		struct drm_connector *connector;
 		struct drm_crtc_commit *commit;
 		int ret;
 
@@ -1915,30 +1796,13 @@ static int i915_drrs_ctl_set(void *data, u64 val)
 				goto out;
 		}
 
-		drm_connector_list_iter_begin(dev, &conn_iter);
-		drm_for_each_connector_iter(connector, &conn_iter) {
-			struct intel_encoder *encoder;
-			struct intel_dp *intel_dp;
+		drm_dbg(&dev_priv->drm,
+			"Manually %sactivating DRRS\n", val ? "" : "de");
 
-			if (!(crtc_state->uapi.connector_mask &
-			      drm_connector_mask(connector)))
-				continue;
-
-			encoder = intel_attached_encoder(to_intel_connector(connector));
-			if (encoder->type != INTEL_OUTPUT_EDP)
-				continue;
-
-			drm_dbg(&dev_priv->drm,
-				"Manually %sabling DRRS. %llu\n",
-				val ? "en" : "dis", val);
-
-			intel_dp = enc_to_intel_dp(encoder);
-			if (val)
-				intel_drrs_enable(intel_dp, crtc_state);
-			else
-				intel_drrs_disable(intel_dp, crtc_state);
-		}
-		drm_connector_list_iter_end(&conn_iter);
+		if (val)
+			intel_drrs_activate(crtc_state);
+		else
+			intel_drrs_deactivate(crtc_state);
 
 out:
 		drm_modeset_unlock(&crtc->base.mutex);
@@ -2020,7 +1884,6 @@ static const struct drm_info_list intel_display_debugfs_list[] = {
 	{"i915_gem_framebuffer", i915_gem_framebuffer_info, 0},
 	{"i915_edp_psr_status", i915_edp_psr_status, 0},
 	{"i915_power_domain_info", i915_power_domain_info, 0},
-	{"i915_dmc_info", i915_dmc_info, 0},
 	{"i915_display_info", i915_display_info, 0},
 	{"i915_shared_dplls_info", i915_shared_dplls_info, 0},
 	{"i915_dp_mst_info", i915_dp_mst_info, 0},
@@ -2064,6 +1927,7 @@ void intel_display_debugfs_register(struct drm_i915_private *i915)
 				 ARRAY_SIZE(intel_display_debugfs_list),
 				 minor->debugfs_root, minor);
 
+	intel_dmc_debugfs_register(i915);
 	intel_fbc_debugfs_register(i915);
 }
 

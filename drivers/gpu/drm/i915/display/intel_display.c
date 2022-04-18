@@ -77,6 +77,7 @@
 #include "g4x_hdmi.h"
 #include "hsw_ips.h"
 #include "i915_drv.h"
+#include "i915_utils.h"
 #include "icl_dsi.h"
 #include "intel_acpi.h"
 #include "intel_atomic.h"
@@ -780,6 +781,9 @@ void intel_plane_disable_noatomic(struct intel_crtc *crtc,
 	intel_set_plane_visible(crtc_state, plane_state, false);
 	fixup_plane_bitmasks(crtc_state);
 	crtc_state->data_rate[plane->id] = 0;
+	crtc_state->data_rate_y[plane->id] = 0;
+	crtc_state->rel_data_rate[plane->id] = 0;
+	crtc_state->rel_data_rate_y[plane->id] = 0;
 	crtc_state->min_cdclk[plane->id] = 0;
 
 	if ((crtc_state->active_planes & ~BIT(PLANE_CURSOR)) == 0 &&
@@ -1114,13 +1118,13 @@ static void ilk_pfit_enable(const struct intel_crtc_state *crtc_state)
 	 * e.g. x201.
 	 */
 	if (IS_IVYBRIDGE(dev_priv) || IS_HASWELL(dev_priv))
-		intel_de_write(dev_priv, PF_CTL(pipe), PF_ENABLE |
-			       PF_FILTER_MED_3x3 | PF_PIPE_SEL_IVB(pipe));
+		intel_de_write_fw(dev_priv, PF_CTL(pipe), PF_ENABLE |
+				  PF_FILTER_MED_3x3 | PF_PIPE_SEL_IVB(pipe));
 	else
-		intel_de_write(dev_priv, PF_CTL(pipe), PF_ENABLE |
-			       PF_FILTER_MED_3x3);
-	intel_de_write(dev_priv, PF_WIN_POS(pipe), x << 16 | y);
-	intel_de_write(dev_priv, PF_WIN_SZ(pipe), width << 16 | height);
+		intel_de_write_fw(dev_priv, PF_CTL(pipe), PF_ENABLE |
+				  PF_FILTER_MED_3x3);
+	intel_de_write_fw(dev_priv, PF_WIN_POS(pipe), x << 16 | y);
+	intel_de_write_fw(dev_priv, PF_WIN_SZ(pipe), width << 16 | height);
 }
 
 static void intel_crtc_dpms_overlay_disable(struct intel_crtc *crtc)
@@ -1194,7 +1198,7 @@ static bool needs_async_flip_vtd_wa(const struct intel_crtc_state *crtc_state)
 {
 	struct drm_i915_private *i915 = to_i915(crtc_state->uapi.crtc->dev);
 
-	return crtc_state->uapi.async_flip && intel_vtd_active(i915) &&
+	return crtc_state->uapi.async_flip && i915_vtd_active(i915) &&
 		(DISPLAY_VER(i915) == 9 || IS_BROADWELL(i915) || IS_HASWELL(i915));
 }
 
@@ -1229,7 +1233,6 @@ static void intel_post_plane_update(struct intel_atomic_state *state,
 
 	hsw_ips_post_update(state, crtc);
 	intel_fbc_post_update(state, crtc);
-	intel_drrs_page_flip(state, crtc);
 
 	if (needs_async_flip_vtd_wa(old_crtc_state) &&
 	    !needs_async_flip_vtd_wa(new_crtc_state))
@@ -1247,6 +1250,7 @@ static void intel_post_plane_update(struct intel_atomic_state *state,
 	    !needs_cursorclk_wa(new_crtc_state))
 		icl_wa_cursorclkgating(dev_priv, pipe, false);
 
+	intel_drrs_activate(new_crtc_state);
 }
 
 static void intel_crtc_enable_flip_done(struct intel_atomic_state *state,
@@ -1323,6 +1327,8 @@ static void intel_pre_plane_update(struct intel_atomic_state *state,
 	const struct intel_crtc_state *new_crtc_state =
 		intel_atomic_get_new_crtc_state(state, crtc);
 	enum pipe pipe = crtc->pipe;
+
+	intel_drrs_deactivate(old_crtc_state);
 
 	intel_psr_pre_plane_update(state, crtc);
 
@@ -1774,7 +1780,8 @@ static void ilk_crtc_enable(struct intel_atomic_state *state,
 	 * clocks enabled
 	 */
 	intel_color_load_luts(new_crtc_state);
-	intel_color_commit(new_crtc_state);
+	intel_color_commit_noarm(new_crtc_state);
+	intel_color_commit_arm(new_crtc_state);
 	/* update DSPCNTR to configure gamma for pipe bottom color */
 	intel_disable_primary_plane(new_crtc_state);
 
@@ -1817,29 +1824,6 @@ static void glk_pipe_scaler_clock_gating_wa(struct drm_i915_private *dev_priv,
 		val &= ~mask;
 
 	intel_de_write(dev_priv, CLKGATE_DIS_PSL(pipe), val);
-}
-
-static void icl_pipe_mbus_enable(struct intel_crtc *crtc, bool joined_mbus)
-{
-	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
-	enum pipe pipe = crtc->pipe;
-	u32 val;
-
-	/* Wa_22010947358:adl-p */
-	if (IS_ALDERLAKE_P(dev_priv))
-		val = joined_mbus ? MBUS_DBOX_A_CREDIT(6) : MBUS_DBOX_A_CREDIT(4);
-	else
-		val = MBUS_DBOX_A_CREDIT(2);
-
-	if (DISPLAY_VER(dev_priv) >= 12) {
-		val |= MBUS_DBOX_BW_CREDIT(2);
-		val |= MBUS_DBOX_B_CREDIT(12);
-	} else {
-		val |= MBUS_DBOX_BW_CREDIT(1);
-		val |= MBUS_DBOX_B_CREDIT(8);
-	}
-
-	intel_de_write(dev_priv, PIPE_MBUS_DBOX_CTL(pipe), val);
 }
 
 static void hsw_set_linetime_wm(const struct intel_crtc_state *crtc_state)
@@ -1965,7 +1949,8 @@ static void hsw_crtc_enable(struct intel_atomic_state *state,
 	 * clocks enabled
 	 */
 	intel_color_load_luts(new_crtc_state);
-	intel_color_commit(new_crtc_state);
+	intel_color_commit_noarm(new_crtc_state);
+	intel_color_commit_arm(new_crtc_state);
 	/* update DSPCNTR to configure gamma/csc for pipe bottom color */
 	if (DISPLAY_VER(dev_priv) < 9)
 		intel_disable_primary_plane(new_crtc_state);
@@ -1976,13 +1961,6 @@ static void hsw_crtc_enable(struct intel_atomic_state *state,
 		icl_set_pipe_chicken(new_crtc_state);
 
 	intel_initial_watermarks(state, crtc);
-
-	if (DISPLAY_VER(dev_priv) >= 11) {
-		const struct intel_dbuf_state *dbuf_state =
-				intel_atomic_get_new_dbuf_state(state);
-
-		icl_pipe_mbus_enable(crtc, dbuf_state->joined_mbus);
-	}
 
 	if (intel_crtc_is_bigjoiner_slave(new_crtc_state))
 		intel_crtc_vblank_on(new_crtc_state);
@@ -2018,9 +1996,9 @@ void ilk_pfit_disable(const struct intel_crtc_state *old_crtc_state)
 	if (!old_crtc_state->pch_pfit.enabled)
 		return;
 
-	intel_de_write(dev_priv, PF_CTL(pipe), 0);
-	intel_de_write(dev_priv, PF_WIN_POS(pipe), 0);
-	intel_de_write(dev_priv, PF_WIN_SZ(pipe), 0);
+	intel_de_write_fw(dev_priv, PF_CTL(pipe), 0);
+	intel_de_write_fw(dev_priv, PF_WIN_POS(pipe), 0);
+	intel_de_write_fw(dev_priv, PF_WIN_SZ(pipe), 0);
 }
 
 static void ilk_crtc_disable(struct intel_atomic_state *state,
@@ -2385,7 +2363,8 @@ static void valleyview_crtc_enable(struct intel_atomic_state *state,
 	i9xx_pfit_enable(new_crtc_state);
 
 	intel_color_load_luts(new_crtc_state);
-	intel_color_commit(new_crtc_state);
+	intel_color_commit_noarm(new_crtc_state);
+	intel_color_commit_arm(new_crtc_state);
 	/* update DSPCNTR to configure gamma for pipe bottom color */
 	intel_disable_primary_plane(new_crtc_state);
 
@@ -2424,7 +2403,8 @@ static void i9xx_crtc_enable(struct intel_atomic_state *state,
 	i9xx_pfit_enable(new_crtc_state);
 
 	intel_color_load_luts(new_crtc_state);
-	intel_color_commit(new_crtc_state);
+	intel_color_commit_noarm(new_crtc_state);
+	intel_color_commit_arm(new_crtc_state);
 	/* update DSPCNTR to configure gamma for pipe bottom color */
 	intel_disable_primary_plane(new_crtc_state);
 
@@ -4811,6 +4791,8 @@ static int icl_check_nv12_planes(struct intel_crtc_state *crtc_state)
 			crtc_state->enabled_planes &= ~BIT(plane->id);
 			crtc_state->active_planes &= ~BIT(plane->id);
 			crtc_state->update_planes |= BIT(plane->id);
+			crtc_state->data_rate[plane->id] = 0;
+			crtc_state->rel_data_rate[plane->id] = 0;
 		}
 
 		plane_state->planar_slave = false;
@@ -4855,6 +4837,10 @@ static int icl_check_nv12_planes(struct intel_crtc_state *crtc_state)
 		crtc_state->enabled_planes |= BIT(linked->id);
 		crtc_state->active_planes |= BIT(linked->id);
 		crtc_state->update_planes |= BIT(linked->id);
+		crtc_state->data_rate[linked->id] =
+			crtc_state->data_rate_y[plane->id];
+		crtc_state->rel_data_rate[linked->id] =
+			crtc_state->rel_data_rate_y[plane->id];
 		drm_dbg_kms(&dev_priv->drm, "Using %s as Y plane for %s\n",
 			    linked->base.name, plane->base.name);
 
@@ -5406,13 +5392,13 @@ static void intel_dump_pipe_config(const struct intel_crtc_state *pipe_config,
 		    intel_vrr_vmin_vblank_start(pipe_config),
 		    intel_vrr_vmax_vblank_start(pipe_config));
 
-	drm_dbg_kms(&dev_priv->drm, "requested mode:\n");
-	drm_mode_debug_printmodeline(&pipe_config->hw.mode);
-	drm_dbg_kms(&dev_priv->drm, "adjusted mode:\n");
-	drm_mode_debug_printmodeline(&pipe_config->hw.adjusted_mode);
+	drm_dbg_kms(&dev_priv->drm, "requested mode: " DRM_MODE_FMT "\n",
+		    DRM_MODE_ARG(&pipe_config->hw.mode));
+	drm_dbg_kms(&dev_priv->drm, "adjusted mode: " DRM_MODE_FMT "\n",
+		    DRM_MODE_ARG(&pipe_config->hw.adjusted_mode));
 	intel_dump_crtc_timings(dev_priv, &pipe_config->hw.adjusted_mode);
-	drm_dbg_kms(&dev_priv->drm, "pipe mode:\n");
-	drm_mode_debug_printmodeline(&pipe_config->hw.pipe_mode);
+	drm_dbg_kms(&dev_priv->drm, "pipe mode: " DRM_MODE_FMT "\n",
+		    DRM_MODE_ARG(&pipe_config->hw.pipe_mode));
 	intel_dump_crtc_timings(dev_priv, &pipe_config->hw.pipe_mode);
 	drm_dbg_kms(&dev_priv->drm,
 		    "port clock: %d, pipe src: " DRM_RECT_FMT ", pixel rate %d\n",
@@ -5442,8 +5428,9 @@ static void intel_dump_pipe_config(const struct intel_crtc_state *pipe_config,
 			    str_enabled_disabled(pipe_config->pch_pfit.enabled),
 			    str_yes_no(pipe_config->pch_pfit.force_thru));
 
-	drm_dbg_kms(&dev_priv->drm, "ips: %i, double wide: %i\n",
-		    pipe_config->ips_enabled, pipe_config->double_wide);
+	drm_dbg_kms(&dev_priv->drm, "ips: %i, double wide: %i, drrs: %i\n",
+		    pipe_config->ips_enabled, pipe_config->double_wide,
+		    pipe_config->has_drrs);
 
 	intel_dpll_dump_hw_state(dev_priv, &pipe_config->dpll_hw_state);
 
@@ -5571,8 +5558,10 @@ intel_crtc_copy_uapi_to_hw_state_modeset(struct intel_atomic_state *state,
 
 	crtc_state->hw.enable = crtc_state->uapi.enable;
 	crtc_state->hw.active = crtc_state->uapi.active;
-	crtc_state->hw.mode = crtc_state->uapi.mode;
-	crtc_state->hw.adjusted_mode = crtc_state->uapi.adjusted_mode;
+	drm_mode_copy(&crtc_state->hw.mode,
+		      &crtc_state->uapi.mode);
+	drm_mode_copy(&crtc_state->hw.adjusted_mode,
+		      &crtc_state->uapi.adjusted_mode);
 	crtc_state->hw.scaling_filter = crtc_state->uapi.scaling_filter;
 
 	intel_crtc_copy_uapi_to_hw_state_nomodeset(state, crtc);
@@ -5652,9 +5641,12 @@ copy_bigjoiner_crtc_state_modeset(struct intel_atomic_state *state,
 	memset(&slave_crtc_state->hw, 0, sizeof(slave_crtc_state->hw));
 	slave_crtc_state->hw.enable = master_crtc_state->hw.enable;
 	slave_crtc_state->hw.active = master_crtc_state->hw.active;
-	slave_crtc_state->hw.mode = master_crtc_state->hw.mode;
-	slave_crtc_state->hw.pipe_mode = master_crtc_state->hw.pipe_mode;
-	slave_crtc_state->hw.adjusted_mode = master_crtc_state->hw.adjusted_mode;
+	drm_mode_copy(&slave_crtc_state->hw.mode,
+		      &master_crtc_state->hw.mode);
+	drm_mode_copy(&slave_crtc_state->hw.pipe_mode,
+		      &master_crtc_state->hw.pipe_mode);
+	drm_mode_copy(&slave_crtc_state->hw.adjusted_mode,
+		      &master_crtc_state->hw.adjusted_mode);
 	slave_crtc_state->hw.scaling_filter = master_crtc_state->hw.scaling_filter;
 
 	copy_bigjoiner_crtc_state_nomodeset(state, slave_crtc);
@@ -6500,8 +6492,8 @@ static void verify_wm_state(struct intel_crtc *crtc,
 {
 	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
 	struct skl_hw_state {
+		struct skl_ddb_entry ddb[I915_MAX_PLANES];
 		struct skl_ddb_entry ddb_y[I915_MAX_PLANES];
-		struct skl_ddb_entry ddb_uv[I915_MAX_PLANES];
 		struct skl_pipe_wm wm;
 	} *hw;
 	const struct skl_pipe_wm *sw_wm = &new_crtc_state->wm.skl.optimal;
@@ -6518,7 +6510,7 @@ static void verify_wm_state(struct intel_crtc *crtc,
 
 	skl_pipe_wm_get_hw_state(crtc, &hw->wm);
 
-	skl_pipe_ddb_get_hw_state(crtc, hw->ddb_y, hw->ddb_uv);
+	skl_pipe_ddb_get_hw_state(crtc, hw->ddb, hw->ddb_y);
 
 	hw_enabled_slices = intel_enabled_dbuf_slices_mask(dev_priv);
 
@@ -6600,8 +6592,8 @@ static void verify_wm_state(struct intel_crtc *crtc,
 		}
 
 		/* DDB */
-		hw_ddb_entry = &hw->ddb_y[plane->id];
-		sw_ddb_entry = &new_crtc_state->wm.skl.plane_ddb_y[plane->id];
+		hw_ddb_entry = &hw->ddb[PLANE_CURSOR];
+		sw_ddb_entry = &new_crtc_state->wm.skl.plane_ddb[PLANE_CURSOR];
 
 		if (!skl_ddb_entry_equal(hw_ddb_entry, sw_ddb_entry)) {
 			drm_err(&dev_priv->drm,
@@ -8066,7 +8058,7 @@ static void commit_pipe_pre_planes(struct intel_atomic_state *state,
 	if (!modeset) {
 		if (new_crtc_state->uapi.color_mgmt_changed ||
 		    new_crtc_state->update_pipe)
-			intel_color_commit(new_crtc_state);
+			intel_color_commit_arm(new_crtc_state);
 
 		if (DISPLAY_VER(dev_priv) >= 9 || IS_BROADWELL(dev_priv))
 			bdw_set_pipemisc(new_crtc_state);
@@ -8145,6 +8137,11 @@ static void intel_update_crtc(struct intel_atomic_state *state,
 	}
 
 	intel_fbc_update(state, crtc);
+
+	if (!modeset &&
+	    (new_crtc_state->uapi.color_mgmt_changed ||
+	     new_crtc_state->update_pipe))
+		intel_color_commit_noarm(new_crtc_state);
 
 	intel_crtc_planes_update_noarm(state, crtc);
 
@@ -8480,7 +8477,9 @@ static void intel_atomic_prepare_plane_clear_colors(struct intel_atomic_state *s
 
 		/*
 		 * The layout of the fast clear color value expected by HW
-		 * (the DRM ABI requiring this value to be located in fb at offset 0 of plane#2):
+		 * (the DRM ABI requiring this value to be located in fb at
+		 * offset 0 of cc plane, plane #2 previous generations or
+		 * plane #1 for flat ccs):
 		 * - 4 x 4 bytes per-channel value
 		 *   (in surface type specific float/int format provided by the fb user)
 		 * - 8 bytes native color value used by the display
@@ -8563,6 +8562,7 @@ static void intel_atomic_commit_tail(struct intel_atomic_state *state)
 	intel_encoders_update_prepare(state);
 
 	intel_dbuf_pre_plane_update(state);
+	intel_mbus_dbox_update(state);
 
 	for_each_new_intel_crtc_in_state(state, crtc, new_crtc_state, i) {
 		if (new_crtc_state->do_async_flip)
@@ -9986,7 +9986,8 @@ static void intel_sanitize_crtc(struct intel_crtc *crtc,
 		}
 
 		/* Disable any background color/etc. set by the BIOS */
-		intel_color_commit(crtc_state);
+		intel_color_commit_noarm(crtc_state);
+		intel_color_commit_arm(crtc_state);
 	}
 
 	/* Adjust the state of the output pipe according to whether we
@@ -10429,6 +10430,8 @@ intel_modeset_setup_hw_state(struct drm_device *dev,
 			intel_crtc_vblank_on(crtc_state);
 	}
 
+	intel_fbc_sanitize(dev_priv);
+
 	intel_sanitize_plane_mapping(dev_priv);
 
 	for_each_intel_encoder(dev, encoder)
@@ -10567,8 +10570,6 @@ void intel_modeset_driver_remove_noirq(struct drm_i915_private *i915)
 
 	intel_unregister_dsm_handler();
 
-	intel_fbc_global_disable(i915);
-
 	/* flush any delayed tasks or pending work */
 	flush_scheduled_work();
 
@@ -10668,4 +10669,9 @@ void intel_display_driver_unregister(struct drm_i915_private *i915)
 
 	acpi_video_unregister();
 	intel_opregion_unregister(i915);
+}
+
+bool intel_scanout_needs_vtd_wa(struct drm_i915_private *i915)
+{
+	return DISPLAY_VER(i915) >= 6 && i915_vtd_active(i915);
 }

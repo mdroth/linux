@@ -106,16 +106,24 @@ enum intel_platform {
 /* ICL */
 #define INTEL_SUBPLATFORM_PORTF	(0)
 
+/* TGL */
+#define INTEL_SUBPLATFORM_UY	(0)
+
 /* DG2 */
 #define INTEL_SUBPLATFORM_G10	0
 #define INTEL_SUBPLATFORM_G11	1
 #define INTEL_SUBPLATFORM_G12	2
 
-/* ADL-S */
-#define INTEL_SUBPLATFORM_RPL_S	0
+/* ADL */
+#define INTEL_SUBPLATFORM_RPL	0
 
 /* ADL-P */
-#define INTEL_SUBPLATFORM_N    0
+/*
+ * As #define INTEL_SUBPLATFORM_RPL 0 will apply
+ * here too, SUBPLATFORM_N will have different
+ * bit set
+ */
+#define INTEL_SUBPLATFORM_N    1
 
 enum intel_ppgtt_type {
 	INTEL_PPGTT_NONE = I915_GEM_PPGTT_NONE,
@@ -131,9 +139,11 @@ enum intel_ppgtt_type {
 	/* Keep has_* in alphabetical order */ \
 	func(has_64bit_reloc); \
 	func(has_64k_pages); \
+	func(needs_compact_pt); \
 	func(gpu_reset_clobbers_display); \
 	func(has_reset_engine); \
 	func(has_4tile); \
+	func(has_flat_ccs); \
 	func(has_global_mocs); \
 	func(has_gt_uc); \
 	func(has_guc_deprivilege); \

@@ -12,8 +12,9 @@
 
 #include "gem/i915_gem_region.h"
 #include "i915_drv.h"
-#include "i915_gemfs.h"
 #include "i915_gem_object.h"
+#include "i915_gem_tiling.h"
+#include "i915_gemfs.h"
 #include "i915_scatterlist.h"
 #include "i915_trace.h"
 
@@ -699,7 +700,7 @@ struct intel_memory_region *i915_gem_shmem_setup(struct drm_i915_private *i915,
 {
 	return intel_memory_region_create(i915, 0,
 					  totalram_pages() << PAGE_SHIFT,
-					  PAGE_SIZE, 0,
+					  PAGE_SIZE, 0, 0,
 					  type, instance,
 					  &shmem_region_ops);
 }

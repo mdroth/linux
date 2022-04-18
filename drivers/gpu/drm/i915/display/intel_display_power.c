@@ -905,18 +905,6 @@ static void bxt_disable_dc9(struct drm_i915_private *dev_priv)
 	intel_pps_unlock_regs_wa(dev_priv);
 }
 
-static void assert_dmc_loaded(struct drm_i915_private *dev_priv)
-{
-	drm_WARN_ONCE(&dev_priv->drm,
-		      !intel_de_read(dev_priv,
-				     DMC_PROGRAM(dev_priv->dmc.dmc_info[DMC_FW_MAIN].start_mmioaddr, 0)),
-				     "DMC program storage start is NULL\n");
-	drm_WARN_ONCE(&dev_priv->drm, !intel_de_read(dev_priv, DMC_SSP_BASE),
-		      "DMC SSP Base Not fine\n");
-	drm_WARN_ONCE(&dev_priv->drm, !intel_de_read(dev_priv, DMC_HTP_SKL),
-		      "DMC HTP Not fine\n");
-}
-
 /**
  * intel_display_power_set_target_dc_state - Set target dc state.
  * @dev_priv: i915 device
@@ -5387,7 +5375,7 @@ static void skl_display_core_init(struct drm_i915_private *dev_priv,
 
 	gen9_dbuf_enable(dev_priv);
 
-	if (resume && intel_dmc_has_payload(dev_priv))
+	if (resume)
 		intel_dmc_load_program(dev_priv);
 }
 
@@ -5454,7 +5442,7 @@ static void bxt_display_core_init(struct drm_i915_private *dev_priv, bool resume
 
 	gen9_dbuf_enable(dev_priv);
 
-	if (resume && intel_dmc_has_payload(dev_priv))
+	if (resume)
 		intel_dmc_load_program(dev_priv);
 }
 
@@ -5618,7 +5606,7 @@ static void icl_display_core_init(struct drm_i915_private *dev_priv,
 	if (IS_DG2(dev_priv))
 		intel_snps_phy_wait_for_calibration(dev_priv);
 
-	if (resume && intel_dmc_has_payload(dev_priv))
+	if (resume)
 		intel_dmc_load_program(dev_priv);
 
 	/* Wa_14011508470:tgl,dg1,rkl,adl-s,adl-p */

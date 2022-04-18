@@ -1005,6 +1005,7 @@ static const struct intel_device_info adl_p_info = {
 	XE_HP_PAGE_SIZES, \
 	.dma_mask_size = 46, \
 	.has_64bit_reloc = 1, \
+	.has_flat_ccs = 1, \
 	.has_global_mocs = 1, \
 	.has_gt_uc = 1, \
 	.has_llc = 1, \
@@ -1030,6 +1031,7 @@ static const struct intel_device_info xehpsdv_info = {
 	PLATFORM(INTEL_XEHPSDV),
 	.display = { },
 	.has_64k_pages = 1,
+	.needs_compact_pt = 1,
 	.platform_engine_mask =
 		BIT(RCS0) | BIT(BCS0) |
 		BIT(VECS0) | BIT(VECS1) | BIT(VECS2) | BIT(VECS3) |
@@ -1038,25 +1040,36 @@ static const struct intel_device_info xehpsdv_info = {
 	.require_force_probe = 1,
 };
 
+#define DG2_FEATURES \
+	XE_HP_FEATURES, \
+	XE_HPM_FEATURES, \
+	DGFX_FEATURES, \
+	.graphics.rel = 55, \
+	.media.rel = 55, \
+	PLATFORM(INTEL_DG2), \
+	.has_4tile = 1, \
+	.has_64k_pages = 1, \
+	.has_guc_deprivilege = 1, \
+	.needs_compact_pt = 1, \
+	.platform_engine_mask = \
+		BIT(RCS0) | BIT(BCS0) | \
+		BIT(VECS0) | BIT(VECS1) | \
+		BIT(VCS0) | BIT(VCS2)
+
 __maybe_unused
 static const struct intel_device_info dg2_info = {
-	XE_HP_FEATURES,
-	XE_HPM_FEATURES,
+	DG2_FEATURES,
 	XE_LPD_FEATURES,
-	DGFX_FEATURES,
-	.graphics.rel = 55,
-	.media.rel = 55,
-	.has_4tile = 1,
-	PLATFORM(INTEL_DG2),
-	.has_guc_deprivilege = 1,
-	.has_64k_pages = 1,
-	.platform_engine_mask =
-		BIT(RCS0) | BIT(BCS0) |
-		BIT(VECS0) | BIT(VECS1) |
-		BIT(VCS0) | BIT(VCS2),
-	.require_force_probe = 1,
 	.display.cpu_transcoder_mask = BIT(TRANSCODER_A) | BIT(TRANSCODER_B) |
 			       BIT(TRANSCODER_C) | BIT(TRANSCODER_D),
+	.require_force_probe = 1,
+};
+
+__maybe_unused
+static const struct intel_device_info ats_m_info = {
+	DG2_FEATURES,
+	.display = { 0 },
+	.require_force_probe = 1,
 };
 
 #undef PLATFORM
@@ -1138,6 +1151,7 @@ static const struct pci_device_id pciidlist[] = {
 	INTEL_ADLN_IDS(&adl_p_info),
 	INTEL_DG1_IDS(&dg1_info),
 	INTEL_RPLS_IDS(&adl_s_info),
+	INTEL_RPLP_IDS(&adl_p_info),
 	{0, 0, 0}
 };
 MODULE_DEVICE_TABLE(pci, pciidlist);
