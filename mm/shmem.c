@@ -1370,9 +1370,10 @@ static int shmem_writepage(struct page *page, struct writeback_control *wbc)
 		goto redirty;
 	if (!total_swap_pages)
 		goto redirty;
+#if 0
 	if (info->memfile_node.flags & MEMFILE_F_UNRECLAIMABLE)
 		goto redirty;
-
+#endif
 	/*
 	 * Our capabilities prevent regular writeback or sync from ever calling
 	 * shmem_writepage; but a stacking filesystem might use ->writepage of
@@ -2473,8 +2474,10 @@ shmem_write_begin(struct file *file, struct address_space *mapping,
 		if ((info->seals & F_SEAL_GROW) && pos + len > inode->i_size)
 			return -EPERM;
 	}
+#if 0
 	if (unlikely(info->memfile_node.flags & MEMFILE_F_USER_INACCESSIBLE))
 		return -EPERM;
+#endif
 
 	ret = shmem_getpage(inode, index, pagep, SGP_WRITE);
 
