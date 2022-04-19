@@ -302,7 +302,7 @@ struct bpf_program {
 	void *priv;
 	bpf_program_clear_priv_t clear_priv;
 
-	bool load;
+	bool autoload;
 	bool mark_btf_static;
 	enum bpf_prog_type type;
 	enum bpf_attach_type expected_attach_type;
@@ -672,7 +672,18 @@ bpf_object__init_prog(struct bpf_object *obj, struct bpf_program *prog,
 	prog->insns_cnt = prog->sec_insn_cnt;
 
 	prog->type = BPF_PROG_TYPE_UNSPEC;
-	prog->load = true;
+
+	/* libbpf's convention for SEC("?abc...") is that it's just like
+	 * SEC("abc...") but the corresponding bpf_program starts out with
+	 * autoload set to false.
+	 */
+	if (sec_name[0] == '?') {
+		prog->autoload = false;
+		/* from now on forget there was ? in section name */
+		sec_name++;
+	} else {
+		prog->autoload = true;
+	}
 
 	prog->instances.fds = NULL;
 	prog->instances.nr = -1;
@@ -2927,7 +2938,7 @@ static bool obj_needs_vmlinux_btf(const struct bpf_object *obj)
 	}
 
 	bpf_object__for_each_program(prog, obj) {
-		if (!prog->load)
+		if (!prog->autoload)
 			continue;
 		if (prog_needs_vmlinux_btf(prog))
 			return true;
@@ -5703,7 +5714,7 @@ bpf_object__relocate_core(struct bpf_object *obj, const char *targ_btf_path)
 			/* no need to apply CO-RE relocation if the program is
 			 * not going to be loaded
 			 */
-			if (!prog->load)
+			if (!prog->autoload)
 				continue;
 
 			/* adjust insn_idx from section frame of reference to the local
@@ -6364,7 +6375,7 @@ bpf_object__relocate(struct bpf_object *obj, const char *targ_btf_path)
 		 */
 		if (prog_is_subprog(obj, prog))
 			continue;
-		if (!prog->load)
+		if (!prog->autoload)
 			continue;
 
 		err = bpf_object__relocate_calls(obj, prog);
@@ -6379,7 +6390,7 @@ bpf_object__relocate(struct bpf_object *obj, const char *targ_btf_path)
 		prog = &obj->programs[i];
 		if (prog_is_subprog(obj, prog))
 			continue;
-		if (!prog->load)
+		if (!prog->autoload)
 			continue;
 		err = bpf_object__relocate_data(obj, prog);
 		if (err) {
@@ -6976,7 +6987,7 @@ bpf_object__load_progs(struct bpf_object *obj, int log_level)
 		prog = &obj->programs[i];
 		if (prog_is_subprog(obj, prog))
 			continue;
-		if (!prog->load) {
+		if (!prog->autoload) {
 			pr_debug("prog '%s': skipped loading\n", prog->name);
 			continue;
 		}
@@ -8456,7 +8467,7 @@ const char *bpf_program__title(const struct bpf_program *prog, bool needs_copy)
 
 bool bpf_program__autoload(const struct bpf_program *prog)
 {
-	return prog->load;
+	return prog->autoload;
 }
 
 int bpf_program__set_autoload(struct bpf_program *prog, bool autoload)
@@ -8464,7 +8475,7 @@ int bpf_program__set_autoload(struct bpf_program *prog, bool autoload)
 	if (prog->obj->loaded)
 		return libbpf_err(-EINVAL);
 
-	prog->load = autoload;
+	prog->autoload = autoload;
 	return 0;
 }
 
@@ -12666,7 +12677,7 @@ int bpf_object__attach_skeleton(struct bpf_object_skeleton *s)
 		struct bpf_program *prog = *s->progs[i].prog;
 		struct bpf_link **link = s->progs[i].link;
 
-		if (!prog->load)
+		if (!prog->autoload)
 			continue;
 
 		/* auto-attaching not supported for this program */
