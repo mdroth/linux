@@ -287,7 +287,7 @@ static u64 *alloc_pte(struct protection_domain *domain,
  * This function checks if there is a PTE for a given dma address. If
  * there is one, it returns the pointer to it.
  */
-u64 *fetch_pte(struct amd_io_pgtable *pgtable,
+static u64 *fetch_pte(struct amd_io_pgtable *pgtable,
 		      unsigned long address,
 		      unsigned long *page_size)
 {
@@ -335,7 +335,6 @@ u64 *fetch_pte(struct amd_io_pgtable *pgtable,
 
 	return pte;
 }
-EXPORT_SYMBOL_GPL(fetch_pte);
 
 static void free_clear_pte(u64 *pte, u64 pteval, struct list_head *freelist)
 {
@@ -406,11 +405,6 @@ static int iommu_v1_map_page(struct io_pgtable_ops *ops, unsigned long iova,
 	for (i = 0; i < count; ++i)
 		pte[i] = __pte;
 
-#ifdef CONFIG_AMD_IOMMU_DEBUGFS
-	if (dom->dbg && dom->dbg->domid == dom->id) {
-		printk("DEBUG: %s: domid=%#x, iova=%#lx\n", __func__, dom->id, iova);
-	}
-#endif
 	ret = 0;
 
 out:
@@ -439,9 +433,6 @@ static unsigned long iommu_v1_unmap_page(struct io_pgtable_ops *ops,
 				      size_t size,
 				      struct iommu_iotlb_gather *gather)
 {
-#ifdef CONFIG_AMD_IOMMU_DEBUGFS
-	struct protection_domain *dom = container_of(pgtable, struct protection_domain, iop);
-#endif
 	struct amd_io_pgtable *pgtable = io_pgtable_ops_to_data(ops);
 	struct protection_domain *dom = container_of(pgtable, struct protection_domain, iop);
 	unsigned long long unmapped;
@@ -468,11 +459,6 @@ static unsigned long iommu_v1_unmap_page(struct io_pgtable_ops *ops,
 
 	BUG_ON(unmapped && !is_power_of_2(unmapped));
 
-#ifdef CONFIG_AMD_IOMMU_DEBUGFS
-	if (dom->dbg && dom->dbg->domid == dom->id) {
-		printk("DEBUG: %s: domid=%#x, iova=%#lx\n", __func__, dom->id, iova);
-	}
-#endif
 	return unmapped;
 }
 
