@@ -1549,7 +1549,7 @@ static void set_dte_entry(struct amd_iommu *iommu, u16 devid,
 
 	pte_root |= (domain->iop.mode & DEV_ENTRY_MODE_MASK)
 		    << DEV_ENTRY_MODE_SHIFT;
-	pte_root |= DTE_FLAG_IR | DTE_FLAG_IW | DTE_FLAG_V | DTE_FLAG_TV;
+	pte_root |= DTE_FLAG_IR | DTE_FLAG_IW | DTE_FLAG_V;
 
 	flags = dev_table[devid].data[1];
 
@@ -1587,6 +1587,17 @@ static void set_dte_entry(struct amd_iommu *iommu, u16 devid,
 		flags    |= tmp;
 	}
 
+	/*
+	 * Only set TV bit when:
+	 *   - IOMMUv1 table is in used.
+	 *   - IOMMUv2 table is in used.
+	 */
+	if ((domain->iop.mode != PAGE_MODE_NONE) ||
+	    (domain->flags & PD_IOMMUV2_MASK))
+		pte_root |= DTE_FLAG_TV;
+	else
+		pte_root &= ~DTE_FLAG_TV;
+
 	flags &= ~DEV_DOMID_MASK;
 	flags |= domain->id;
 
@@ -1609,7 +1620,7 @@ static void clear_dte_entry(struct amd_iommu *iommu, u16 devid)
 	struct dev_table_entry *dev_table = get_dev_table(iommu);
 
 	/* remove entry from the device table seen by the hardware */
-	dev_table[devid].data[0]  = DTE_FLAG_V | DTE_FLAG_TV;
+	dev_table[devid].data[0]  = DTE_FLAG_V;
 	dev_table[devid].data[1] &= DTE_FLAG_MASK;
 
 	amd_iommu_apply_erratum_63(iommu, devid);
