@@ -443,6 +443,7 @@ static unsigned long iommu_v1_unmap_page(struct io_pgtable_ops *ops,
 	struct protection_domain *dom = container_of(pgtable, struct protection_domain, iop);
 #endif
 	struct amd_io_pgtable *pgtable = io_pgtable_ops_to_data(ops);
+	struct protection_domain *dom = container_of(pgtable, struct protection_domain, iop);
 	unsigned long long unmapped;
 	unsigned long unmap_size;
 	u64 *pte;
