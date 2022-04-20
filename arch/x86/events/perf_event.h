@@ -1219,6 +1219,8 @@ static inline bool fixed_counter_disabled(int i, struct pmu *pmu)
 
 int amd_pmu_init(void);
 
+int amd_pmu_lbr_init(void);
+
 #ifdef CONFIG_PERF_EVENTS_AMD_BRS
 int amd_brs_init(void);
 void amd_brs_disable(void);
