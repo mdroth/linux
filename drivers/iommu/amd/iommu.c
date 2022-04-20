@@ -1551,9 +1551,6 @@ static void set_dte_entry(struct amd_iommu *iommu, u16 devid,
 		    << DEV_ENTRY_MODE_SHIFT;
 	pte_root |= DTE_FLAG_IR | DTE_FLAG_IW | DTE_FLAG_V | DTE_FLAG_TV;
 
-	if (domain->iop.mode != PAGE_MODE_NONE)
-		pte_root |= DTE_FLAG_TV;
-
 	flags = dev_table[devid].data[1];
 
 	if (ats)
