@@ -1553,9 +1553,6 @@ static void set_dte_entry(struct amd_iommu *iommu, u16 devid,
 	
 	pte_root |= DTE_FLAG_IR | DTE_FLAG_IW | DTE_FLAG_V;
 
-	if (domain->iop.mode != PAGE_MODE_NONE)
-		pte_root |= DTE_FLAG_TV;
-
 	flags = dev_table[devid].data[1];
 
 	if (ats)
@@ -1591,6 +1588,17 @@ static void set_dte_entry(struct amd_iommu *iommu, u16 devid,
 		tmp = DTE_GCR3_VAL_C(gcr3) << DTE_GCR3_SHIFT_C;
 		flags    |= tmp;
 	}
+
+	/*
+	 * Only set TV bit when:
+	 *   - IOMMUv1 table is in used.
+	 *   - IOMMUv2 table is in used.
+	 */
+	if ((domain->iop.mode != PAGE_MODE_NONE) ||
+	    (domain->flags & PD_IOMMUV2_MASK))
+		pte_root |= DTE_FLAG_TV;
+	else
+		pte_root &= ~DTE_FLAG_TV;
 
 	flags &= ~DEV_DOMID_MASK;
 	flags |= domain->id;
