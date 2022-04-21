@@ -427,7 +427,6 @@ extern void kswapd_stop(int nid);
 
 #ifdef CONFIG_SWAP
 
-bool swap_dirty_folio(struct address_space *mapping, struct folio *folio);
 int add_swap_extent(struct swap_info_struct *sis, unsigned long start_page,
 		unsigned long nr_pages, sector_t start_block);
 int generic_swapfile_activate(struct swap_info_struct *, struct file *,
@@ -578,6 +577,12 @@ static inline swp_entry_t get_swap_page(struct page *page)
 	return entry;
 }
 
+static inline int add_swap_extent(struct swap_info_struct *sis,
+				  unsigned long start_page,
+				  unsigned long nr_pages, sector_t start_block)
+{
+	return -EINVAL;
+}
 #endif /* CONFIG_SWAP */
 
 #ifdef CONFIG_THP_SWAP
