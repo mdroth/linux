@@ -1796,13 +1796,28 @@ static int unuse_pte(struct vm_area_struct *vma, pmd_t *pmd,
 		goto out;
 	}
 
+	/* See do_swap_page() */
+	BUG_ON(!PageAnon(page) && PageMappedToDisk(page));
+	BUG_ON(PageAnon(page) && PageAnonExclusive(page));
+
 	dec_mm_counter(vma->vm_mm, MM_SWAPENTS);
 	inc_mm_counter(vma->vm_mm, MM_ANONPAGES);
 	get_page(page);
 	if (page == swapcache) {
-		page_add_anon_rmap(page, vma, addr, false);
+		rmap_t rmap_flags = RMAP_NONE;
+
+		/*
+		 * See do_swap_page(): PageWriteback() would be problematic.
+		 * However, we do a wait_on_page_writeback() just before this
+		 * call and have the page locked.
+		 */
+		VM_BUG_ON_PAGE(PageWriteback(page), page);
+		if (pte_swp_exclusive(*pte))
+			rmap_flags |= RMAP_EXCLUSIVE;
+
+		page_add_anon_rmap(page, vma, addr, rmap_flags);
 	} else { /* ksm created a completely new copy */
-		page_add_new_anon_rmap(page, vma, addr, false);
+		page_add_new_anon_rmap(page, vma, addr);
 		lru_cache_add_inactive_or_unevictable(page, vma);
 	}
 	set_pte_at(vma->vm_mm, addr, pte,
