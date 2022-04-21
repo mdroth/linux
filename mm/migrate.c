@@ -477,11 +477,6 @@ int migrate_huge_page_move_mapping(struct address_space *mapping,
 
 	xas_lock_irq(&xas);
 	expected_count = 2 + page_has_private(page);
-	if (page_count(page) != expected_count || xas_load(&xas) != page) {
-		xas_unlock_irq(&xas);
-		return -EAGAIN;
-	}
-
 	if (!page_ref_freeze(page, expected_count)) {
 		xas_unlock_irq(&xas);
 		return -EAGAIN;
@@ -1242,7 +1237,6 @@ static int unmap_and_move_huge_page(new_page_t get_new_page,
 		goto put_anon;
 
 	if (page_mapped(hpage)) {
-		bool mapping_locked = false;
 		enum ttu_flags ttu = 0;
 
 		if (!PageAnon(hpage)) {
@@ -1256,14 +1250,13 @@ static int unmap_and_move_huge_page(new_page_t get_new_page,
 			if (unlikely(!mapping))
 				goto unlock_put_anon;
 
-			mapping_locked = true;
-			ttu |= TTU_RMAP_LOCKED;
+			ttu = TTU_RMAP_LOCKED;
 		}
 
 		try_to_migrate(src, ttu);
 		page_was_mapped = 1;
 
-		if (mapping_locked)
+		if (ttu & TTU_RMAP_LOCKED)
 			i_mmap_unlock_write(mapping);
 	}
 
@@ -1424,14 +1417,11 @@ retry:
 						nr_thp_split++;
 						goto retry;
 					}
-
-					nr_failed_pages += nr_subpages;
-					break;
+				/* Hugetlb migration is unsupported */
+				} else if (!no_subpage_counting) {
+					nr_failed++;
 				}
 
-				/* Hugetlb migration is unsupported */
-				if (!no_subpage_counting)
-					nr_failed++;
 				nr_failed_pages += nr_subpages;
 				break;
 			case -ENOMEM:
@@ -1446,28 +1436,30 @@ retry:
 						nr_thp_split++;
 						goto retry;
 					}
-
-					nr_failed_pages += nr_subpages;
-					goto out;
+				} else if (!no_subpage_counting) {
+					nr_failed++;
 				}
 
-				if (!no_subpage_counting)
-					nr_failed++;
 				nr_failed_pages += nr_subpages;
+				/*
+				 * There might be some subpages of fail-to-migrate THPs
+				 * left in thp_split_pages list. Move them back to migration
+				 * list so that they could be put back to the right list by
+				 * the caller otherwise the page refcnt will be leaked.
+				 */
+				list_splice_init(&thp_split_pages, from);
+				nr_thp_failed += thp_retry;
 				goto out;
 			case -EAGAIN:
-				if (is_thp) {
+				if (is_thp)
 					thp_retry++;
-					break;
-				}
-				retry++;
+				else
+					retry++;
 				break;
 			case MIGRATEPAGE_SUCCESS:
 				nr_succeeded += nr_subpages;
-				if (is_thp) {
+				if (is_thp)
 					nr_thp_succeeded++;
-					break;
-				}
 				break;
 			default:
 				/*
@@ -1476,14 +1468,11 @@ retry:
 				 * removed from migration page list and not
 				 * retried in the next outer loop.
 				 */
-				if (is_thp) {
+				if (is_thp)
 					nr_thp_failed++;
-					nr_failed_pages += nr_subpages;
-					break;
-				}
-
-				if (!no_subpage_counting)
+				else if (!no_subpage_counting)
 					nr_failed++;
+
 				nr_failed_pages += nr_subpages;
 				break;
 			}
@@ -1618,8 +1607,8 @@ static int add_page_for_migration(struct mm_struct *mm, unsigned long addr,
 
 	mmap_read_lock(mm);
 	err = -EFAULT;
-	vma = find_vma(mm, addr);
-	if (!vma || addr < vma->vm_start || !vma_migratable(vma))
+	vma = vma_lookup(mm, addr);
+	if (!vma || !vma_migratable(vma))
 		goto out;
 
 	/* FOLL_DUMP to ignore special (like zero) pages */
@@ -1814,13 +1803,18 @@ static void do_pages_stat_array(struct mm_struct *mm, unsigned long nr_pages,
 			goto set_status;
 
 		/* FOLL_DUMP to ignore special (like zero) pages */
-		page = follow_page(vma, addr, FOLL_DUMP);
+		page = follow_page(vma, addr, FOLL_GET | FOLL_DUMP);
 
 		err = PTR_ERR(page);
 		if (IS_ERR(page))
 			goto set_status;
 
-		err = page ? page_to_nid(page) : -ENOENT;
+		if (page) {
+			err = page_to_nid(page);
+			put_page(page);
+		} else {
+			err = -ENOENT;
+		}
 set_status:
 		*status = err;
 
@@ -1856,16 +1850,12 @@ static int do_pages_stat(struct mm_struct *mm, unsigned long nr_pages,
 			 const void __user * __user *pages,
 			 int __user *status)
 {
-#define DO_PAGES_STAT_CHUNK_NR 16
+#define DO_PAGES_STAT_CHUNK_NR 16UL
 	const void __user *chunk_pages[DO_PAGES_STAT_CHUNK_NR];
 	int chunk_status[DO_PAGES_STAT_CHUNK_NR];
 
 	while (nr_pages) {
-		unsigned long chunk_nr;
-
-		chunk_nr = nr_pages;
-		if (chunk_nr > DO_PAGES_STAT_CHUNK_NR)
-			chunk_nr = DO_PAGES_STAT_CHUNK_NR;
+		unsigned long chunk_nr = min(nr_pages, DO_PAGES_STAT_CHUNK_NR);
 
 		if (in_compat_syscall()) {
 			if (get_compat_pages_array(chunk_pages, pages,
@@ -2027,7 +2017,6 @@ static struct page *alloc_misplaced_dst_page(struct page *page,
 
 static int numamigrate_isolate_page(pg_data_t *pgdat, struct page *page)
 {
-	int page_lru;
 	int nr_pages = thp_nr_pages(page);
 	int order = compound_order(page);
 
@@ -2054,8 +2043,7 @@ static int numamigrate_isolate_page(pg_data_t *pgdat, struct page *page)
 	if (isolate_lru_page(page))
 		return 0;
 
-	page_lru = page_is_file_lru(page);
-	mod_node_page_state(page_pgdat(page), NR_ISOLATED_ANON + page_lru,
+	mod_node_page_state(page_pgdat(page), NR_ISOLATED_ANON + page_is_file_lru(page),
 			    nr_pages);
 
 	/*
@@ -2365,8 +2353,8 @@ out_clear:
  */
 static void __set_migration_target_nodes(void)
 {
-	nodemask_t next_pass	= NODE_MASK_NONE;
-	nodemask_t this_pass	= NODE_MASK_NONE;
+	nodemask_t next_pass;
+	nodemask_t this_pass;
 	nodemask_t used_targets = NODE_MASK_NONE;
 	int node, best_distance;
 
@@ -2503,9 +2491,9 @@ static int __meminit migrate_on_reclaim_callback(struct notifier_block *self,
 
 void __init migrate_on_reclaim_init(void)
 {
-	node_demotion = kmalloc_array(nr_node_ids,
-				      sizeof(struct demotion_nodes),
-				      GFP_KERNEL);
+	node_demotion = kcalloc(nr_node_ids,
+				sizeof(struct demotion_nodes),
+				GFP_KERNEL);
 	WARN_ON(!node_demotion);
 
 	hotplug_memory_notifier(migrate_on_reclaim_callback, 100);
