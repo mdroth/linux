@@ -65,6 +65,8 @@
  * bookkeeping, the range need to be added during the RMP entry lookup.
  */
 #define RMPTABLE_CPU_BOOKKEEPING_SZ	0x4000
+#define RMPENTRY_SHIFT			8
+#define rmptable_page_offset(x)	(RMPTABLE_CPU_BOOKKEEPING_SZ + (((unsigned long)x) >> RMPENTRY_SHIFT))
 
 /* For early boot hypervisor communication in SEV-ES enabled guests */
 static struct ghcb boot_ghcb_page __bss_decrypted __aligned(PAGE_SIZE);
@@ -2441,3 +2443,44 @@ nosnp:
  * available after subsys_initcall().
  */
 fs_initcall(snp_rmptable_init);
+
+static struct rmpentry *__snp_lookup_rmpentry(u64 pfn, int *level)
+{
+	unsigned long vaddr, paddr = pfn << PAGE_SHIFT;
+	struct rmpentry *entry, *large_entry;
+
+	if (!pfn_valid(pfn))
+		return ERR_PTR(-EINVAL);
+
+	if (!cpu_feature_enabled(X86_FEATURE_SEV_SNP))
+		return ERR_PTR(-ENXIO);
+
+	vaddr = rmptable_start + rmptable_page_offset(paddr);
+	if (unlikely(vaddr > rmptable_end))
+		return ERR_PTR(-ENXIO);
+
+	entry = (struct rmpentry *)vaddr;
+
+	/* Read a large RMP entry to get the correct page level used in RMP entry. */
+	vaddr = rmptable_start + rmptable_page_offset(paddr & PMD_MASK);
+	large_entry = (struct rmpentry *)vaddr;
+	*level = RMP_TO_X86_PG_LEVEL(rmpentry_pagesize(large_entry));
+
+	return entry;
+}
+
+/*
+ * Return 1 if the RMP entry is assigned, 0 if it exists but is not assigned,
+ * and -errno if there is no corresponding RMP entry.
+ */
+int snp_lookup_rmpentry(u64 pfn, int *level)
+{
+	struct rmpentry *e;
+
+	e = __snp_lookup_rmpentry(pfn, level);
+	if (IS_ERR(e))
+		return PTR_ERR(e);
+
+	return !!rmpentry_assigned(e);
+}
+EXPORT_SYMBOL_GPL(snp_lookup_rmpentry);
