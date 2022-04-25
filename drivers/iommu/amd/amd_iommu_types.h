@@ -455,6 +455,9 @@ extern bool amd_iommu_irq_remap;
 /* kmem_cache to get tables with 128 byte alignement */
 extern struct kmem_cache *amd_iommu_irq_cache;
 
+/* SNP is enabled on the system? */
+extern bool amd_iommu_snp_en;
+
 #define PCI_SBDF_TO_SEGID(sbdf)		(((sbdf) >> 16) & 0xffff)
 #define PCI_SBDF_TO_DEVID(sbdf)		((sbdf) & 0xffff)
 #define PCI_SEG_DEVID_TO_SBDF(seg, devid)	((((u32)(seg) & 0xffff) << 16) | \
@@ -1004,5 +1007,7 @@ struct amd_irte_ops {
 extern struct amd_irte_ops irte_32_ops;
 extern struct amd_irte_ops irte_128_ops;
 #endif
+
+extern struct iommu_ops amd_iommu_ops;
 
 #endif /* _ASM_X86_AMD_IOMMU_TYPES_H */
