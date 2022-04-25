@@ -1241,3 +1241,33 @@ u32 amd_get_highest_perf(void)
 	return 255;
 }
 EXPORT_SYMBOL_GPL(amd_get_highest_perf);
+
+static __init int print_s5_reset_status_mmio(void)
+{
+	void __iomem *addr;
+	u32 value;
+
+	if (boot_cpu_data.x86 < 0x17)
+		return 0;
+
+	/*
+	 * FCH::PM::S5_RESET_STATUS
+	 * PM Base = 0xFED80300
+	 * S5_RESET_STATUS offset = 0xC0
+	 */
+	addr = ioremap(0xFED803C0, sizeof(value));
+
+	if (!addr) {
+		pr_info("Failed to map S5_RESET_STATUS register");
+		return -EIO;
+	}
+
+	value = ioread32(addr);
+
+	iounmap(addr);
+
+	pr_info("S5_RESET_STATUS = 0x%08x", value);
+
+	return 0;
+}
+late_initcall(print_s5_reset_status_mmio);
