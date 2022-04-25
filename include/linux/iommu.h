@@ -675,6 +675,12 @@ struct iommu_sva *iommu_sva_bind_device(struct device *dev,
 void iommu_sva_unbind_device(struct iommu_sva *handle);
 u32 iommu_sva_get_pasid(struct iommu_sva *handle);
 
+#ifdef CONFIG_AMD_MEM_ENCRYPT
+bool iommu_sev_snp_supported(void);
+#else
+static inline bool iommu_sev_snp_supported(void) { return false; }
+#endif
+
 #else /* CONFIG_IOMMU_API */
 
 struct iommu_ops {};
@@ -1031,6 +1037,9 @@ static inline struct iommu_fwspec *dev_iommu_fwspec_get(struct device *dev)
 {
 	return NULL;
 }
+
+static inline bool iommu_sev_snp_supported(void) { return false; }
+
 #endif /* CONFIG_IOMMU_API */
 
 /**
