@@ -1760,7 +1760,7 @@ out_unlock:
 /*
  * Is the caller allowed to modify his namespace?
  */
-static inline bool may_mount(void)
+bool may_mount(void)
 {
 	return ns_capable(current->nsproxy->mnt_ns->user_ns, CAP_SYS_ADMIN);
 }
@@ -4058,10 +4058,22 @@ static int mount_setattr_prepare(struct mount_kattr *kattr, struct mount *mnt)
 	if (err) {
 		struct mount *p;
 
-		for (p = mnt; p != m; p = next_mnt(p, mnt)) {
+		/*
+		 * If we had to call mnt_hold_writers() MNT_WRITE_HOLD will
+		 * be set in @mnt_flags. The loop unsets MNT_WRITE_HOLD for all
+		 * mounts and needs to take care to include the first mount.
+		 */
+		for (p = mnt; p; p = next_mnt(p, mnt)) {
 			/* If we had to hold writers unblock them. */
 			if (p->mnt.mnt_flags & MNT_WRITE_HOLD)
 				mnt_unhold_writers(p);
+
+			/*
+			 * We're done once the first mount we changed got
+			 * MNT_WRITE_HOLD unset.
+			 */
+			if (p == m)
+				break;
 		}
 	}
 	return err;
@@ -4197,14 +4209,9 @@ static int build_mount_idmapped(const struct mount_attr *attr, size_t usize,
 	if (attr->userns_fd > INT_MAX)
 		return -EINVAL;
 
-	file = fget(attr->userns_fd);
-	if (!file)
-		return -EBADF;
-
-	if (!proc_ns_file(file)) {
-		err = -EINVAL;
-		goto out_fput;
-	}
+	file = proc_ns_fget(attr->userns_fd);
+	if (IS_ERR(file))
+		return PTR_ERR(file);
 
 	ns = get_proc_ns(file_inode(file));
 	if (ns->ops->type != CLONE_NEWUSER) {
