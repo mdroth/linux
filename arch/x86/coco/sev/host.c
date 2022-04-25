@@ -31,10 +31,35 @@
 #include <asm/iommu.h>
 
 /*
+ * The RMP entry format is not architectural. The format is defined in PPR
+ * Family 19h Model 01h, Rev B1 processor.
+ */
+struct rmpentry {
+	union {
+		struct {
+			u64	assigned	: 1,
+				pagesize	: 1,
+				immutable	: 1,
+				rsvd1		: 9,
+				gpa		: 39,
+				asid		: 10,
+				vmsa		: 1,
+				validated	: 1,
+				rsvd2		: 1;
+		} info;
+		u64 low;
+	};
+	u64 high;
+} __packed;
+
+/*
  * The first 16KB from the RMP_BASE is used by the processor for the
  * bookkeeping, the range needs to be added during the RMP entry lookup.
  */
 #define RMPTABLE_CPU_BOOKKEEPING_SZ	0x4000
+#define RMPENTRY_SHIFT			8
+#define rmptable_page_offset(x)	(RMPTABLE_CPU_BOOKKEEPING_SZ +		\
+				 (((unsigned long)x) >> RMPENTRY_SHIFT))
 
 static unsigned long rmptable_start __ro_after_init;
 static unsigned long rmptable_end __ro_after_init;
@@ -205,3 +230,62 @@ nosnp:
  * the page(s) used for DMA are hypervisor owned.
  */
 fs_initcall(snp_rmptable_init);
+
+static inline unsigned int rmpentry_assigned(struct rmpentry *e)
+{
+	return e->info.assigned;
+}
+
+static inline unsigned int rmpentry_pagesize(struct rmpentry *e)
+{
+	return e->info.pagesize;
+}
+
+static struct rmpentry *rmptable_entry(unsigned long paddr)
+{
+	unsigned long vaddr;
+
+	vaddr = rmptable_start + rmptable_page_offset(paddr);
+	if (unlikely(vaddr > rmptable_end))
+		return ERR_PTR(-EFAULT);
+
+	return (struct rmpentry *)vaddr;
+}
+
+static struct rmpentry *__snp_lookup_rmpentry(u64 pfn, int *level)
+{
+	unsigned long paddr = pfn << PAGE_SHIFT;
+	struct rmpentry *entry, *large_entry;
+
+	if (!cpu_feature_enabled(X86_FEATURE_SEV_SNP))
+		return ERR_PTR(-ENXIO);
+
+	if (!pfn_valid(pfn))
+		return ERR_PTR(-EINVAL);
+
+	entry = rmptable_entry(paddr);
+	if (IS_ERR(entry))
+		return entry;
+
+	/* Read a large RMP entry to get the correct page level used in RMP entry. */
+	large_entry = rmptable_entry(paddr & PMD_MASK);
+	*level = RMP_TO_X86_PG_LEVEL(rmpentry_pagesize(large_entry));
+
+	return entry;
+}
+
+/*
+ * Return 1 if the RMP entry is assigned, 0 if it exists but is not assigned,
+ * and -errno if there is no corresponding RMP entry.
+ */
+int snp_lookup_rmpentry(u64 pfn, int *level)
+{
+	struct rmpentry *e;
+
+	e = __snp_lookup_rmpentry(pfn, level);
+	if (IS_ERR(e))
+		return PTR_ERR(e);
+
+	return !!rmpentry_assigned(e);
+}
+EXPORT_SYMBOL_GPL(snp_lookup_rmpentry);
