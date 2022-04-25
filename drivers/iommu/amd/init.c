@@ -3635,3 +3635,34 @@ int amd_iommu_snp_enable(void)
 	return 0;
 }
 #endif
+
+bool iommu_sev_snp_supported(void)
+{
+	struct amd_iommu *iommu;
+
+	if (no_iommu) {
+		pr_warn("SEV-SNP: IOMMU is disabled.\n");
+		return false;
+	}
+
+	if (iommu_default_passthrough()) {
+		pr_warn("SEV-SNP: IOMMU is configured in passthrough mode.\n");
+		return false;
+	}
+
+	/*
+	 * Iterate through all the IOMMUs and verify the SNPSup feature is
+	 * enabled.
+	 */
+	for_each_iommu(iommu) {
+		if (!iommu_feature(iommu, FEATURE_SNP)) {
+			pr_err("SNPSup is disabled (devid: %02x:%02x.%x)\n",
+			       PCI_BUS_NUM(iommu->devid), PCI_SLOT(iommu->devid),
+			       PCI_FUNC(iommu->devid));
+			return false;
+		}
+	}
+
+	return true;
+}
+EXPORT_SYMBOL_GPL(iommu_sev_snp_supported);

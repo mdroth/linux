@@ -678,6 +678,12 @@ int iommu_group_claim_dma_owner(struct iommu_group *group, void *owner);
 void iommu_group_release_dma_owner(struct iommu_group *group);
 bool iommu_group_dma_owner_claimed(struct iommu_group *group);
 
+#ifdef CONFIG_AMD_MEM_ENCRYPT
+bool iommu_sev_snp_supported(void);
+#else
+static inline bool iommu_sev_snp_supported(void) { return false; }
+#endif
+
 #else /* CONFIG_IOMMU_API */
 
 struct iommu_ops {};
@@ -1045,6 +1051,9 @@ static inline bool iommu_group_dma_owner_claimed(struct iommu_group *group)
 {
 	return false;
 }
+
+static inline bool iommu_sev_snp_supported(void) { return false; }
+
 #endif /* CONFIG_IOMMU_API */
 
 /**
