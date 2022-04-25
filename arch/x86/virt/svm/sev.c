@@ -53,6 +53,9 @@ struct rmpentry {
  */
 #define RMPTABLE_CPU_BOOKKEEPING_SZ	0x4000
 
+/* Mask to apply to a PFN to get the first PFN of a 2MB page */
+#define PFN_PMD_MASK	(~((1ULL << (PMD_SHIFT - PAGE_SHIFT)) - 1))
+
 static struct rmpentry *rmptable_start __ro_after_init;
 static u64 rmptable_max_pfn __ro_after_init;
 
@@ -237,3 +240,53 @@ nosnp:
  * the page(s) used for DMA are hypervisor owned.
  */
 fs_initcall(snp_rmptable_init);
+
+static int rmptable_entry(u64 pfn, struct rmpentry *entry)
+{
+	if (WARN_ON_ONCE(pfn > rmptable_max_pfn))
+		return -EFAULT;
+
+	*entry = rmptable_start[pfn];
+
+	return 0;
+}
+
+static int __snp_lookup_rmpentry(u64 pfn, struct rmpentry *entry, int *level)
+{
+	struct rmpentry large_entry;
+	int ret;
+
+	if (!cpu_feature_enabled(X86_FEATURE_SEV_SNP))
+		return -ENXIO;
+
+	ret = rmptable_entry(pfn, entry);
+	if (ret)
+		return ret;
+
+	/*
+	 * Find the authoritative RMP entry for a PFN. This can be either a 4K
+	 * RMP entry or a special large RMP entry that is authoritative for a
+	 * whole 2M area.
+	 */
+	ret = rmptable_entry(pfn & PFN_PMD_MASK, &large_entry);
+	if (ret)
+		return ret;
+
+	*level = RMP_TO_X86_PG_LEVEL(large_entry.pagesize);
+
+	return 0;
+}
+
+int snp_lookup_rmpentry(u64 pfn, bool *assigned, int *level)
+{
+	struct rmpentry e;
+	int ret;
+
+	ret = __snp_lookup_rmpentry(pfn, &e, level);
+	if (ret)
+		return ret;
+
+	*assigned = !!e.assigned;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(snp_lookup_rmpentry);
