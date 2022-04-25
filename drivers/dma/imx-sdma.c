@@ -891,7 +891,7 @@ static void sdma_update_channel_loop(struct sdma_channel *sdmac)
 	 * SDMA stops cyclic channel when DMA request triggers a channel and no SDMA
 	 * owned buffer is available (i.e. BD_DONE was set too late).
 	 */
-	if (!is_sdma_channel_enabled(sdmac->sdma, sdmac->channel)) {
+	if (sdmac->desc && !is_sdma_channel_enabled(sdmac->sdma, sdmac->channel)) {
 		dev_warn(sdmac->sdma->dev, "restart cyclic channel %d\n", sdmac->channel);
 		sdma_enable_channel(sdmac->sdma, sdmac->channel);
 	}
@@ -2183,8 +2183,8 @@ static int sdma_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_clk;
 
-	ret = devm_request_irq(&pdev->dev, irq, sdma_int_handler, 0, "sdma",
-			       sdma);
+	ret = devm_request_irq(&pdev->dev, irq, sdma_int_handler, 0,
+				dev_name(&pdev->dev), sdma);
 	if (ret)
 		goto err_irq;
 
@@ -2346,7 +2346,7 @@ MODULE_DESCRIPTION("i.MX SDMA driver");
 #if IS_ENABLED(CONFIG_SOC_IMX6Q)
 MODULE_FIRMWARE("imx/sdma/sdma-imx6q.bin");
 #endif
-#if IS_ENABLED(CONFIG_SOC_IMX7D)
+#if IS_ENABLED(CONFIG_SOC_IMX7D) || IS_ENABLED(CONFIG_SOC_IMX8M)
 MODULE_FIRMWARE("imx/sdma/sdma-imx7d.bin");
 #endif
 MODULE_LICENSE("GPL");

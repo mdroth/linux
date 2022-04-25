@@ -630,7 +630,7 @@ static int i915_driver_hw_probe(struct drm_i915_private *dev_priv)
 
 	intel_opregion_setup(dev_priv);
 
-	ret = intel_pcode_init(dev_priv);
+	ret = intel_pcode_init(&dev_priv->uncore);
 	if (ret)
 		goto err_msi;
 
@@ -828,8 +828,6 @@ i915_driver_create(struct pci_dev *pdev, const struct pci_device_id *ent)
  */
 int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
-	const struct intel_device_info *match_info =
-		(struct intel_device_info *)ent->driver_data;
 	struct drm_i915_private *i915;
 	int ret;
 
@@ -838,7 +836,7 @@ int i915_driver_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		return PTR_ERR(i915);
 
 	/* Disable nuclear pageflip by default on pre-ILK */
-	if (!i915->params.nuclear_pageflip && match_info->graphics.ver < 5)
+	if (!i915->params.nuclear_pageflip && DISPLAY_VER(i915) < 5)
 		i915->drm.driver_features &= ~DRIVER_ATOMIC;
 
 	ret = pci_enable_device(pdev);
@@ -1066,8 +1064,6 @@ void i915_driver_shutdown(struct drm_i915_private *i915)
 	intel_runtime_pm_disable(&i915->runtime_pm);
 	intel_power_domains_disable(i915);
 
-	i915_gem_suspend(i915);
-
 	if (HAS_DISPLAY(i915)) {
 		drm_kms_helper_poll_disable(&i915->drm);
 
@@ -1083,6 +1079,8 @@ void i915_driver_shutdown(struct drm_i915_private *i915)
 	intel_shutdown_encoders(i915);
 
 	intel_dmc_ucode_suspend(i915);
+
+	i915_gem_suspend(i915);
 
 	/*
 	 * The only requirement is to reboot with display DC states disabled,
@@ -1166,6 +1164,8 @@ static int i915_drm_suspend(struct drm_device *dev)
 	intel_dmc_ucode_suspend(dev_priv);
 
 	enable_rpm_wakeref_asserts(&dev_priv->runtime_pm);
+
+	i915_gem_drain_freed_objects(dev_priv);
 
 	return 0;
 }
@@ -1258,7 +1258,7 @@ static int i915_drm_resume(struct drm_device *dev)
 
 	disable_rpm_wakeref_asserts(&dev_priv->runtime_pm);
 
-	ret = intel_pcode_init(dev_priv);
+	ret = intel_pcode_init(&dev_priv->uncore);
 	if (ret)
 		return ret;
 
@@ -1553,7 +1553,7 @@ static int intel_runtime_suspend(struct device *kdev)
 	if (drm_WARN_ON_ONCE(&dev_priv->drm, !HAS_RUNTIME_PM(dev_priv)))
 		return -ENODEV;
 
-	drm_dbg_kms(&dev_priv->drm, "Suspending device\n");
+	drm_dbg(&dev_priv->drm, "Suspending device\n");
 
 	disable_rpm_wakeref_asserts(rpm);
 
@@ -1623,7 +1623,7 @@ static int intel_runtime_suspend(struct device *kdev)
 	if (!IS_VALLEYVIEW(dev_priv) && !IS_CHERRYVIEW(dev_priv))
 		intel_hpd_poll_enable(dev_priv);
 
-	drm_dbg_kms(&dev_priv->drm, "Device suspended\n");
+	drm_dbg(&dev_priv->drm, "Device suspended\n");
 	return 0;
 }
 
@@ -1636,7 +1636,7 @@ static int intel_runtime_resume(struct device *kdev)
 	if (drm_WARN_ON_ONCE(&dev_priv->drm, !HAS_RUNTIME_PM(dev_priv)))
 		return -ENODEV;
 
-	drm_dbg_kms(&dev_priv->drm, "Resuming device\n");
+	drm_dbg(&dev_priv->drm, "Resuming device\n");
 
 	drm_WARN_ON_ONCE(&dev_priv->drm, atomic_read(&rpm->wakeref_count));
 	disable_rpm_wakeref_asserts(rpm);
@@ -1679,7 +1679,7 @@ static int intel_runtime_resume(struct device *kdev)
 		drm_err(&dev_priv->drm,
 			"Runtime resume failed, disabling it (%d)\n", ret);
 	else
-		drm_dbg_kms(&dev_priv->drm, "Device resumed\n");
+		drm_dbg(&dev_priv->drm, "Device resumed\n");
 
 	return ret;
 }
