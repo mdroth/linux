@@ -82,6 +82,7 @@ merged much easier.
    maintainer/index
    fault-injection/index
    livepatch/index
+   rust/index
 
 
 Kernel API documentation
@@ -128,7 +129,7 @@ needed).
    sound/index
    crypto/index
    filesystems/index
-   vm/index
+   mm/index
    bpf/index
    usb/index
    PCI/index
