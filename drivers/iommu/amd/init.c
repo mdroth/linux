@@ -96,7 +96,7 @@
  * out of it.
  */
 
-extern const struct iommu_ops amd_iommu_ops;
+extern struct iommu_ops amd_iommu_ops;
 
 /*
  * structure describing one IOMMU in the ACPI table. Typically followed by one

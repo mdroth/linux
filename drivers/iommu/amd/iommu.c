@@ -70,7 +70,7 @@ LIST_HEAD(acpihid_map);
  * Domain for untranslated devices - only allocated
  * if iommu=pt passed on kernel cmd line.
  */
-const struct iommu_ops amd_iommu_ops;
+struct iommu_ops amd_iommu_ops;
 
 static ATOMIC_NOTIFIER_HEAD(ppr_notifier);
 int amd_iommu_max_glx_val = -1;
@@ -2374,7 +2374,7 @@ static int amd_iommu_def_domain_type(struct device *dev)
 	return 0;
 }
 
-const struct iommu_ops amd_iommu_ops = {
+struct iommu_ops amd_iommu_ops = {
 	.capable = amd_iommu_capable,
 	.domain_alloc = amd_iommu_domain_alloc,
 	.probe_device = amd_iommu_probe_device,
