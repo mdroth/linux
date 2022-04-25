@@ -2299,6 +2299,27 @@ static __init void snp_enable(void *arg)
 	__snp_enable(smp_processor_id());
 }
 
+static int __mfdm_enable(unsigned int cpu)
+{
+	u64 val;
+
+	if (!cpu_feature_enabled(X86_FEATURE_SEV_SNP))
+		return 0;
+
+	rdmsrl(MSR_AMD64_SYSCFG, val);
+
+	val |= MSR_AMD64_SYSCFG_MFDM;
+
+	wrmsrl(MSR_AMD64_SYSCFG, val);
+
+	return 0;
+}
+
+static __init void mfdm_enable(void *arg)
+{
+	__mfdm_enable(smp_processor_id());
+}
+
 static bool get_rmptable_info(u64 *start, u64 *len)
 {
 	u64 calc_rmp_sz, rmp_sz, rmp_base, rmp_end, nr_pages;
@@ -2366,6 +2387,9 @@ static __init int __snp_rmptable_init(void)
 
 	/* Flush the caches to ensure that data is written before SNP is enabled. */
 	wbinvd_on_all_cpus();
+
+	/* MFDM must be enabled on all the CPUs prior to enabling SNP. */
+	on_each_cpu(mfdm_enable, NULL, 1);
 
 	/* Enable SNP on all CPUs. */
 	on_each_cpu(snp_enable, NULL, 1);
