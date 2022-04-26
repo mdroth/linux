@@ -112,6 +112,11 @@ struct __packed rmpentry {
 
 #define rmpentry_assigned(x)	((x)->info.assigned)
 #define rmpentry_pagesize(x)	((x)->info.pagesize)
+#define rmpentry_vmsa(x)	((x)->info.vmsa)
+#define rmpentry_asid(x)	((x)->info.asid)
+#define rmpentry_validated(x)	((x)->info.validated)
+#define rmpentry_gpa(x)		((unsigned long)(x)->info.gpa)
+#define rmpentry_immutable(x)	((x)->info.immutable)
 
 #define RMPADJUST_VMSA_PAGE_BIT		BIT(16)
 
