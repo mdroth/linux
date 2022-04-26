@@ -3234,6 +3234,13 @@ static void set_ghcb_msr(struct vcpu_svm *svm, u64 value)
 	svm->vmcb->control.ghcb_gpa = value;
 }
 
+static int snp_rmptable_psmash(struct kvm *kvm, kvm_pfn_t pfn)
+{
+	pfn = pfn & ~(KVM_PAGES_PER_HPAGE(PG_LEVEL_2M) - 1);
+
+	return psmash(pfn);
+}
+
 static int snp_complete_psc_msr_protocol(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
@@ -3695,4 +3702,82 @@ struct page *snp_safe_alloc_page(struct kvm_vcpu *vcpu)
 		__free_page(p + 1);
 
 	return p;
+}
+
+void handle_rmp_page_fault(struct kvm_vcpu *vcpu, gpa_t gpa, u64 error_code)
+{
+	struct kvm_memory_slot *slot;
+	struct kvm *kvm = vcpu->kvm;
+	int order, rmp_level, ret;
+	bool assigned;
+	kvm_pfn_t pfn;
+	gfn_t gfn;
+
+	/*
+	 * Private memslots forward handling of implicit page state changes
+	 * to userspace, so the only RMP faults expected here are for
+	 * PFERR_GUEST_SIZEM_MASK. Anything else suggests that the RMP table
+	 * has gotten out of sync with the private memslot. Generally...
+	 *
+	 * However, there is a transient case where access to an NPT mapping
+	 * that has just been split/PSMASH'd can generate an RMP fault. In this
+	 * case the PFERR_GUEST_SIZEM bit might not be set. In these cases it
+	 * should be safe to ignore and let the guest retry, but allow for
+	 * these to be optionally logged to diagnose exceptional cases.
+	 */
+	if (!(error_code & PFERR_GUEST_SIZEM_MASK)) {
+		pr_debug_ratelimited("Unexpected RMP fault for GPA 0x%llx, error_code 0x%llx",
+				     gpa, error_code);
+		return;
+	}
+
+	gfn = gpa >> PAGE_SHIFT;
+
+	/*
+	 * Only RMPADJUST/PVALIDATE should cause PFERR_GUEST_SIZEM.
+	 *
+	 * For PVALIDATE, this should only happen if a guest PVALIDATEs a 4K GFN
+	 * that is backed by a huge page in the host whose RMP entry has the
+	 * hugepage/assigned bits set. With UPM, that should only ever happen
+	 * for private pages.
+	 *
+	 * For RMPADJUST, this assumption might not hold, in which case handling
+	 * for obtaining the PFN from HVA-backed memory may be needed. For now,
+	 * just print warnings.
+	 */
+	if (!kvm_mem_is_private(kvm, gfn)) {
+		pr_warn_ratelimited("Unexpected RMP fault, size-mismatch for non-private GPA 0x%llx\n",
+				    gpa);
+		return;
+	}
+
+	slot = gfn_to_memslot(kvm, gfn);
+	if (!kvm_slot_can_be_private(slot)) {
+		pr_warn_ratelimited("Unexpected RMP fault, non-private slot for GPA 0x%llx\n",
+				    gpa);
+		return;
+	}
+
+	ret = kvm_gmem_get_pfn(kvm, slot, gfn, &pfn, &order);
+	if (ret) {
+		pr_warn_ratelimited("Unexpected RMP fault, no private backing page for GPA 0x%llx\n",
+				    gpa);
+		return;
+	}
+
+	ret = snp_lookup_rmpentry(pfn, &assigned, &rmp_level);
+	if (ret || !assigned) {
+		pr_warn_ratelimited("Unexpected RMP fault, no assigned RMP entry found for GPA 0x%llx PFN 0x%llx error %d\n",
+				    gpa, pfn, ret);
+		goto out;
+	}
+
+	ret = snp_rmptable_psmash(kvm, pfn);
+	if (ret)
+		pr_err_ratelimited("Unable to split RMP entries for GPA 0x%llx PFN 0x%llx ret %d\n",
+				   gpa, pfn, ret);
+
+out:
+	kvm_zap_gfn_range(kvm, gfn, gfn + PTRS_PER_PMD);
+	put_page(pfn_to_page(pfn));
 }
