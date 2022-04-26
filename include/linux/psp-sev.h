@@ -928,7 +928,7 @@ int snp_guest_decommission(struct sev_data_snp_decommission *data, int *error);
 int snp_guest_page_reclaim(struct sev_data_snp_page_reclaim *data, int *error);
 
 /**
- * snp_guest_dbg_decrypt - perform SEV SNP_DBG_DECRYPT command
+ * snp_guest_dbg_decrypt_page - perform SEV SNP_DBG_DECRYPT command
  *
  * @sev_ret: sev command return code
  *
@@ -939,7 +939,7 @@ int snp_guest_page_reclaim(struct sev_data_snp_page_reclaim *data, int *error);
  * -%ETIMEDOUT if the sev command timed out
  * -%EIO       if the sev returned a non-zero return code
  */
-int snp_guest_dbg_decrypt(struct sev_data_snp_dbg *data, int *error);
+int snp_guest_dbg_decrypt_page(u64 gctx_pfn, u64 src_pfn, u64 dst_pfn, int *error);
 
 void *psp_copy_user_blob(u64 uaddr, u32 len);
 void *snp_alloc_firmware_page(gfp_t mask);
@@ -997,7 +997,7 @@ static inline int snp_guest_page_reclaim(struct sev_data_snp_page_reclaim *data,
 	return -ENODEV;
 }
 
-static inline int snp_guest_dbg_decrypt(struct sev_data_snp_dbg *data, int *error)
+static inline int snp_guest_dbg_decrypt_page(u64 gctx_pfn, u64 src_pfn, u64 dst_pfn, int *error)
 {
 	return -ENODEV;
 }
