@@ -4879,6 +4879,7 @@ static struct kvm_x86_ops svm_x86_ops __initdata = {
 	.fault_is_private = sev_fault_is_private,
 
 	.alloc_apic_backing_page = svm_alloc_apic_backing_page,
+	.rmp_page_level_adjust = sev_rmp_page_level_adjust,
 };
 
 /*
