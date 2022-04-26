@@ -3186,9 +3186,13 @@ void sev_es_unmap_ghcb(struct vcpu_svm *svm)
 
 	 /* Sync the scratch buffer area. */
 	if (svm->sev_es.ghcb_sa_sync) {
-		kvm_write_guest(svm->vcpu.kvm,
+		int ret;
+
+		ret = kvm_write_guest(svm->vcpu.kvm,
 				svm->sev_es.ghcb_sa_gpa,
 				svm->sev_es.ghcb_sa, svm->sev_es.ghcb_sa_len);
+		if (ret)
+			pr_warn_ratelimited("unmap_ghcb: kvm_write_guest failed while syncing scratch area, gpa: %llx, ret: %d\n", svm->sev_es.ghcb_sa_gpa, ret);
 		svm->sev_es.ghcb_sa_sync = false;
 	}
 
