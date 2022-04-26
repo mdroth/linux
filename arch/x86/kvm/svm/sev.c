@@ -3065,6 +3065,7 @@ static int sev_es_validate_vmgexit(struct vcpu_svm *svm, u64 *exit_code)
 	case SVM_VMGEXIT_AP_JUMP_TABLE:
 	case SVM_VMGEXIT_UNSUPPORTED_EVENT:
 	case SVM_VMGEXIT_HV_FEATURES:
+	case SVM_VMGEXIT_PSC:
 		break;
 	default:
 		reason = GHCB_ERR_INVALID_EVENT;
@@ -3350,13 +3351,13 @@ static int __snp_handle_page_state_change(struct kvm_vcpu *vcpu, enum psc_op op,
 		 */
 		rc = snp_check_and_build_npt(vcpu, gpa, level);
 		if (rc)
-			return -EINVAL;
+			return PSC_UNDEF_ERR;
 
 		if (op == SNP_PAGE_STATE_PRIVATE) {
 			hva_t hva;
 
 			if (snp_gpa_to_hva(kvm, gpa, &hva))
-				return -EINVAL;
+				return PSC_UNDEF_ERR;
 
 			/*
 			 * Verify that the hva range is registered. This enforcement is
@@ -3368,7 +3369,7 @@ static int __snp_handle_page_state_change(struct kvm_vcpu *vcpu, enum psc_op op,
 			rc = is_hva_registered(kvm, hva, page_level_size(level));
 			mutex_unlock(&kvm->lock);
 			if (!rc)
-				return -EINVAL;
+				return PSC_UNDEF_ERR;
 
 			/*
 			 * Mark the userspace range unmerable before adding the pages
@@ -3378,7 +3379,7 @@ static int __snp_handle_page_state_change(struct kvm_vcpu *vcpu, enum psc_op op,
 			rc = snp_mark_unmergable(kvm, hva, page_level_size(level));
 			mmap_write_unlock(kvm->mm);
 			if (rc)
-				return -EINVAL;
+				return PSC_UNDEF_ERR;
 		}
 
 		write_lock(&kvm->mmu_lock);
@@ -3409,7 +3410,7 @@ static int __snp_handle_page_state_change(struct kvm_vcpu *vcpu, enum psc_op op,
 			rc = rmp_make_private(pfn, gpa, level, sev->asid, false);
 			break;
 		default:
-			rc = -EINVAL;
+			rc = PSC_INVALID_ENTRY;
 			break;
 		}
 
@@ -3425,6 +3426,65 @@ static int __snp_handle_page_state_change(struct kvm_vcpu *vcpu, enum psc_op op,
 	}
 
 	return 0;
+}
+
+static inline unsigned long map_to_psc_vmgexit_code(int rc)
+{
+	switch (rc) {
+	case PSC_INVALID_HDR:
+		return ((1ul << 32) | 1);
+	case PSC_INVALID_ENTRY:
+		return ((1ul << 32) | 2);
+	case RMPUPDATE_FAIL_OVERLAP:
+		return ((3ul << 32) | 2);
+	default: return (4ul << 32);
+	}
+}
+
+static unsigned long snp_handle_page_state_change(struct vcpu_svm *svm)
+{
+	struct kvm_vcpu *vcpu = &svm->vcpu;
+	int level, op, rc = PSC_UNDEF_ERR;
+	struct snp_psc_desc *info;
+	struct psc_entry *entry;
+	u16 cur, end;
+	gpa_t gpa;
+
+	if (!sev_snp_guest(vcpu->kvm))
+		return PSC_INVALID_HDR;
+
+	if (setup_vmgexit_scratch(svm, true, sizeof(*info))) {
+		pr_err("vmgexit: scratch area is not setup.\n");
+		return PSC_INVALID_HDR;
+	}
+
+	info = (struct snp_psc_desc *)svm->sev_es.ghcb_sa;
+	cur = info->hdr.cur_entry;
+	end = info->hdr.end_entry;
+
+	if (cur >= VMGEXIT_PSC_MAX_ENTRY ||
+	    end >= VMGEXIT_PSC_MAX_ENTRY || cur > end)
+		return PSC_INVALID_ENTRY;
+
+	for (; cur <= end; cur++) {
+		entry = &info->entries[cur];
+		gpa = gfn_to_gpa(entry->gfn);
+		level = RMP_TO_X86_PG_LEVEL(entry->pagesize);
+		op = entry->operation;
+
+		if (!IS_ALIGNED(gpa, page_level_size(level))) {
+			rc = PSC_INVALID_ENTRY;
+			goto out;
+		}
+
+		rc = __snp_handle_page_state_change(vcpu, op, gpa, level);
+		if (rc)
+			goto out;
+	}
+
+out:
+	info->hdr.cur_entry = cur;
+	return rc ? map_to_psc_vmgexit_code(rc) : 0;
 }
 
 static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
@@ -3667,6 +3727,15 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 		svm_set_ghcb_sw_exit_info_2(vcpu, GHCB_HV_FT_SUPPORTED);
 
 		ret = 1;
+		break;
+	}
+	case SVM_VMGEXIT_PSC: {
+		unsigned long rc;
+
+		ret = 1;
+
+		rc = snp_handle_page_state_change(svm);
+		svm_set_ghcb_sw_exit_info_2(vcpu, rc);
 		break;
 	}
 	case SVM_VMGEXIT_UNSUPPORTED_EVENT:
