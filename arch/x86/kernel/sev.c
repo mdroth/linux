@@ -2590,6 +2590,7 @@ static int rmpupdate(u64 pfn, struct rmp_state *val)
 {
 	unsigned long paddr = pfn << PAGE_SHIFT;
 	int ret, level, npages;
+	int retries = 0;
 
 	if (!cpu_feature_enabled(X86_FEATURE_SEV_SNP))
 		return -ENXIO;
@@ -2609,11 +2610,25 @@ static int rmpupdate(u64 pfn, struct rmp_state *val)
 		}
 	}
 
+retry:
 	/* Binutils version 2.36 supports the RMPUPDATE mnemonic. */
 	asm volatile(".byte 0xF2, 0x0F, 0x01, 0xFE"
 		     : "=a"(ret)
 		     : "a"(paddr), "c"((unsigned long)val)
 		     : "memory", "cc");
+
+	if (ret) {
+		if (!retries) {
+			pr_err("RMPUPDATE failed, ret: %d, pfn: %llx, npages: %d, level: %d, retrying (max: %d)...\n",
+			       ret, pfn, npages, level, 2 * num_present_cpus());
+			dump_stack();
+		}
+		retries++;
+		if (retries < 2 * num_present_cpus())
+			goto retry;
+	} else if (retries > 0) {
+		pr_err("RMPUPDATE for pfn %llx succeeded after %d retries\n", pfn, retries);
+	}
 
 	/*
 	 * Restore the direct map after the page is removed from the RMP table.
