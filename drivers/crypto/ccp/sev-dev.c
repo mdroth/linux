@@ -1849,11 +1849,38 @@ int snp_guest_page_reclaim(struct sev_data_snp_page_reclaim *data, int *error)
 }
 EXPORT_SYMBOL_GPL(snp_guest_page_reclaim);
 
-int snp_guest_dbg_decrypt(struct sev_data_snp_dbg *data, int *error)
+int snp_guest_dbg_decrypt_page(u64 gctx_pfn, u64 src_pfn, u64 dst_pfn, int *error)
 {
-	return sev_do_cmd(SEV_CMD_SNP_DBG_DECRYPT, data, error);
+	struct sev_data_snp_dbg data = {0};
+	struct sev_device *sev;
+	int ret;
+
+	if (!psp_master || !psp_master->sev_data)
+		return -ENODEV;
+
+	sev = psp_master->sev_data;
+
+	if (!sev->snp_inited)
+		return -EINVAL;
+
+	data.gctx_paddr = sme_me_mask | (gctx_pfn << PAGE_SHIFT);
+	data.src_addr = sme_me_mask | (src_pfn << PAGE_SHIFT);
+	data.dst_addr = sme_me_mask | (dst_pfn << PAGE_SHIFT);
+	data.len = PAGE_SIZE;
+
+	/* The destination page must be in the firmware state. */
+	if (snp_set_rmp_state(data.dst_addr, 1, true, false, false))
+		return -EIO;
+
+	ret = sev_do_cmd(SEV_CMD_SNP_DBG_DECRYPT, &data, error);
+
+	/* Restore the page state */
+	if (snp_set_rmp_state(data.dst_addr, 1, false, false, true))
+		ret = -EIO;
+
+	return ret;
 }
-EXPORT_SYMBOL_GPL(snp_guest_dbg_decrypt);
+EXPORT_SYMBOL_GPL(snp_guest_dbg_decrypt_page);
 
 int snp_guest_ext_guest_request(struct sev_data_snp_guest_request *data,
 				unsigned long vaddr, unsigned long *npages, unsigned long *fw_err)
