@@ -31,6 +31,7 @@ struct sev_snp_certs {
 };
 
 struct sev_snp_certs *sev_snp_certs_new(void *data, u32 len);
+struct sev_snp_certs *sev_snp_certs_get(struct sev_snp_certs *certs);
 void sev_snp_certs_put(struct sev_snp_certs *certs);
 
 /**
@@ -843,6 +844,29 @@ int sev_issue_cmd_external_user(struct file *filep, unsigned int id,
 				void *data, int *error);
 
 /**
+ * sev_issue_cmd_external_user_cert - issue SEV command by other driver with a file
+ * handle and return certificates set onto SEV device via SNP_SET_EXT_CONFIG;
+ * intended for use by the SNP extended guest request command defined
+ * in the GHCB specification. The returned *certs then need to be put when not needed.
+ *
+ * @filep - SEV device file pointer
+ * @cmd - command to issue
+ * @data - command buffer
+ * @vaddr: address where the certificate blob need to be copied.
+ *
+ * @error: SEV command return code
+ *
+ * Returns:
+ * 0 if the sev successfully processed the command
+ * -%ENODEV    if the sev device is not available
+ * -%ENOTSUPP  if the sev does not support SEV
+ * -%ETIMEDOUT if the sev command timed out
+ * -%EIO       if the sev returned a non-zero return code
+ */
+int sev_issue_cmd_external_user_cert(struct file *filep, unsigned int cmd, void *data,
+				     struct sev_snp_certs **certs, int *error);
+
+/**
  * sev_guest_deactivate - perform SEV DEACTIVATE command
  *
  * @deactivate: sev_data_deactivate structure to be processed
@@ -959,6 +983,13 @@ static inline void *snp_alloc_firmware_page(gfp_t mask)
 }
 
 static inline void snp_free_firmware_page(void *addr) { }
+
+static inline int sev_issue_cmd_external_user_cert(struct file *filep, unsigned int cmd,
+						   void *data, struct sev_snp_certs **certs,
+						   int *error)
+{
+	return -ENODEV;
+}
 
 #endif	/* CONFIG_CRYPTO_DEV_SP_PSP */
 

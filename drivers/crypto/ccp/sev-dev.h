@@ -67,6 +67,7 @@ struct sev_device {
 	bool snp_initialized;
 	struct snp_host_map snp_host_map[MAX_SNP_HOST_MAP_BUFS];
 	struct sev_snp_certs *snp_certs;
+	struct mutex snp_certs_lock;
 	struct sev_user_data_snp_config snp_config;
 };
 
