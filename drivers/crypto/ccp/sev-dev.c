@@ -1522,6 +1522,10 @@ static int __sev_snp_shutdown_locked(int *error)
 	data.length = sizeof(data);
 	data.iommu_snp_shutdown = 1;
 
+	/* Free the memory used for caching the certificate data */
+	sev_snp_certs_put(sev->snp_certs);
+	sev->snp_certs = NULL;
+
 	wbinvd_on_all_cpus();
 
 retry:
@@ -1860,6 +1864,126 @@ cleanup:
 	return ret;
 }
 
+static int sev_ioctl_snp_get_config(struct sev_issue_cmd *argp)
+{
+	struct sev_device *sev = psp_master->sev_data;
+	struct sev_user_data_ext_snp_config input;
+	struct sev_snp_certs *snp_certs;
+	int ret;
+
+	if (!sev->snp_initialized || !argp->data)
+		return -EINVAL;
+
+	memset(&input, 0, sizeof(input));
+
+	if (copy_from_user(&input, (void __user *)argp->data, sizeof(input)))
+		return -EFAULT;
+
+	/* Copy the TCB version programmed through the SET_CONFIG to userspace */
+	if (input.config_address) {
+		if (copy_to_user((void * __user)input.config_address,
+				 &sev->snp_config, sizeof(struct sev_user_data_snp_config)))
+			return -EFAULT;
+	}
+
+	snp_certs = sev_snp_certs_get(sev->snp_certs);
+
+	/* Copy the extended certs programmed through the SNP_SET_CONFIG */
+	if (input.certs_address && snp_certs) {
+		if (input.certs_len < snp_certs->len) {
+			/* Return the certs length to userspace */
+			input.certs_len = snp_certs->len;
+
+			ret = -EIO;
+			goto e_done;
+		}
+
+		if (copy_to_user((void * __user)input.certs_address,
+				 snp_certs->data, snp_certs->len)) {
+			ret = -EFAULT;
+			goto put_exit;
+		}
+	}
+
+	ret = 0;
+
+e_done:
+	if (copy_to_user((void __user *)argp->data, &input, sizeof(input)))
+		ret = -EFAULT;
+
+put_exit:
+	sev_snp_certs_put(snp_certs);
+
+	return ret;
+}
+
+static int sev_ioctl_snp_set_config(struct sev_issue_cmd *argp, bool writable)
+{
+	struct sev_device *sev = psp_master->sev_data;
+	struct sev_user_data_ext_snp_config input;
+	struct sev_user_data_snp_config config;
+	struct sev_snp_certs *snp_certs = NULL;
+	void *certs = NULL;
+	int ret = 0;
+
+	if (!sev->snp_initialized || !argp->data)
+		return -EINVAL;
+
+	if (!writable)
+		return -EPERM;
+
+	memset(&input, 0, sizeof(input));
+
+	if (copy_from_user(&input, (void __user *)argp->data, sizeof(input)))
+		return -EFAULT;
+
+	/* Copy the certs from userspace */
+	if (input.certs_address) {
+		if (!input.certs_len || !IS_ALIGNED(input.certs_len, PAGE_SIZE))
+			return -EINVAL;
+
+		certs = psp_copy_user_blob(input.certs_address, input.certs_len);
+		if (IS_ERR(certs))
+			return PTR_ERR(certs);
+	}
+
+	/* Issue the PSP command to update the TCB version using the SNP_CONFIG. */
+	if (input.config_address) {
+		memset(&config, 0, sizeof(config));
+		if (copy_from_user(&config,
+				   (void __user *)input.config_address, sizeof(config))) {
+			ret = -EFAULT;
+			goto e_free;
+		}
+
+		ret = __sev_do_cmd_locked(SEV_CMD_SNP_CONFIG, &config, &argp->error);
+		if (ret)
+			goto e_free;
+
+		memcpy(&sev->snp_config, &config, sizeof(config));
+	}
+
+	/*
+	 * If the new certs are passed then cache it else free the old certs.
+	 */
+	if (input.certs_len) {
+		snp_certs = sev_snp_certs_new(certs, input.certs_len);
+		if (!snp_certs) {
+			ret = -ENOMEM;
+			goto e_free;
+		}
+	}
+
+	sev_snp_certs_put(sev->snp_certs);
+	sev->snp_certs = snp_certs;
+
+	return 0;
+
+e_free:
+	kfree(certs);
+	return ret;
+}
+
 static long sev_ioctl(struct file *file, unsigned int ioctl, unsigned long arg)
 {
 	void __user *argp = (void __user *)arg;
@@ -1914,6 +2038,12 @@ static long sev_ioctl(struct file *file, unsigned int ioctl, unsigned long arg)
 	case SNP_PLATFORM_STATUS:
 		ret = sev_ioctl_snp_platform_status(&input);
 		break;
+	case SNP_SET_EXT_CONFIG:
+		ret = sev_ioctl_snp_set_config(&input, writable);
+		break;
+	case SNP_GET_EXT_CONFIG:
+		ret = sev_ioctl_snp_get_config(&input);
+		break;
 	default:
 		ret = -EINVAL;
 		goto out;
@@ -1961,6 +2091,54 @@ int sev_guest_df_flush(int *error)
 	return sev_do_cmd(SEV_CMD_DF_FLUSH, NULL, error);
 }
 EXPORT_SYMBOL_GPL(sev_guest_df_flush);
+
+static void sev_snp_certs_release(struct kref *kref)
+{
+	struct sev_snp_certs *certs = container_of(kref, struct sev_snp_certs, kref);
+
+	kfree(certs->data);
+	kfree(certs);
+}
+
+struct sev_snp_certs *sev_snp_certs_new(void *data, u32 len)
+{
+	struct sev_snp_certs *certs;
+
+	if (!len || !data)
+		return NULL;
+
+	certs = kzalloc(sizeof(*certs), GFP_KERNEL);
+	if (!certs)
+		return NULL;
+
+	certs->data = data;
+	certs->len = len;
+	kref_init(&certs->kref);
+
+	return certs;
+}
+EXPORT_SYMBOL_GPL(sev_snp_certs_new);
+
+struct sev_snp_certs *sev_snp_certs_get(struct sev_snp_certs *certs)
+{
+	if (!certs)
+		return NULL;
+
+	if (!kref_get_unless_zero(&certs->kref))
+		return NULL;
+
+	return certs;
+}
+EXPORT_SYMBOL_GPL(sev_snp_certs_get);
+
+void sev_snp_certs_put(struct sev_snp_certs *certs)
+{
+	if (!certs)
+		return;
+
+	kref_put(&certs->kref, sev_snp_certs_release);
+}
+EXPORT_SYMBOL_GPL(sev_snp_certs_put);
 
 static void sev_exit(struct kref *ref)
 {
