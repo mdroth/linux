@@ -1352,13 +1352,17 @@ static void svm_vcpu_free(struct kvm_vcpu *vcpu)
 static void svm_prepare_switch_to_guest(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
-	struct svm_cpu_data *sd = per_cpu(svm_data, vcpu->cpu);
+	struct svm_cpu_data *sd;
 
 	if (sev_es_guest(vcpu->kvm))
 		sev_es_unmap_ghcb(svm);
 
 	if (svm->guest_state_loaded)
 		return;
+
+	/* sev_es_unmap_ghcb() can resched, so grab per-cpu pointer afterward. */
+	barrier();
+	sd = per_cpu(svm_data, vcpu->cpu);
 
 	/*
 	 * Save additional host state that will be restored on VMEXIT (sev-es)
