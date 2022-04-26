@@ -3169,6 +3169,7 @@ static int host_pfn_mapping_level(struct kvm *kvm, gfn_t gfn,
 
 out:
 	local_irq_restore(flags);
+
 	return level;
 }
 
@@ -3229,6 +3230,14 @@ void kvm_mmu_hugepage_adjust(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	fault->req_level = __kvm_mmu_max_mapping_level(vcpu->kvm, slot,
 						       fault->gfn, fault->max_level,
 						       fault->is_private);
+	if (kvm_slot_can_be_private(slot)) {
+		int req_level = fault->req_level;
+
+		static_call_cond(kvm_x86_adjust_mapping_level)(vcpu->kvm, fault->gfn, fault->pfn,
+							       &req_level);
+		fault->req_level = req_level;
+	}
+
 	if (fault->req_level == PG_LEVEL_4K || fault->huge_page_disallowed)
 		return;
 

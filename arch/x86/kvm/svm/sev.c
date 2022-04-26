@@ -3632,3 +3632,54 @@ struct page *snp_safe_alloc_page(struct kvm_vcpu *vcpu)
 
 	return p;
 }
+
+static bool is_gfn_range_shared(struct kvm *kvm, gfn_t start, gfn_t end)
+{
+	while (start++ < end)
+		if (kvm_mem_is_private(kvm, start))
+			return false;
+
+	return true;
+}
+
+void sev_adjust_mapping_level(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn, int *level)
+{
+	int assigned;
+	int rmp_level = 1;
+	int level_orig = *level;
+
+	if (!sev_snp_guest(kvm))
+		return;
+
+	/* If there's an error retrieving RMP entry, stick with 4K mappings */
+	assigned = snp_lookup_rmpentry(pfn, &rmp_level);
+	if (unlikely(assigned < 0))
+		goto out_adjust;
+
+	if (!assigned) {
+		gfn_t huge_gfn;
+
+		/*
+		 * If all the pages are shared then no need to keep the RMP
+		 * and NPT in sync.
+		 */
+		huge_gfn = gfn & ~(PTRS_PER_PMD - 1);
+		if (is_gfn_range_shared(kvm, huge_gfn, huge_gfn + PTRS_PER_PMD))
+			goto out;
+	}
+
+	/*
+	 * The hardware installs 2MB TLB entries to access to 1GB pages,
+	 * therefore allow NPT to use 1GB pages when pfn was added as 2MB
+	 * in the RMP table.
+	 */
+	if (rmp_level == PG_LEVEL_2M && (*level == PG_LEVEL_1G))
+		goto out;
+
+out_adjust:
+	/* Adjust the level to keep the NPT and RMP in sync */
+	*level = min_t(size_t, *level, rmp_level);
+out:
+	pr_debug("%s: GFN: 0x%llx, PFN: 0x%llx, level: %d, rmp_level: %d, level_orig: %d, assigned: %d\n",
+		 __func__, gfn, pfn, *level, rmp_level, level_orig, assigned);
+}
