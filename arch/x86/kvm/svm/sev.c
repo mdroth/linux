@@ -3596,3 +3596,49 @@ struct page *snp_safe_alloc_page(struct kvm_vcpu *vcpu)
 
 	return pfn_to_page(pfn);
 }
+
+static bool is_pfn_range_shared(kvm_pfn_t start, kvm_pfn_t end)
+{
+	int level;
+
+	while (end > start) {
+		if (snp_lookup_rmpentry(start, &level) != 0)
+			return false;
+		start++;
+	}
+
+	return true;
+}
+
+void sev_rmp_page_level_adjust(struct kvm *kvm, kvm_pfn_t pfn, int *level)
+{
+	int rmp_level, assigned;
+
+	if (!cpu_feature_enabled(X86_FEATURE_SEV_SNP))
+		return;
+
+	assigned = snp_lookup_rmpentry(pfn, &rmp_level);
+	if (unlikely(assigned < 0))
+		return;
+
+	if (!assigned) {
+		/*
+		 * If all the pages are shared then no need to keep the RMP
+		 * and NPT in sync.
+		 */
+		pfn = pfn & ~(PTRS_PER_PMD - 1);
+		if (is_pfn_range_shared(pfn, pfn + PTRS_PER_PMD))
+			return;
+	}
+
+	/*
+	 * The hardware installs 2MB TLB entries to access to 1GB pages,
+	 * therefore allow NPT to use 1GB pages when pfn was added as 2MB
+	 * in the RMP table.
+	 */
+	if (rmp_level == PG_LEVEL_2M && (*level == PG_LEVEL_1G))
+		return;
+
+	/* Adjust the level to keep the NPT and RMP in sync */
+	*level = min_t(size_t, *level, rmp_level);
+}

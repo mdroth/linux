@@ -43,6 +43,7 @@
 #include <linux/hash.h>
 #include <linux/kern_levels.h>
 #include <linux/kthread.h>
+#include <linux/sev.h>
 
 #include <asm/page.h>
 #include <asm/memtype.h>
@@ -2823,6 +2824,10 @@ static int host_pfn_mapping_level(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn,
 	pte = lookup_address_in_mm(kvm->mm, hva, &level);
 	if (unlikely(!pte))
 		return PG_LEVEL_4K;
+
+	/* Adjust the page level based on the SEV-SNP RMP page level. */
+	if (kvm_x86_ops.rmp_page_level_adjust)
+		static_call(kvm_x86_rmp_page_level_adjust)(kvm, pfn, &level);
 
 	return level;
 }

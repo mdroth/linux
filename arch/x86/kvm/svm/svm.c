@@ -4734,6 +4734,7 @@ static struct kvm_x86_ops svm_x86_ops __initdata = {
 	.vcpu_get_apicv_inhibit_reasons = avic_vcpu_get_apicv_inhibit_reasons,
 
 	.alloc_apic_backing_page = svm_alloc_apic_backing_page,
+	.rmp_page_level_adjust = sev_rmp_page_level_adjust,
 };
 
 /*
