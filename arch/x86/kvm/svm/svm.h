@@ -382,6 +382,8 @@ static __always_inline struct vcpu_svm *to_svm(struct kvm_vcpu *vcpu)
 	return container_of(vcpu, struct vcpu_svm, vcpu);
 }
 
+void dump_vmcb(struct kvm_vcpu *vcpu);
+
 /*
  * Only the PDPTRs are loaded on demand into the shadow MMU.  All other
  * fields are synchronized on VM-Exit, because accessing the VMCB is cheap.

@@ -190,7 +190,7 @@ module_param(avic, bool, 0444);
 static bool force_avic;
 module_param_unsafe(force_avic, bool, 0444);
 
-bool __read_mostly dump_invalid_vmcb;
+bool __read_mostly dump_invalid_vmcb = true;
 module_param(dump_invalid_vmcb, bool, 0644);
 
 
@@ -3120,7 +3120,7 @@ static int (*const svm_exit_handlers[])(struct kvm_vcpu *vcpu) = {
 	[SVM_EXIT_VMGEXIT]			= sev_handle_vmgexit,
 };
 
-static void dump_vmcb(struct kvm_vcpu *vcpu)
+void dump_vmcb(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
 	struct vmcb_control_area *control = &svm->vmcb->control;
@@ -3171,6 +3171,31 @@ static void dump_vmcb(struct kvm_vcpu *vcpu)
 	pr_err("%-20s%016llx\n", "avic_logical_id:", control->avic_logical_id);
 	pr_err("%-20s%016llx\n", "avic_physical_id:", control->avic_physical_id);
 	pr_err("%-20s%016llx\n", "vmsa_pa:", control->vmsa_pa);
+
+	if (vcpu->arch.guest_state_protected && sev_snp_guest(vcpu->kvm)) {
+		struct kvm_sev_info *sev = &to_kvm_svm(vcpu->kvm)->sev_info;
+		struct page *save_page;
+		int ret, error;
+
+		save_page = alloc_page(GFP_KERNEL);
+		if (!save_page)
+			return;
+
+		save = page_address(save_page);
+		save01 = save;
+
+		wbinvd_on_all_cpus();
+
+		ret = snp_guest_dbg_decrypt_page(__pa(sev->snp_context) >> PAGE_SHIFT,
+						 svm->vmcb->control.vmsa_pa >> PAGE_SHIFT,
+						 __pa(save) >> PAGE_SHIFT,
+						 &error);
+		if (ret) {
+			pr_err("%s: failed to decrypt vmsa %d\n", __func__, error);
+			return;
+		}
+	}
+
 	pr_err("VMCB State Save Area:\n");
 	pr_err("%-5s s: %04x a: %04x l: %08x b: %016llx\n",
 	       "es:",
@@ -3241,6 +3266,31 @@ static void dump_vmcb(struct kvm_vcpu *vcpu)
 	pr_err("%-15s %016llx %-13s %016llx\n",
 	       "excp_from:", save->last_excp_from,
 	       "excp_to:", save->last_excp_to);
+
+	if (sev_snp_guest(vcpu->kvm)) {
+		struct sev_es_save_area *vmsa = (struct sev_es_save_area *)save;
+
+		pr_err("%-15s %016llx %-13s %016llx\n",
+		       "rax:", vmsa->rax, "rbx:", vmsa->rbx);
+		pr_err("%-15s %016llx %-13s %016llx\n",
+		       "rcx:", vmsa->rcx, "rdx:", vmsa->rdx);
+		pr_err("%-15s %016llx %-13s %016llx\n",
+		       "rsi:", vmsa->rsi, "rdi:", vmsa->rdi);
+		pr_err("%-15s %016llx %-13s %016llx\n",
+		       "rbp:", vmsa->rbp, "rsp:", vmsa->rsp);
+		pr_err("%-15s %016llx %-13s %016llx\n",
+		       "r8:", vmsa->r8, "r9:", vmsa->r9);
+		pr_err("%-15s %016llx %-13s %016llx\n",
+		       "r10:", vmsa->r10, "r11:", vmsa->r11);
+		pr_err("%-15s %016llx %-13s %016llx\n",
+		       "r12:", vmsa->r12, "r13:", vmsa->r13);
+		pr_err("%-15s %016llx %-13s %016llx\n",
+		       "r14:", vmsa->r14, "r15:", vmsa->r15);
+
+		wbinvd_on_all_cpus();
+		__free_page(virt_to_page(save));
+	}
+
 }
 
 static bool svm_check_exit_valid(u64 exit_code)

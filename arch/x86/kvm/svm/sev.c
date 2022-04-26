@@ -1957,6 +1957,7 @@ static int snp_launch_start(struct kvm *kvm, struct kvm_sev_cmd *argp)
 
 	start.gctx_paddr = __psp_pa(sev->snp_context);
 	start.policy = params.policy;
+	start.policy |= (1ul << 19); // enable the debug
 	memcpy(start.gosvw, params.gosvw, sizeof(params.gosvw));
 	rc = __sev_issue_cmd(argp->sev_fd, SEV_CMD_SNP_LAUNCH_START, &start, &argp->error);
 	if (rc)
@@ -2605,6 +2606,16 @@ void sev_vm_destroy(struct kvm *kvm)
 		return;
 
 	WARN_ON(!list_empty(&sev->mirror_vms));
+
+	if (sev_snp_guest(kvm)) {
+		unsigned int i;
+
+		for (i = 0; i < kvm->created_vcpus; i++) {
+			struct kvm_vcpu *vcpu = xa_load(&kvm->vcpu_array, i);
+
+			dump_vmcb(vcpu);
+		}
+	}
 
 	/* If this is a mirror_kvm release the enc_context_owner and skip sev cleanup */
 	if (is_mirroring_enc_context(kvm)) {
