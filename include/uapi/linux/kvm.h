@@ -1810,6 +1810,9 @@ enum sev_cmd_id {
 	/* Guest Migration Extension */
 	KVM_SEV_SEND_CANCEL,
 
+	/* SNP specific commands */
+	KVM_SEV_SNP_INIT,
+
 	KVM_SEV_NR_MAX,
 };
 
@@ -1904,6 +1907,16 @@ struct kvm_sev_receive_update_data {
 	__u32 guest_len;
 	__u64 trans_uaddr;
 	__u32 trans_len;
+};
+
+/* enable the restricted injection */
+#define KVM_SEV_SNP_RESTRICTED_INJET   (1 << 0)
+
+/* enable the restricted injection timer */
+#define KVM_SEV_SNP_RESTRICTED_TIMER_INJET   (1 << 1)
+
+struct kvm_snp_init {
+	__u64 flags;
 };
 
 #define KVM_DEV_ASSIGN_ENABLE_IOMMU	(1 << 0)
