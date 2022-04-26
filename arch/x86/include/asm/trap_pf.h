@@ -2,6 +2,8 @@
 #ifndef _ASM_X86_TRAP_PF_H
 #define _ASM_X86_TRAP_PF_H
 
+#include <linux/bits.h>  /* BIT() macro */
+
 /*
  * Page fault error code bits:
  *
@@ -13,6 +15,7 @@
  *   bit 5 ==				1: protection keys block access
  *   bit 6 ==				1: shadow stack access fault
  *   bit 15 ==				1: SGX MMU page-fault
+ *   bit 31 ==				1: fault was due to RMP violation
  */
 enum x86_pf_error_code {
 	X86_PF_PROT	=		1 << 0,
@@ -23,6 +26,7 @@ enum x86_pf_error_code {
 	X86_PF_PK	=		1 << 5,
 	X86_PF_SHSTK	=		1 << 6,
 	X86_PF_SGX	=		1 << 15,
+	X86_PF_RMP	=		1 << 31,
 };
 
 #endif /* _ASM_X86_TRAP_PF_H */
