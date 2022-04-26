@@ -341,6 +341,7 @@ static int sev_guest_init(struct kvm *kvm, struct kvm_sev_cmd *argp)
 		if (ret)
 			goto e_free;
 
+		spin_lock_init(&sev->psc_lock);
 		ret = sev_snp_init(&argp->error);
 	} else {
 		ret = sev_platform_init(&argp->error);
@@ -2827,11 +2828,17 @@ static inline int svm_map_ghcb(struct vcpu_svm *svm, struct kvm_host_map *map)
 {
 	struct vmcb_control_area *control = &svm->vmcb->control;
 	u64 gfn = gpa_to_gfn(control->ghcb_gpa);
+	struct kvm_vcpu *vcpu = &svm->vcpu;
 
-	if (kvm_vcpu_map(&svm->vcpu, gfn, map)) {
+	if (kvm_vcpu_map(vcpu, gfn, map)) {
 		/* Unable to map GHCB from guest */
 		pr_err("error mapping GHCB GFN [%#llx] from guest\n", gfn);
 		return -EFAULT;
+	}
+
+	if (sev_post_map_gfn(vcpu->kvm, map->gfn, map->pfn)) {
+		kvm_vcpu_unmap(vcpu, map, false);
+		return -EBUSY;
 	}
 
 	return 0;
@@ -2839,7 +2846,10 @@ static inline int svm_map_ghcb(struct vcpu_svm *svm, struct kvm_host_map *map)
 
 static inline void svm_unmap_ghcb(struct vcpu_svm *svm, struct kvm_host_map *map)
 {
-	kvm_vcpu_unmap(&svm->vcpu, map, true);
+	struct kvm_vcpu *vcpu = &svm->vcpu;
+
+	kvm_vcpu_unmap(vcpu, map, true);
+	sev_post_unmap_gfn(vcpu->kvm, map->gfn, map->pfn);
 }
 
 static void dump_ghcb(struct vcpu_svm *svm)
@@ -3382,6 +3392,8 @@ static int __snp_handle_page_state_change(struct kvm_vcpu *vcpu, enum psc_op op,
 				return PSC_UNDEF_ERR;
 		}
 
+		spin_lock(&sev->psc_lock);
+
 		write_lock(&kvm->mmu_lock);
 
 		rc = kvm_mmu_get_tdp_walk(vcpu, gpa, &pfn, &npt_level);
@@ -3415,6 +3427,8 @@ static int __snp_handle_page_state_change(struct kvm_vcpu *vcpu, enum psc_op op,
 		}
 
 		write_unlock(&kvm->mmu_lock);
+
+		spin_unlock(&sev->psc_lock);
 
 		if (rc) {
 			pr_err_ratelimited("Error op %d gpa %llx pfn %llx level %d rc %d\n",
@@ -3963,4 +3977,34 @@ void sev_rmp_page_level_adjust(struct kvm *kvm, kvm_pfn_t pfn, int *level)
 
 	/* Adjust the level to keep the NPT and RMP in sync */
 	*level = min_t(size_t, *level, rmp_level);
+}
+
+int sev_post_map_gfn(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	int level;
+
+	if (!sev_snp_guest(kvm))
+		return 0;
+
+	spin_lock(&sev->psc_lock);
+
+	/* If pfn is not added as private then fail */
+	if (snp_lookup_rmpentry(pfn, &level) == 1) {
+		spin_unlock(&sev->psc_lock);
+		pr_err_ratelimited("failed to map private gfn 0x%llx pfn 0x%llx\n", gfn, pfn);
+		return -EBUSY;
+	}
+
+	return 0;
+}
+
+void sev_post_unmap_gfn(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+
+	if (!sev_snp_guest(kvm))
+		return;
+
+	spin_unlock(&sev->psc_lock);
 }
