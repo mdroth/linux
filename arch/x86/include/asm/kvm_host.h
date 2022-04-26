@@ -1641,6 +1641,7 @@ struct kvm_x86_ops {
 	void *(*alloc_apic_backing_page)(struct kvm_vcpu *vcpu);
 
 	void (*rmp_page_level_adjust)(struct kvm *kvm, gfn_t gfn, int *level);
+	int (*update_protected_guest_state)(struct kvm_vcpu *vcpu);
 };
 
 struct kvm_x86_nested_ops {
