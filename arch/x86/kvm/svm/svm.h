@@ -98,6 +98,8 @@ struct kvm_sev_info {
 	u64 snp_init_flags;
 	void *snp_context;      /* SNP guest context page */
 	spinlock_t psc_lock;
+	void *snp_certs_data;
+	struct mutex guest_req_lock;
 };
 
 struct kvm_svm {
@@ -196,6 +198,7 @@ struct svm_nested_state {
 struct vcpu_sev_es_state {
 	/* SEV-ES support */
 	struct sev_es_save_area *vmsa;
+	hpa_t vmsa_pa;
 	bool ghcb_in_use;
 	bool received_first_sipi;
 	unsigned int ap_reset_hold_type;
