@@ -19,11 +19,13 @@
 #include <linux/trace_events.h>
 #include <linux/hugetlb.h>
 #include <linux/sev.h>
+#include <linux/ksm.h>
 
 #include <asm/pkru.h>
 #include <asm/trapnr.h>
 #include <asm/fpu/xcr.h>
 #include <asm/sev.h>
+#include <asm/mman.h>
 
 #include "x86.h"
 #include "svm.h"
@@ -1965,6 +1967,30 @@ static bool is_hva_registered(struct kvm *kvm, hva_t hva, size_t len)
 	return false;
 }
 
+static int snp_mark_unmergable(struct kvm *kvm, u64 start, u64 size)
+{
+	struct vm_area_struct *vma;
+	u64 end = start + size;
+	int ret;
+
+	do {
+		vma = find_vma_intersection(kvm->mm, start, end);
+		if (!vma) {
+			ret = -EINVAL;
+			break;
+		}
+
+		ret = ksm_madvise(vma, vma->vm_start, vma->vm_end,
+				  MADV_UNMERGEABLE, &vma->vm_flags);
+		if (ret)
+			break;
+
+		start = vma->vm_end;
+	} while (end > vma->vm_end);
+
+	return ret;
+}
+
 static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
 {
 	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
@@ -1988,6 +2014,12 @@ static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	/* Verify that the specified address range is registered. */
 	if (!is_hva_registered(kvm, params.uaddr, params.len))
 		return -EINVAL;
+
+	mmap_write_lock(kvm->mm);
+	ret = snp_mark_unmergable(kvm, params.uaddr, params.len);
+	mmap_write_unlock(kvm->mm);
+	if (ret)
+		return -EFAULT;
 
 	/*
 	 * The userspace memory is already locked so technically we don't
