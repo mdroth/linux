@@ -1329,6 +1329,13 @@ void do_user_addr_fault(struct pt_regs *regs,
 	if (error_code & X86_PF_INSTR)
 		flags |= FAULT_FLAG_INSTRUCTION;
 
+	if (error_code & X86_PF_RMP) {
+		pr_err("Unexpected RMP page fault for address 0x%lx, terminating process\n",
+		       address);
+		do_sigbus(regs, error_code, address, VM_FAULT_SIGBUS);
+		return;
+	}
+
 #ifdef CONFIG_X86_64
 	/*
 	 * Faults in the vsyscall page might need emulation.  The
