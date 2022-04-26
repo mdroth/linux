@@ -721,7 +721,6 @@ struct sev_data_snp_dbg {
 	u64 gctx_paddr;				/* In */
 	u64 src_addr;				/* In */
 	u64 dst_addr;				/* In */
-	u32 len;				/* In */
 } __packed;
 
 /**
@@ -909,13 +908,27 @@ int sev_guest_decommission(struct sev_data_decommission *data, int *error);
  * @error: SEV command return code
  *
  * Returns:
+ * 0 if the sev successfully processed the command
+ * -%ENODEV    if the sev device is not available
+ * -%ENOTSUPP  if the sev does not support SEV
+ * -%ETIMEDOUT if the sev command timed out
+ * -%EIO       if the sev returned a non-zero return code
+ */
+int sev_do_cmd(int cmd, void *data, int *psp_ret);
+
+/**
+ * snp_guest_dbg_decrypt_page - perform SEV SNP_DBG_DECRYPT command
+ *
+ * @sev_ret: sev command return code
+ *
+ * Returns:
  * 0 if the SEV successfully processed the command
  * -%ENODEV    if the SEV device is not available
  * -%ENOTSUPP  if the SEV does not support SEV
  * -%ETIMEDOUT if the SEV command timed out
  * -%EIO       if the SEV returned a non-zero return code
  */
-int sev_do_cmd(int cmd, void *data, int *psp_ret);
+int snp_guest_dbg_decrypt_page(u64 gctx_pfn, u64 src_pfn, u64 dst_pfn, int *error);
 
 void *psp_copy_user_blob(u64 uaddr, u32 len);
 void *snp_alloc_firmware_page(gfp_t mask);
@@ -954,6 +967,11 @@ sev_issue_cmd_external_user(struct file *filep, unsigned int id, void *data, int
 static inline void *psp_copy_user_blob(u64 __user uaddr, u32 len) { return ERR_PTR(-EINVAL); }
 
 void snp_mark_pages_offline(unsigned long pfn, unsigned int npages) {}
+
+static inline int snp_guest_dbg_decrypt_page(u64 gctx_pfn, u64 src_pfn, u64 dst_pfn, int *error)
+{
+	return -ENODEV;
+}
 
 static inline void *snp_alloc_firmware_page(gfp_t mask)
 {
