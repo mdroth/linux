@@ -24,6 +24,15 @@
 
 #define SEV_FW_BLOB_MAX_SIZE	0x4000	/* 16KB */
 
+struct sev_snp_certs {
+	void *data;
+	u32 len;
+	struct kref kref;
+};
+
+struct sev_snp_certs *sev_snp_certs_new(void *data, u32 len);
+void sev_snp_certs_put(struct sev_snp_certs *certs);
+
 /**
  * SEV platform state
  */
