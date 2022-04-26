@@ -18,6 +18,7 @@
 #include <linux/processor.h>
 #include <linux/trace_events.h>
 #include <linux/hugetlb.h>
+#include <linux/sev.h>
 
 #include <asm/pkru.h>
 #include <asm/trapnr.h>
@@ -231,6 +232,49 @@ static void sev_decommission(unsigned int handle)
 
 	decommission.handle = handle;
 	sev_guest_decommission(&decommission, NULL);
+}
+
+static inline void snp_leak_pages(u64 pfn, enum pg_level level)
+{
+	unsigned int npages = page_level_size(level) >> PAGE_SHIFT;
+
+	WARN(1, "psc failed pfn 0x%llx pages %d (leaking)\n", pfn, npages);
+
+	while (npages) {
+		memory_failure(pfn, 0);
+		dump_rmpentry(pfn);
+		npages--;
+		pfn++;
+	}
+}
+
+static int snp_page_reclaim(u64 pfn)
+{
+	struct sev_data_snp_page_reclaim data = {0};
+	int err, rc;
+
+	data.paddr = __sme_set(pfn << PAGE_SHIFT);
+	rc = snp_guest_page_reclaim(&data, &err);
+	if (rc) {
+		/*
+		 * If the reclaim failed, then page is no longer safe
+		 * to use.
+		 */
+		snp_leak_pages(pfn, PG_LEVEL_4K);
+	}
+
+	return rc;
+}
+
+static int host_rmp_make_shared(u64 pfn, enum pg_level level, bool leak)
+{
+	int rc;
+
+	rc = rmp_make_shared(pfn, level);
+	if (rc && leak)
+		snp_leak_pages(pfn, level);
+
+	return rc;
 }
 
 static void sev_unbind_asid(struct kvm *kvm, unsigned int handle)
@@ -1902,6 +1946,123 @@ e_free_context:
 	return rc;
 }
 
+static bool is_hva_registered(struct kvm *kvm, hva_t hva, size_t len)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	struct list_head *head = &sev->regions_list;
+	struct enc_region *i;
+
+	lockdep_assert_held(&kvm->lock);
+
+	list_for_each_entry(i, head, list) {
+		u64 start = i->uaddr;
+		u64 end = start + i->size;
+
+		if (start <= hva && end >= (hva + len))
+			return true;
+	}
+
+	return false;
+}
+
+static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	struct sev_data_snp_launch_update data = {0};
+	struct kvm_sev_snp_launch_update params;
+	unsigned long npages, pfn, n = 0;
+	int *error = &argp->error;
+	struct page **inpages;
+	int ret, i, level;
+	u64 gfn;
+
+	if (!sev_snp_guest(kvm))
+		return -ENOTTY;
+
+	if (!sev->snp_context)
+		return -EINVAL;
+
+	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data, sizeof(params)))
+		return -EFAULT;
+
+	/* Verify that the specified address range is registered. */
+	if (!is_hva_registered(kvm, params.uaddr, params.len))
+		return -EINVAL;
+
+	/*
+	 * The userspace memory is already locked so technically we don't
+	 * need to lock it again. Later part of the function needs to know
+	 * pfn so call the sev_pin_memory() so that we can get the list of
+	 * pages to iterate through.
+	 */
+	inpages = sev_pin_memory(kvm, params.uaddr, params.len, &npages, 1);
+	if (!inpages)
+		return -ENOMEM;
+
+	/*
+	 * Verify that all the pages are marked shared in the RMP table before
+	 * going further. This is avoid the cases where the userspace may try
+	 * updating the same page twice.
+	 */
+	for (i = 0; i < npages; i++) {
+		if (snp_lookup_rmpentry(page_to_pfn(inpages[i]), &level) != 0) {
+			sev_unpin_memory(kvm, inpages, npages);
+			return -EFAULT;
+		}
+	}
+
+	gfn = params.start_gfn;
+	level = PG_LEVEL_4K;
+	data.gctx_paddr = __psp_pa(sev->snp_context);
+
+	for (i = 0; i < npages; i++) {
+		pfn = page_to_pfn(inpages[i]);
+
+		ret = rmp_make_private(pfn, gfn << PAGE_SHIFT, level, sev_get_asid(kvm), true);
+		if (ret) {
+			ret = -EFAULT;
+			goto e_unpin;
+		}
+
+		n++;
+		data.address = __sme_page_pa(inpages[i]);
+		data.page_size = X86_TO_RMP_PG_LEVEL(level);
+		data.page_type = params.page_type;
+		data.vmpl3_perms = params.vmpl3_perms;
+		data.vmpl2_perms = params.vmpl2_perms;
+		data.vmpl1_perms = params.vmpl1_perms;
+		ret = __sev_issue_cmd(argp->sev_fd, SEV_CMD_SNP_LAUNCH_UPDATE, &data, error);
+		if (ret) {
+			/*
+			 * If the command failed then need to reclaim the page.
+			 */
+			snp_page_reclaim(pfn);
+			goto e_unpin;
+		}
+
+		gfn++;
+	}
+
+e_unpin:
+	/* Content of memory is updated, mark pages dirty */
+	for (i = 0; i < n; i++) {
+		set_page_dirty_lock(inpages[i]);
+		mark_page_accessed(inpages[i]);
+
+		/*
+		 * If its an error, then update RMP entry to change page ownership
+		 * to the hypervisor.
+		 */
+		if (ret)
+			host_rmp_make_shared(pfn, level, true);
+	}
+
+	/* Unlock the user pages */
+	sev_unpin_memory(kvm, inpages, npages);
+
+	return ret;
+}
+
 int sev_mem_enc_ioctl(struct kvm *kvm, void __user *argp)
 {
 	struct kvm_sev_cmd sev_cmd;
@@ -1994,6 +2155,9 @@ int sev_mem_enc_ioctl(struct kvm *kvm, void __user *argp)
 		break;
 	case KVM_SEV_SNP_LAUNCH_START:
 		r = snp_launch_start(kvm, &sev_cmd);
+		break;
+	case KVM_SEV_SNP_LAUNCH_UPDATE:
+		r = snp_launch_update(kvm, &sev_cmd);
 		break;
 	default:
 		r = -EINVAL;
@@ -2113,6 +2277,29 @@ find_enc_region(struct kvm *kvm, struct kvm_enc_region *range)
 static void __unregister_enc_region_locked(struct kvm *kvm,
 					   struct enc_region *region)
 {
+	unsigned long i, pfn;
+	int level;
+
+	/*
+	 * The guest memory pages are assigned in the RMP table. Unassign it
+	 * before releasing the memory.
+	 */
+	if (sev_snp_guest(kvm)) {
+		for (i = 0; i < region->npages; i++) {
+			pfn = page_to_pfn(region->pages[i]);
+
+			if (!snp_lookup_rmpentry(pfn, &level))
+				continue;
+
+			cond_resched();
+
+			if (level > PG_LEVEL_4K)
+				pfn &= ~(KVM_PAGES_PER_HPAGE(PG_LEVEL_2M) - 1);
+
+			host_rmp_make_shared(pfn, level, true);
+		}
+	}
+
 	sev_unpin_memory(kvm, region->pages, region->npages);
 	list_del(&region->list);
 	kfree(region);
