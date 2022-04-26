@@ -133,6 +133,7 @@ KVM_X86_OP_OPTIONAL_RET0(private_mem_enabled);
 KVM_X86_OP_OPTIONAL_RET0(fault_is_private);
 KVM_X86_OP_OPTIONAL_RET0(update_mem_attr)
 KVM_X86_OP_OPTIONAL(invalidate_restricted_mem)
+KVM_X86_OP_OPTIONAL(alloc_apic_backing_page)
 
 #undef KVM_X86_OP
 #undef KVM_X86_OP_OPTIONAL
