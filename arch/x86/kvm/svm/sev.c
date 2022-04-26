@@ -3160,6 +3160,24 @@ vmgexit_err:
 
 void sev_es_unmap_ghcb(struct vcpu_svm *svm)
 {
+	if (svm->sev_es.ghcb_sa_alloc_len >= 2)
+		trace_kvm_sev_es_unmap_ghcb(svm->sev_es.ghcb_sa,
+					    svm->sev_es.ghcb_sa_gpa,
+					    svm->sev_es.ghcb_sa_len,
+					    svm->sev_es.ghcb_sa_alloc_len,
+					    svm->sev_es.ghcb_sa_sync,
+					    svm->sev_es.ghcb_in_use,
+					    ((u8 *)svm->sev_es.ghcb_sa)[0],
+					    ((u8 *)svm->sev_es.ghcb_sa)[1]);
+	else
+		trace_kvm_sev_es_unmap_ghcb(svm->sev_es.ghcb_sa,
+					    svm->sev_es.ghcb_sa_gpa,
+					    svm->sev_es.ghcb_sa_len,
+					    svm->sev_es.ghcb_sa_alloc_len,
+					    svm->sev_es.ghcb_sa_sync,
+					    svm->sev_es.ghcb_in_use,
+					    0, 0);
+
 	/* Clear any indication that the vCPU is in a type of AP Reset Hold */
 	svm->sev_es.ap_reset_hold_type = AP_RESET_HOLD_NONE;
 
