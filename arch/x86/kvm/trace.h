@@ -1789,6 +1789,38 @@ TRACE_EVENT(kvm_snp_psc,
 		  __entry->level)
 );
 
+TRACE_EVENT(kvm_sev_es_unmap_ghcb,
+	TP_PROTO(void *ghcb_sa, u64 ghcb_sa_gpa, u32 ghcb_sa_len, u32 ghcb_sa_alloc_len, bool ghcb_sa_sync, bool ghcb_in_use, u8 ghcb_sa0, u8 ghcb_sa1),
+	TP_ARGS(ghcb_sa, ghcb_sa_gpa, ghcb_sa_len, ghcb_sa_alloc_len, ghcb_sa_sync, ghcb_in_use, ghcb_sa0, ghcb_sa1),
+
+	TP_STRUCT__entry(
+		__field(u64, ghcb_sa_hva)
+		__field(u64, ghcb_sa_gpa)
+		__field(u32, ghcb_sa_len)
+		__field(u32, ghcb_sa_alloc_len)
+		__field(bool, ghcb_sa_sync)
+		__field(bool, ghcb_in_use)
+		__field(u8, ghcb_sa0)
+		__field(u8, ghcb_sa1)
+	),
+
+	TP_fast_assign(
+		__entry->ghcb_sa_hva = (u64)ghcb_sa;
+		__entry->ghcb_sa_gpa = ghcb_sa_gpa;
+		__entry->ghcb_sa_len = ghcb_sa_len;
+		__entry->ghcb_sa_alloc_len = ghcb_sa_alloc_len;
+		__entry->ghcb_sa_sync = ghcb_sa_sync;
+		__entry->ghcb_in_use = ghcb_in_use;
+		__entry->ghcb_sa0 = ghcb_sa0;
+		__entry->ghcb_sa1 = ghcb_sa1;
+	),
+
+	TP_printk("ghcb_sa_hva %016llx, ghcb_gpa %016llx, ghcb_sa_len 0x%x, ghcb_sa_alloc_len 0x%x, ghcb_sa_sync %d, ghcb_in_use %d, ghcb_sa0 0x%x, ghcb_sa1 0x%x",
+		  __entry->ghcb_sa_hva, __entry->ghcb_sa_gpa, __entry->ghcb_sa_len,
+		  __entry->ghcb_sa_alloc_len, __entry->ghcb_sa_sync, __entry->ghcb_in_use,
+		  __entry->ghcb_sa0, __entry->ghcb_sa1)
+);
+
 #endif /* _TRACE_KVM_H */
 
 #undef TRACE_INCLUDE_PATH
