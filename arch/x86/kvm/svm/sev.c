@@ -32,6 +32,7 @@
 #include "svm_ops.h"
 #include "cpuid.h"
 #include "trace.h"
+#include "mmu.h"
 
 #ifndef CONFIG_KVM_AMD_SEV
 /*
@@ -340,6 +341,7 @@ static int sev_guest_init(struct kvm *kvm, struct kvm_sev_cmd *argp)
 		if (ret)
 			goto e_free;
 
+		spin_lock_init(&sev->psc_lock);
 		ret = sev_snp_init(&argp->error);
 	} else {
 		ret = sev_platform_init(&argp->error);
@@ -2871,11 +2873,17 @@ static inline int svm_map_ghcb(struct vcpu_svm *svm, struct kvm_host_map *map)
 {
 	struct vmcb_control_area *control = &svm->vmcb->control;
 	u64 gfn = gpa_to_gfn(control->ghcb_gpa);
+	struct kvm_vcpu *vcpu = &svm->vcpu;
 
-	if (kvm_vcpu_map(&svm->vcpu, gfn, map)) {
+	if (kvm_vcpu_map(vcpu, gfn, map)) {
 		/* Unable to map GHCB from guest */
 		pr_err("error mapping GHCB GFN [%#llx] from guest\n", gfn);
 		return -EFAULT;
+	}
+
+	if (sev_post_map_gfn(vcpu->kvm, map->gfn, map->pfn)) {
+		kvm_vcpu_unmap(vcpu, map, false);
+		return -EBUSY;
 	}
 
 	return 0;
@@ -2883,7 +2891,10 @@ static inline int svm_map_ghcb(struct vcpu_svm *svm, struct kvm_host_map *map)
 
 static inline void svm_unmap_ghcb(struct vcpu_svm *svm, struct kvm_host_map *map)
 {
-	kvm_vcpu_unmap(&svm->vcpu, map, true);
+	struct kvm_vcpu *vcpu = &svm->vcpu;
+
+	kvm_vcpu_unmap(vcpu, map, true);
+	sev_post_unmap_gfn(vcpu->kvm, map->gfn, map->pfn);
 }
 
 static void dump_ghcb(struct vcpu_svm *svm)
@@ -3109,6 +3120,7 @@ static int sev_es_validate_vmgexit(struct vcpu_svm *svm, u64 *exit_code)
 	case SVM_VMGEXIT_AP_JUMP_TABLE:
 	case SVM_VMGEXIT_UNSUPPORTED_EVENT:
 	case SVM_VMGEXIT_HV_FEATURES:
+	case SVM_VMGEXIT_PSC:
 		break;
 	default:
 		reason = GHCB_ERR_INVALID_EVENT;
@@ -3296,6 +3308,244 @@ static void set_ghcb_msr(struct vcpu_svm *svm, u64 value)
 	svm->vmcb->control.ghcb_gpa = value;
 }
 
+static int snp_rmptable_psmash(struct kvm *kvm, kvm_pfn_t pfn)
+{
+	pfn = pfn & ~(KVM_PAGES_PER_HPAGE(PG_LEVEL_2M) - 1);
+
+	return psmash(pfn);
+}
+
+static int snp_make_page_shared(struct kvm *kvm, gpa_t gpa, kvm_pfn_t pfn, int level)
+{
+	int rc, rmp_level;
+
+	rc = snp_lookup_rmpentry(pfn, &rmp_level);
+	if (rc < 0)
+		return -EINVAL;
+
+	/* If page is not assigned then do nothing */
+	if (!rc)
+		return 0;
+
+	/*
+	 * Is the page part of an existing 2MB RMP entry ? Split the 2MB into
+	 * multiple of 4K-page before making the memory shared.
+	 */
+	if (level == PG_LEVEL_4K && rmp_level == PG_LEVEL_2M) {
+		rc = snp_rmptable_psmash(kvm, pfn);
+		if (rc)
+			return rc;
+	}
+
+	return rmp_make_shared(pfn, level);
+}
+
+static int snp_check_and_build_npt(struct kvm_vcpu *vcpu, gpa_t gpa, int level)
+{
+	struct kvm *kvm = vcpu->kvm;
+	int rc, npt_level;
+	kvm_pfn_t pfn;
+
+	/*
+	 * Get the pfn and level for the gpa from the nested page table.
+	 *
+	 * If the tdp walk fails, then its safe to say that there is no
+	 * valid mapping for this gpa. Create a fault to build the map.
+	 */
+	write_lock(&kvm->mmu_lock);
+	rc = kvm_mmu_get_tdp_walk(vcpu, gpa, &pfn, &npt_level);
+	write_unlock(&kvm->mmu_lock);
+	if (!rc) {
+		pfn = kvm_mmu_map_tdp_page(vcpu, gpa, PFERR_USER_MASK, level);
+		if (is_error_noslot_pfn(pfn))
+			return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int snp_gpa_to_hva(struct kvm *kvm, gpa_t gpa, hva_t *hva)
+{
+	struct kvm_memory_slot *slot;
+	gfn_t gfn = gpa_to_gfn(gpa);
+	int idx;
+
+	idx = srcu_read_lock(&kvm->srcu);
+	slot = gfn_to_memslot(kvm, gfn);
+	if (!slot) {
+		srcu_read_unlock(&kvm->srcu, idx);
+		return -EINVAL;
+	}
+
+	/*
+	 * Note, using the __gfn_to_hva_memslot() is not solely for performance,
+	 * it's also necessary to avoid the "writable" check in __gfn_to_hva_many(),
+	 * which will always fail on read-only memslots due to gfn_to_hva() assuming
+	 * writes.
+	 */
+	*hva = __gfn_to_hva_memslot(slot, gfn);
+	srcu_read_unlock(&kvm->srcu, idx);
+
+	return 0;
+}
+
+static int __snp_handle_page_state_change(struct kvm_vcpu *vcpu, enum psc_op op, gpa_t gpa,
+					  int level)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(vcpu->kvm)->sev_info;
+	struct kvm *kvm = vcpu->kvm;
+	int rc, npt_level;
+	kvm_pfn_t pfn;
+	gpa_t gpa_end;
+
+	gpa_end = gpa + page_level_size(level);
+
+	while (gpa < gpa_end) {
+		/*
+		 * If the gpa is not present in the NPT then build the NPT.
+		 */
+		rc = snp_check_and_build_npt(vcpu, gpa, level);
+		if (rc)
+			return PSC_UNDEF_ERR;
+
+		if (op == SNP_PAGE_STATE_PRIVATE) {
+			hva_t hva;
+
+			if (snp_gpa_to_hva(kvm, gpa, &hva))
+				return PSC_UNDEF_ERR;
+
+			/*
+			 * Verify that the hva range is registered. This enforcement is
+			 * required to avoid the cases where a page is marked private
+			 * in the RMP table but never gets cleanup during the VM
+			 * termination path.
+			 */
+			mutex_lock(&kvm->lock);
+			rc = is_hva_registered(kvm, hva, page_level_size(level));
+			mutex_unlock(&kvm->lock);
+			if (!rc)
+				return PSC_UNDEF_ERR;
+
+			/*
+			 * Mark the userspace range unmerable before adding the pages
+			 * in the RMP table.
+			 */
+			mmap_write_lock(kvm->mm);
+			rc = snp_mark_unmergable(kvm, hva, page_level_size(level));
+			mmap_write_unlock(kvm->mm);
+			if (rc)
+				return PSC_UNDEF_ERR;
+		}
+
+		spin_lock(&sev->psc_lock);
+
+		write_lock(&kvm->mmu_lock);
+
+		rc = kvm_mmu_get_tdp_walk(vcpu, gpa, &pfn, &npt_level);
+		if (!rc) {
+			/*
+			 * This may happen if another vCPU unmapped the page
+			 * before we acquire the lock. Retry the PSC.
+			 */
+			write_unlock(&kvm->mmu_lock);
+			return 0;
+		}
+
+		/*
+		 * Adjust the level so that we don't go higher than the backing
+		 * page level.
+		 */
+		level = min_t(size_t, level, npt_level);
+
+		trace_kvm_snp_psc(vcpu->vcpu_id, pfn, gpa, op, level);
+
+		switch (op) {
+		case SNP_PAGE_STATE_SHARED:
+			rc = snp_make_page_shared(kvm, gpa, pfn, level);
+			break;
+		case SNP_PAGE_STATE_PRIVATE:
+			rc = rmp_make_private(pfn, gpa, level, sev->asid, false);
+			break;
+		default:
+			rc = PSC_INVALID_ENTRY;
+			break;
+		}
+
+		write_unlock(&kvm->mmu_lock);
+
+		spin_unlock(&sev->psc_lock);
+
+		if (rc) {
+			pr_err_ratelimited("Error op %d gpa %llx pfn %llx level %d rc %d\n",
+					   op, gpa, pfn, level, rc);
+			return rc;
+		}
+
+		gpa = gpa + page_level_size(level);
+	}
+
+	return 0;
+}
+
+static inline unsigned long map_to_psc_vmgexit_code(int rc)
+{
+	switch (rc) {
+	case PSC_INVALID_HDR:
+		return ((1ul << 32) | 1);
+	case PSC_INVALID_ENTRY:
+		return ((1ul << 32) | 2);
+	case RMPUPDATE_FAIL_OVERLAP:
+		return ((3ul << 32) | 2);
+	default: return (4ul << 32);
+	}
+}
+
+static unsigned long snp_handle_page_state_change(struct vcpu_svm *svm)
+{
+	struct kvm_vcpu *vcpu = &svm->vcpu;
+	int level, op, rc = PSC_UNDEF_ERR;
+	struct snp_psc_desc *info;
+	struct psc_entry *entry;
+	u16 cur, end;
+	gpa_t gpa;
+
+	if (!sev_snp_guest(vcpu->kvm))
+		return PSC_INVALID_HDR;
+
+	if (setup_vmgexit_scratch(svm, true, sizeof(*info))) {
+		pr_err("vmgexit: scratch area is not setup.\n");
+		return PSC_INVALID_HDR;
+	}
+
+	info = (struct snp_psc_desc *)svm->sev_es.ghcb_sa;
+	cur = info->hdr.cur_entry;
+	end = info->hdr.end_entry;
+
+	if (cur >= VMGEXIT_PSC_MAX_ENTRY ||
+	    end >= VMGEXIT_PSC_MAX_ENTRY || cur > end)
+		return PSC_INVALID_ENTRY;
+
+	for (; cur <= end; cur++) {
+		entry = &info->entries[cur];
+		gpa = gfn_to_gpa(entry->gfn);
+		level = RMP_TO_X86_PG_LEVEL(entry->pagesize);
+		op = entry->operation;
+
+		if (!IS_ALIGNED(gpa, page_level_size(level))) {
+			rc = PSC_INVALID_ENTRY;
+			goto out;
+		}
+
+		rc = __snp_handle_page_state_change(vcpu, op, gpa, level);
+		if (rc)
+			goto out;
+	}
+
+out:
+	info->hdr.cur_entry = cur;
+	return rc ? map_to_psc_vmgexit_code(rc) : 0;
+}
+
 static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
 {
 	struct vmcb_control_area *control = &svm->vmcb->control;
@@ -3394,6 +3644,27 @@ static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
 				  GHCB_MSR_GPA_VALUE_POS);
 		set_ghcb_msr_bits(svm, GHCB_MSR_REG_GPA_RESP, GHCB_MSR_INFO_MASK,
 				  GHCB_MSR_INFO_POS);
+		break;
+	}
+	case GHCB_MSR_PSC_REQ: {
+		gfn_t gfn;
+		int ret;
+		enum psc_op op;
+
+		gfn = get_ghcb_msr_bits(svm, GHCB_MSR_PSC_GFN_MASK, GHCB_MSR_PSC_GFN_POS);
+		op = get_ghcb_msr_bits(svm, GHCB_MSR_PSC_OP_MASK, GHCB_MSR_PSC_OP_POS);
+
+		ret = __snp_handle_page_state_change(vcpu, op, gfn_to_gpa(gfn), PG_LEVEL_4K);
+
+		if (ret)
+			set_ghcb_msr_bits(svm, GHCB_MSR_PSC_ERROR,
+					  GHCB_MSR_PSC_ERROR_MASK, GHCB_MSR_PSC_ERROR_POS);
+		else
+			set_ghcb_msr_bits(svm, 0,
+					  GHCB_MSR_PSC_ERROR_MASK, GHCB_MSR_PSC_ERROR_POS);
+
+		set_ghcb_msr_bits(svm, 0, GHCB_MSR_PSC_RSVD_MASK, GHCB_MSR_PSC_RSVD_POS);
+		set_ghcb_msr_bits(svm, GHCB_MSR_PSC_RESP, GHCB_MSR_INFO_MASK, GHCB_MSR_INFO_POS);
 		break;
 	}
 	case GHCB_MSR_TERM_REQ: {
@@ -3514,6 +3785,15 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 		svm_set_ghcb_sw_exit_info_2(vcpu, GHCB_HV_FT_SUPPORTED);
 
 		ret = 1;
+		break;
+	}
+	case SVM_VMGEXIT_PSC: {
+		unsigned long rc;
+
+		ret = 1;
+
+		rc = snp_handle_page_state_change(svm);
+		svm_set_ghcb_sw_exit_info_2(vcpu, rc);
 		break;
 	}
 	case SVM_VMGEXIT_UNSUPPORTED_EVENT:
@@ -3758,4 +4038,34 @@ void sev_rmp_page_level_adjust(struct kvm *kvm, kvm_pfn_t pfn, int *level)
 
 	/* Adjust the level to keep the NPT and RMP in sync */
 	*level = min_t(size_t, *level, rmp_level);
+}
+
+int sev_post_map_gfn(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	int level;
+
+	if (!sev_snp_guest(kvm))
+		return 0;
+
+	spin_lock(&sev->psc_lock);
+
+	/* If pfn is not added as private then fail */
+	if (snp_lookup_rmpentry(pfn, &level) == 1) {
+		spin_unlock(&sev->psc_lock);
+		pr_err_ratelimited("failed to map private gfn 0x%llx pfn 0x%llx\n", gfn, pfn);
+		return -EBUSY;
+	}
+
+	return 0;
+}
+
+void sev_post_unmap_gfn(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+
+	if (!sev_snp_guest(kvm))
+		return;
+
+	spin_unlock(&sev->psc_lock);
 }
