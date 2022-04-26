@@ -7,6 +7,7 @@
 #include <asm/svm.h>
 #include <asm/clocksource.h>
 #include <asm/pvclock-abi.h>
+#include <asm/sev-common.h>
 
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM kvm
@@ -1753,6 +1754,39 @@ TRACE_EVENT(kvm_vmgexit_msr_protocol_exit,
 
 	TP_printk("vcpu %u, ghcb_gpa %016llx, result %d",
 		  __entry->vcpu_id, __entry->ghcb_gpa, __entry->result)
+);
+
+/*
+ * Tracepoint for the SEV-SNP page state change processing
+ */
+#define psc_operation					\
+	{SNP_PAGE_STATE_PRIVATE, "private"},		\
+	{SNP_PAGE_STATE_SHARED,  "shared"}		\
+
+TRACE_EVENT(kvm_snp_psc,
+	TP_PROTO(unsigned int vcpu_id, u64 pfn, u64 gpa, u8 op, int level),
+	TP_ARGS(vcpu_id, pfn, gpa, op, level),
+
+	TP_STRUCT__entry(
+		__field(int, vcpu_id)
+		__field(u64, pfn)
+		__field(u64, gpa)
+		__field(u8, op)
+		__field(int, level)
+	),
+
+	TP_fast_assign(
+		__entry->vcpu_id = vcpu_id;
+		__entry->pfn = pfn;
+		__entry->gpa = gpa;
+		__entry->op = op;
+		__entry->level = level;
+	),
+
+	TP_printk("vcpu %u, pfn %llx, gpa %llx, op %s, level %d",
+		  __entry->vcpu_id, __entry->pfn, __entry->gpa,
+		  __print_symbolic(__entry->op, psc_operation),
+		  __entry->level)
 );
 
 #endif /* _TRACE_KVM_H */
