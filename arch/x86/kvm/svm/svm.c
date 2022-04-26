@@ -1457,13 +1457,17 @@ static void svm_vcpu_free(struct kvm_vcpu *vcpu)
 static void svm_prepare_switch_to_guest(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
-	struct svm_cpu_data *sd = per_cpu_ptr(&svm_data, vcpu->cpu);
+	struct svm_cpu_data *sd;
 
 	if (sev_es_guest(vcpu->kvm))
 		sev_es_unmap_ghcb(svm);
 
 	if (svm->guest_state_loaded)
 		return;
+
+	/* sev_es_unmap_ghcb() can resched, so grab per-cpu pointer afterward. */
+	barrier();
+	sd = per_cpu_ptr(&svm_data, vcpu->cpu);
 
 	/*
 	 * Save additional host state that will be restored on VMEXIT (sev-es)
@@ -2830,14 +2834,14 @@ static int svm_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 static int svm_complete_emulated_msr(struct kvm_vcpu *vcpu, int err)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
-	if (!err || !sev_es_guest(vcpu->kvm) || WARN_ON_ONCE(!svm->sev_es.ghcb))
+	if (!err || !sev_es_guest(vcpu->kvm) || WARN_ON_ONCE(!svm->sev_es.ghcb_in_use))
 		return kvm_complete_insn_gp(vcpu, err);
 
-	ghcb_set_sw_exit_info_1(svm->sev_es.ghcb, 1);
-	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb,
-				X86_TRAP_GP |
-				SVM_EVTINJ_TYPE_EXEPT |
-				SVM_EVTINJ_VALID);
+	svm_set_ghcb_sw_exit_info_1(vcpu, 1);
+	svm_set_ghcb_sw_exit_info_2(vcpu,
+				    X86_TRAP_GP |
+				    SVM_EVTINJ_TYPE_EXEPT |
+				    SVM_EVTINJ_VALID);
 	return 1;
 }
 
