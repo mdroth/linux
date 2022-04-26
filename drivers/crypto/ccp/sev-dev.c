@@ -80,6 +80,14 @@ static void *sev_es_tmr;
 #define NV_LENGTH (32 * 1024)
 static void *sev_init_ex_buffer;
 
+/* When SEV-SNP is enabled the TMR needs to be 2MB aligned and 2MB size. */
+#define SEV_SNP_ES_TMR_SIZE	(2 * 1024 * 1024)
+
+static size_t sev_es_tmr_size = SEV_ES_TMR_SIZE;
+
+static int __sev_do_cmd_locked(int cmd, void *data, int *psp_ret);
+static int sev_do_cmd(int cmd, void *data, int *psp_ret);
+
 static inline bool sev_version_greater_or_equal(u8 maj, u8 min)
 {
 	struct sev_device *sev = psp_master->sev_data;
@@ -178,11 +186,161 @@ static int sev_cmd_buffer_len(int cmd)
 	return 0;
 }
 
+static void snp_leak_pages(unsigned long pfn, unsigned int npages)
+{
+	WARN(1, "psc failed, pfn 0x%lx pages %d (leaking)\n", pfn, npages);
+	while (npages--) {
+		memory_failure(pfn, 0);
+		dump_rmpentry(pfn);
+		pfn++;
+	}
+}
+
+static int snp_reclaim_pages(unsigned long pfn, unsigned int npages, bool locked)
+{
+	struct sev_data_snp_page_reclaim data;
+	int ret, err, i, n = 0;
+
+	for (i = 0; i < npages; i++) {
+		memset(&data, 0, sizeof(data));
+		data.paddr = pfn << PAGE_SHIFT;
+
+		if (locked)
+			ret = __sev_do_cmd_locked(SEV_CMD_SNP_PAGE_RECLAIM, &data, &err);
+		else
+			ret = sev_do_cmd(SEV_CMD_SNP_PAGE_RECLAIM, &data, &err);
+		if (ret)
+			goto cleanup;
+
+		ret = rmp_make_shared(pfn, PG_LEVEL_4K);
+		if (ret)
+			goto cleanup;
+
+		pfn++;
+		n++;
+	}
+
+	return 0;
+
+cleanup:
+	/*
+	 * If failed to reclaim the page then page is no longer safe to
+	 * be released, leak it.
+	 */
+	snp_leak_pages(pfn, npages - n);
+	return ret;
+}
+
+static inline int rmp_make_firmware(unsigned long pfn, int level)
+{
+	return rmp_make_private(pfn, 0, level, 0, true);
+}
+
+static int snp_set_rmp_state(unsigned long paddr, unsigned int npages, bool to_fw, bool locked,
+			     bool need_reclaim)
+{
+	unsigned long pfn = __sme_clr(paddr) >> PAGE_SHIFT; /* Cbit maybe set in the paddr */
+	int rc, n = 0, i;
+
+	for (i = 0; i < npages; i++) {
+		if (to_fw)
+			rc = rmp_make_firmware(pfn, PG_LEVEL_4K);
+		else
+			rc = need_reclaim ? snp_reclaim_pages(pfn, 1, locked) :
+					    rmp_make_shared(pfn, PG_LEVEL_4K);
+		if (rc)
+			goto cleanup;
+
+		pfn++;
+		n++;
+	}
+
+	return 0;
+
+cleanup:
+	/* Try unrolling the firmware state changes */
+	if (to_fw) {
+		/*
+		 * Reclaim the pages which were already changed to the
+		 * firmware state.
+		 */
+		snp_reclaim_pages(paddr >> PAGE_SHIFT, n, locked);
+
+		return rc;
+	}
+
+	/*
+	 * If failed to change the page state to shared, then its not safe
+	 * to release the page back to the system, leak it.
+	 */
+	snp_leak_pages(pfn, npages - n);
+
+	return rc;
+}
+
+static struct page *__snp_alloc_firmware_pages(gfp_t gfp_mask, int order, bool locked)
+{
+	unsigned long npages = 1ul << order, paddr;
+	struct sev_device *sev;
+	struct page *page;
+
+	if (!psp_master || !psp_master->sev_data)
+		return NULL;
+
+	page = alloc_pages(gfp_mask, order);
+	if (!page)
+		return NULL;
+
+	/* If SEV-SNP is initialized then add the page in RMP table. */
+	sev = psp_master->sev_data;
+	if (!sev->snp_inited)
+		return page;
+
+	paddr = __pa((unsigned long)page_address(page));
+	if (snp_set_rmp_state(paddr, npages, true, locked, false))
+		return NULL;
+
+	return page;
+}
+
+void *snp_alloc_firmware_page(gfp_t gfp_mask)
+{
+	struct page *page;
+
+	page = __snp_alloc_firmware_pages(gfp_mask, 0, false);
+
+	return page ? page_address(page) : NULL;
+}
+EXPORT_SYMBOL_GPL(snp_alloc_firmware_page);
+
+static void __snp_free_firmware_pages(struct page *page, int order, bool locked)
+{
+	unsigned long paddr, npages = 1ul << order;
+
+	if (!page)
+		return;
+
+	paddr = __pa((unsigned long)page_address(page));
+	if (snp_set_rmp_state(paddr, npages, false, locked, true))
+		return;
+
+	__free_pages(page, order);
+}
+
+void snp_free_firmware_page(void *addr)
+{
+	if (!addr)
+		return;
+
+	__snp_free_firmware_pages(virt_to_page(addr), 0, false);
+}
+EXPORT_SYMBOL(snp_free_firmware_page);
+
 static void *sev_fw_alloc(unsigned long len)
 {
 	struct page *page;
 
-	page = alloc_pages(GFP_KERNEL, get_order(len));
+	page = __snp_alloc_firmware_pages(GFP_KERNEL, get_order(len), false);
 	if (!page)
 		return NULL;
 
@@ -419,7 +577,7 @@ static int __sev_init_locked(int *error)
 		data.tmr_address = __pa(sev_es_tmr);
 
 		data.flags |= SEV_INIT_FLAGS_SEV_ES;
-		data.tmr_len = SEV_ES_TMR_SIZE;
+		data.tmr_len = sev_es_tmr_size;
 	}
 
 	return __sev_do_cmd_locked(SEV_CMD_INIT, &data, error);
@@ -447,7 +605,7 @@ static int __sev_init_ex_locked(int *error)
 		data.tmr_address = __pa(sev_es_tmr);
 
 		data.flags |= SEV_INIT_FLAGS_SEV_ES;
-		data.tmr_len = SEV_ES_TMR_SIZE;
+		data.tmr_len = sev_es_tmr_size;
 	}
 
 	return __sev_do_cmd_locked(SEV_CMD_INIT_EX, &data, error);
@@ -845,6 +1003,8 @@ static int __sev_snp_init_locked(int *error)
 
 	sev->snp_inited = true;
 	dev_dbg(sev->dev, "SEV-SNP firmware initialized\n");
+
+	sev_es_tmr_size = SEV_SNP_ES_TMR_SIZE;
 
 	return rc;
 }
@@ -1369,8 +1529,9 @@ static void sev_firmware_shutdown(struct sev_device *sev)
 		/* The TMR area was encrypted, flush it from the cache */
 		wbinvd_on_all_cpus();
 
-		free_pages((unsigned long)sev_es_tmr,
-			   get_order(SEV_ES_TMR_SIZE));
+		__snp_free_firmware_pages(virt_to_page(sev_es_tmr),
+					  get_order(sev_es_tmr_size),
+					  false);
 		sev_es_tmr = NULL;
 	}
 
@@ -1458,7 +1619,7 @@ void sev_pci_init(void)
 	}
 
 	/* Obtain the TMR memory area for SEV-ES use */
-	sev_es_tmr = sev_fw_alloc(SEV_ES_TMR_SIZE);
+	sev_es_tmr = sev_fw_alloc(sev_es_tmr_size);
 	if (!sev_es_tmr)
 		dev_warn(sev->dev,
 			 "SEV: TMR allocation failed, SEV-ES support unavailable\n");
