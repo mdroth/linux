@@ -33,6 +33,7 @@
 #include <asm/kvm_para.h>		/* kvm_handle_async_pf		*/
 #include <asm/vdso.h>			/* fixup_vdso_exception()	*/
 #include <asm/irq_stack.h>
+#include <asm/sev-host.h>		/* snp_lookup_rmpentry()	*/
 
 #define CREATE_TRACE_POINTS
 #include <asm/trace/exceptions.h>
@@ -535,6 +536,8 @@ static void show_ldttss(const struct desc_ptr *gdt, const char *name, u16 index)
 static void
 show_fault_oops(struct pt_regs *regs, unsigned long error_code, unsigned long address)
 {
+	unsigned long pfn;
+
 	if (!oops_may_print())
 		return;
 
@@ -607,7 +610,10 @@ show_fault_oops(struct pt_regs *regs, unsigned long error_code, unsigned long ad
 		show_ldttss(&gdt, "TR", tr);
 	}
 
-	dump_pagetable(address);
+	pfn = dump_pagetable(address);
+
+	if (error_code & X86_PF_RMP)
+		sev_dump_rmpentry(pfn);
 }
 
 static noinline void
@@ -1248,6 +1254,90 @@ do_kern_addr_fault(struct pt_regs *regs, unsigned long hw_error_code,
 }
 NOKPROBE_SYMBOL(do_kern_addr_fault);
 
+enum rmp_pf_ret {
+	RMP_PF_SPLIT	= 0,
+	RMP_PF_RETRY	= 1,
+	RMP_PF_UNMAP	= 2,
+};
+
+/*
+ * The goal of RMP faulting routine is really to check whether the
+ * page that faulted should be accessible.  That can be determined
+ * simply by looking at the RMP entry for the 4k address being accessed.
+ * If that entry has Assigned=1 then it's a bad address. It could be
+ * because the 2MB region was assigned as a large page, or it could be
+ * because the region is all 4k pages and that 4k was assigned.
+ * In either case, it's a bad access.
+ * There are basically two main possibilities:
+ * 1. The 2M entry has Assigned=1 and Page_Size=1. Then all 511 middle
+ * entries also have Assigned=1. This entire 2M region is a guest page.
+ * 2. The 2M entry has Assigned=0 and Page_Size=0. Then the 511 middle
+ * entries can be anything, this region consists of individual 4k assignments.
+ */
+static int handle_user_rmp_page_fault(struct pt_regs *regs, unsigned long error_code,
+				      unsigned long address)
+{
+	int rmp_level, level;
+	pgd_t *pgd;
+	pte_t *pte;
+	u64 pfn;
+
+	pgd = __va(read_cr3_pa());
+	pgd += pgd_index(address);
+
+	pte = lookup_address_in_pgd(pgd, address, &level);
+
+	/*
+	 * It can happen if there was a race between an unmap event and
+	 * the RMP fault delivery.
+	 */
+	if (!pte || !pte_present(*pte))
+		return RMP_PF_UNMAP;
+
+	/*
+	 * RMP page fault handler follows this algorithm:
+	 * 1. Compute the pfn for the 4kb page being accessed
+	 * 2. Read that RMP entry -- If it is assigned then kill the process
+	 * 3. Otherwise, check the level from the host page table
+	 *    If level=PG_LEVEL_4K then the page is already smashed
+	 *    so just retry the instruction
+	 * 4. If level=PG_LEVEL_2M/1G, then the host page needs to be split
+	 */
+
+	pfn = pte_pfn(*pte);
+
+	/* If its large page then calculte the fault pfn */
+	if (level > PG_LEVEL_4K)
+		pfn = pfn | PFN_DOWN(address & (page_level_size(level) - 1));
+
+	/*
+	 * If its a guest private page, then the fault cannot be resolved.
+	 * Send a SIGBUS to terminate the process.
+	 *
+	 * As documented in APM vol3 pseudo-code for RMPUPDATE, when the 2M range
+	 * is covered by a valid (Assigned=1) 2M entry, the middle 511 4k entries
+	 * also have Assigned=1. This means that if there is an access to a page
+	 * which happens to lie within an Assigned 2M entry, the 4k RMP entry
+	 * will also have Assigned=1. Therefore, the kernel should see that
+	 * the page is not a valid page and the fault cannot be resolved.
+	 */
+	if (snp_lookup_rmpentry(pfn, &rmp_level)) {
+		pr_info("Fatal RMP page fault, terminating process, entry assigned for pfn 0x%llx\n",
+			pfn);
+		do_sigbus(regs, error_code, address, VM_FAULT_SIGBUS);
+		return RMP_PF_RETRY;
+	}
+
+	/*
+	 * The backing page level is higher than the RMP page level, request
+	 * to split the page.
+	 */
+	if (level > rmp_level)
+		return RMP_PF_SPLIT;
+
+	return RMP_PF_RETRY;
+}
+
 /*
  * Handle faults in the user portion of the address space.  Nothing in here
  * should check X86_PF_USER without a specific justification: for almost
@@ -1344,6 +1434,17 @@ void do_user_addr_fault(struct pt_regs *regs,
 		flags |= FAULT_FLAG_WRITE;
 	if (error_code & X86_PF_INSTR)
 		flags |= FAULT_FLAG_INSTRUCTION;
+
+	/*
+	 * If its an RMP violation, try resolving it.
+	 */
+	if (error_code & X86_PF_RMP) {
+		if (handle_user_rmp_page_fault(regs, error_code, address))
+			return;
+
+		/* Ask to split the page */
+		flags |= FAULT_FLAG_PAGE_SPLIT;
+	}
 
 #ifdef CONFIG_X86_64
 	/*
