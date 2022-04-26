@@ -4192,8 +4192,10 @@ int sev_es_string_io(struct vcpu_svm *svm, int size, unsigned int port, int in)
 		return -EINVAL;
 
 	r = setup_vmgexit_scratch(svm, in, bytes);
-	if (r)
+	if (r) {
+		pr_err("failed to setup vmgexit scratch\n");
 		return r;
+	}
 
 	return kvm_sev_es_string_io(&svm->vcpu, size, port, svm->sev_es.ghcb_sa,
 				    count, in);
