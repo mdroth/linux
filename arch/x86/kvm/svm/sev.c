@@ -4008,3 +4008,79 @@ void sev_post_unmap_gfn(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn)
 
 	spin_unlock(&sev->psc_lock);
 }
+
+void handle_rmp_page_fault(struct kvm_vcpu *vcpu, gpa_t gpa, u64 error_code)
+{
+	int rmp_level, npt_level, rc, assigned;
+	struct kvm *kvm = vcpu->kvm;
+	gfn_t gfn = gpa_to_gfn(gpa);
+	bool need_psc = false;
+	enum psc_op psc_op;
+	kvm_pfn_t pfn;
+	bool private;
+
+	write_lock(&kvm->mmu_lock);
+
+	if (unlikely(!kvm_mmu_get_tdp_walk(vcpu, gpa, &pfn, &npt_level)))
+		goto unlock;
+
+	assigned = snp_lookup_rmpentry(pfn, &rmp_level);
+	if (unlikely(assigned < 0))
+		goto unlock;
+
+	private = !!(error_code & PFERR_GUEST_ENC_MASK);
+
+	/*
+	 * If the fault was due to size mismatch, or NPT and RMP page level's
+	 * are not in sync, then use PSMASH to split the RMP entry into 4K.
+	 */
+	if ((error_code & PFERR_GUEST_SIZEM_MASK) ||
+	    (npt_level == PG_LEVEL_4K && rmp_level == PG_LEVEL_2M && private)) {
+		rc = snp_rmptable_psmash(kvm, pfn);
+		if (rc)
+			pr_err_ratelimited("psmash failed, gpa 0x%llx pfn 0x%llx rc %d\n",
+					   gpa, pfn, rc);
+		goto out;
+	}
+
+	/*
+	 * If it's a private access, and the page is not assigned in the
+	 * RMP table, create a new private RMP entry. This can happen if
+	 * guest did not use the PSC VMGEXIT to transition the page state
+	 * before the access.
+	 */
+	if (!assigned && private) {
+		need_psc = 1;
+		psc_op = SNP_PAGE_STATE_PRIVATE;
+		goto out;
+	}
+
+	/*
+	 * If it's a shared access, but the page is private in the RMP table
+	 * then make the page shared in the RMP table. This can happen if
+	 * the guest did not use the PSC VMGEXIT to transition the page
+	 * state before the access.
+	 */
+	if (assigned && !private) {
+		need_psc = 1;
+		psc_op = SNP_PAGE_STATE_SHARED;
+	}
+
+out:
+	write_unlock(&kvm->mmu_lock);
+
+	if (need_psc)
+		rc = __snp_handle_page_state_change(vcpu, psc_op, gpa, PG_LEVEL_4K);
+
+	/*
+	 * The fault handler has updated the RMP pagesize, zap the existing
+	 * rmaps for large entry ranges so that nested page table gets rebuilt
+	 * with the updated RMP pagesize.
+	 */
+	gfn = gpa_to_gfn(gpa) & ~(KVM_PAGES_PER_HPAGE(PG_LEVEL_2M) - 1);
+	kvm_zap_gfn_range(kvm, gfn, gfn + PTRS_PER_PMD);
+	return;
+
+unlock:
+	write_unlock(&kvm->mmu_lock);
+}
