@@ -2533,19 +2533,56 @@ int psmash(u64 pfn)
 }
 EXPORT_SYMBOL_GPL(psmash);
 
+static int restore_direct_map(u64 pfn, int npages)
+{
+	return set_memory_p((unsigned long)pfn_to_kaddr(pfn), npages);
+}
+
+static int invalidate_direct_map(unsigned long pfn, int npages)
+{
+	return set_memory_np((unsigned long)pfn_to_kaddr(pfn), npages);
+}
+
 static int rmpupdate(u64 pfn, struct rmp_state *val)
 {
 	unsigned long paddr = pfn << PAGE_SHIFT;
-	int ret;
+	int ret, level, npages;
 
 	if (!cpu_feature_enabled(X86_FEATURE_SEV_SNP))
 		return -ENXIO;
+
+	level = RMP_TO_X86_PG_LEVEL(val->pagesize);
+	npages = page_level_size(level) / PAGE_SIZE;
+
+	/*
+	 * If page is getting assigned in the RMP table then unmap it from the
+	 * direct map.
+	 */
+	if (val->assigned) {
+		if (invalidate_direct_map(pfn, npages)) {
+			pr_err("Failed to unmap %d pages at pfn 0x%llx from the direct_map\n",
+			       npages, pfn);
+			return -EFAULT;
+		}
+	}
 
 	/* Binutils version 2.36 supports the RMPUPDATE mnemonic. */
 	asm volatile(".byte 0xF2, 0x0F, 0x01, 0xFE"
 		     : "=a"(ret)
 		     : "a"(paddr), "c"((unsigned long)val)
 		     : "memory", "cc");
+
+	/*
+	 * Restore the direct map after the page is removed from the RMP table.
+	 */
+	if (!ret && !val->assigned) {
+		if (restore_direct_map(pfn, npages)) {
+			pr_err("Failed to map %d pages at pfn 0x%llx into the direct_map\n",
+			       npages, pfn);
+			return -EFAULT;
+		}
+	}
+
 	return ret;
 }
 
