@@ -2974,11 +2974,15 @@ static int __kvm_write_guest_page(struct kvm *kvm,
 	unsigned long addr;
 
 	addr = gfn_to_hva_memslot(memslot, gfn);
-	if (kvm_is_error_hva(addr))
+	if (kvm_is_error_hva(addr)) {
+		pr_warn_ratelimited("__kvm_write_guest_page addr is error hva: %ld\n", addr);
 		return -EFAULT;
+	}
 	r = __copy_to_user((void __user *)addr + offset, data, len);
-	if (r)
+	if (r) {
+		pr_warn_ratelimited("__kvm_write_guest_page: __copy_to_user failure: %d", r);
 		return -EFAULT;
+	}
 	mark_page_dirty_in_slot(kvm, memslot, gfn);
 	return 0;
 }
