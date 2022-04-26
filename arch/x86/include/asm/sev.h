@@ -84,7 +84,9 @@ extern bool handle_vc_boot_ghcb(struct pt_regs *regs);
 
 /* RMP page size */
 #define RMP_PG_SIZE_4K			0
+#define RMP_PG_SIZE_2M			1
 #define RMP_TO_X86_PG_LEVEL(level)	(((level) == RMP_PG_SIZE_4K) ? PG_LEVEL_4K : PG_LEVEL_2M)
+#define X86_TO_RMP_PG_LEVEL(level)	(((level) == PG_LEVEL_4K) ? RMP_PG_SIZE_4K : RMP_PG_SIZE_2M)
 
 /*
  * The RMP entry format is not architectural. The format is defined in PPR
@@ -158,6 +160,15 @@ struct snp_secrets_page_layout {
 	u8 vmpck3[VMPCK_KEY_LEN];
 	struct secrets_os_area os_area;
 	u8 rsvd3[3840];
+} __packed;
+
+struct rmpupdate {
+	u64 gpa;
+	u8 assigned;
+	u8 pagesize;
+	u8 immutable;
+	u8 rsvd;
+	u32 asid;
 } __packed;
 
 #ifdef CONFIG_AMD_MEM_ENCRYPT
