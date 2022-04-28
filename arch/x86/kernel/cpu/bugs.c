@@ -1047,6 +1047,7 @@ static void __init spectre_v2_select_mitigation(void)
 	switch (mode) {
 	case SPECTRE_V2_NONE:
 	case SPECTRE_V2_EIBRS:
+	case SPECTRE_V2_AUTO_IBRS:
 		break;
 
 	case SPECTRE_V2_LFENCE:
