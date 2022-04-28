@@ -1588,13 +1588,8 @@ static void set_dte_entry(struct amd_iommu *iommu, u16 devid,
 		flags    |= tmp;
 	}
 
-	/*
-	 * Only set TV bit when:
-	 *   - IOMMUv1 table is in used.
-	 *   - IOMMUv2 table is in used.
-	 */
-	if ((domain->iop.mode != PAGE_MODE_NONE) ||
-	    (domain->flags & PD_IOMMUV2_MASK))
+	/* Only set TV bit when IOMMU page translation is in used */
+	if (domain->id != 0)
 		pte_root |= DTE_FLAG_TV;
 	else
 		pte_root &= ~DTE_FLAG_TV;
