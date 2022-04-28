@@ -3694,3 +3694,15 @@ u64 *amd_iommu_fetch_pte(struct iommu_domain *dom,
 	return pte;
 }
 EXPORT_SYMBOL_GPL(amd_iommu_fetch_pte);
+
+extern u16 amd_iommu_get_domid(struct iommu_domain *dom);
+
+u16 amd_iommu_get_domid(struct iommu_domain *dom)
+{
+	struct protection_domain *pdom = to_pdomain(dom);
+
+	if (!pdom)
+		return 0;
+	return pdom->id;
+}
+EXPORT_SYMBOL_GPL(amd_iommu_get_domid);
