@@ -406,6 +406,12 @@ struct pebs_xmm {
  */
 #define EXT_PERFMON_DEBUG_FEATURES		0x80000022
 
+/* Freeze LBR on PMC Interrupt (AMD-specific) */
+#define DEBUGCTLMSR_FLBRI			BIT_ULL(12)
+
+/* Enable LBR Branch Recording */
+#define DBG_EXTN_CFG_LBRV2EN			BIT_ULL(6)
+
 /*
  * IBS cpuid feature detection
  */
