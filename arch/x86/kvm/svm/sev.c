@@ -107,6 +107,11 @@ static inline bool is_mirroring_enc_context(struct kvm *kvm)
 	return !!to_kvm_svm(kvm)->sev_info.enc_context_owner;
 }
 
+static bool kvm_is_upm_enabled(struct kvm *kvm)
+{
+	return kvm->arch.upm_mode;
+}
+
 /* Must be called with the sev_bitmap_lock held */
 static bool __sev_recycle_asids(int min_asid, int max_asid)
 {
@@ -382,6 +387,68 @@ e_free_dh:
 	return ret;
 }
 
+static int sev_get_memfile_pfn_handler(struct kvm *kvm, struct kvm_gfn_range *range, void *data)
+{
+	struct kvm_memory_slot *memslot = range->slot;
+	struct page **pages = data;
+	int ret = 0, i = 0;
+	kvm_pfn_t pfn;
+	gfn_t gfn;
+
+	for (gfn = range->start; gfn < range->end; gfn++) {
+		int order;
+
+		ret = kvm_private_mem_get_pfn(memslot,
+					      gfn, &pfn, &order);
+		if (ret)
+			return ret;
+
+		if (is_error_noslot_pfn(pfn))
+			return -EFAULT;
+
+		pages[i++] = pfn_to_page(pfn);
+	}
+
+	return ret;
+}
+
+static int sev_get_memfile_pfn(struct kvm *kvm, unsigned long addr,
+			       unsigned long size, unsigned long npages,
+			       struct page **pages)
+{
+	return kvm_vm_do_hva_range_op(kvm, addr, size,
+				      sev_get_memfile_pfn_handler, pages);
+}
+
+static int sev_put_memfile_pfn_handler(struct kvm *kvm,
+				       struct kvm_gfn_range *range, void *data)
+{
+	struct kvm_memory_slot *memslot = range->slot;
+	struct page **pages = data;
+	int ret = 0, i = 0;
+	gfn_t gfn;
+
+	if (IS_ERR(pages))
+		return -EFAULT;
+
+	for (gfn = range->start; gfn < range->end; gfn++) {
+		if (!pages[i])
+			continue;
+		kvm_private_mem_put_pfn(memslot, page_to_pfn(pages[i++]));
+	}
+
+	return ret;
+}
+
+static int sev_put_memfile_pfn(struct kvm *kvm, unsigned long addr,
+			       unsigned long size, unsigned long npages,
+			       struct page **pages)
+{
+	return kvm_vm_do_hva_range_op(kvm, addr, size,
+				      sev_put_memfile_pfn_handler, pages);
+}
+
+
 static struct page **sev_pin_memory(struct kvm *kvm, unsigned long uaddr,
 				    unsigned long ulen, unsigned long *n,
 				    int write)
@@ -424,16 +491,25 @@ static struct page **sev_pin_memory(struct kvm *kvm, unsigned long uaddr,
 	if (!pages)
 		return ERR_PTR(-ENOMEM);
 
-	/* Pin the user virtual address. */
-	npinned = pin_user_pages_fast(uaddr, npages, write ? FOLL_WRITE : 0, pages);
-	if (npinned != npages) {
-		pr_err("SEV: Failure locking %lu pages.\n", npages);
-		ret = -ENOMEM;
-		goto err;
+	if (kvm_is_upm_enabled(kvm)) {
+		/* Get the PFN from memfile */
+		if (sev_get_memfile_pfn(kvm, uaddr, ulen, npages, pages)) {
+			pr_err("%s: ERROR: unable to find slot for uaddr %lx", __func__, uaddr);
+			ret = -ENOMEM;
+			goto err;
+		}
+	} else {
+		/* Pin the user virtual address. */
+		npinned = pin_user_pages_fast(uaddr, npages, write ? FOLL_WRITE : 0, pages);
+		if (npinned != npages) {
+			pr_err("SEV: Failure locking %lu pages.\n", npages);
+			ret = -ENOMEM;
+			goto err;
+		}
+		sev->pages_locked = locked;
 	}
 
 	*n = npages;
-	sev->pages_locked = locked;
 
 	return pages;
 
@@ -513,6 +589,7 @@ int sev_launch_update_shared_gfn_handler(struct kvm *kvm,
 
 	size = (range->end - range->start) << PAGE_SHIFT;
 	vaddr_end = vaddr + size;
+	WARN_ON(size < PAGE_SIZE);
 
 	/* Lock the user memory. */
 	inpages = sev_pin_memory(kvm, vaddr, size, &npages, 1);
@@ -553,13 +630,18 @@ int sev_launch_update_shared_gfn_handler(struct kvm *kvm,
 	}
 
 e_unpin:
-	/* content of memory is updated, mark pages dirty */
-	for (i = 0; i < npages; i++) {
-		set_page_dirty_lock(inpages[i]);
-		mark_page_accessed(inpages[i]);
+	if (kvm_is_upm_enabled(kvm)) {
+		sev_put_memfile_pfn(kvm, vaddr, size, npages, inpages);
+	} else {
+		/* content of memory is updated, mark pages dirty */
+		for (i = 0; i < npages; i++) {
+			set_page_dirty_lock(inpages[i]);
+			mark_page_accessed(inpages[i]);
+		}
+		/* unlock the user pages */
+		sev_unpin_memory(kvm, inpages, npages);
 	}
-	/* unlock the user pages */
-	sev_unpin_memory(kvm, inpages, npages);
+
 	return ret;
 }
 
@@ -587,14 +669,14 @@ int sev_launch_update_priv_gfn_handler(struct kvm *kvm,
 
 		kvaddr = pfn_to_kaddr(pfn);
 		if (!virt_addr_valid(kvaddr)) {
-			pr_err("Invalid kvaddr 0x%lx\n", (uint64_t)kvaddr);
+			pr_err("Invalid kvaddr 0x%llx\n", (uint64_t)kvaddr);
 			ret = -EINVAL;
 			goto e_ret;
 		}
 
 		ret = kvm_read_guest_page(kvm, gfn, kvaddr, 0, PAGE_SIZE);
 		if (ret) {
-			pr_err("guest read failed 0x%lx\n", ret);
+			pr_err("guest read failed 0x%x\n", ret);
 			goto e_ret;
 		}
 
