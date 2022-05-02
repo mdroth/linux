@@ -127,6 +127,11 @@ static inline bool is_mirroring_enc_context(struct kvm *kvm)
 	return !!to_kvm_svm(kvm)->sev_info.enc_context_owner;
 }
 
+static bool kvm_is_upm_enabled(struct kvm *kvm)
+{
+	return kvm->arch.upm_mode;
+}
+
 /* Must be called with the sev_bitmap_lock held */
 static bool __sev_recycle_asids(int min_asid, int max_asid)
 {
@@ -477,6 +482,94 @@ e_free_dh:
 	return ret;
 }
 
+static int sev_get_memfile_pfn(struct kvm *kvm, unsigned long addr,
+			       unsigned long size, unsigned long npages,
+			       struct page **pages)
+{
+	unsigned long hva_start, hva_end, uaddr, end, slot_start, slot_end;
+	struct interval_tree_node *node;
+	struct kvm_memory_slot *slot;
+	struct kvm_memslots *slots;
+	int ret = 0, i = 0;
+	kvm_pfn_t pfn;
+	gfn_t gfn;
+	int order;
+
+	if (IS_ERR(pages))
+		return -EFAULT;
+
+	end = addr + (npages << PAGE_SHIFT);
+	slots = kvm_memslots(kvm);
+	kvm_for_each_memslot_in_hva_range(node, slots, addr, end) {
+		slot = container_of(node, struct kvm_memory_slot,
+				    hva_node[slots->node_idx]);
+		slot_start = slot->userspace_addr;
+		slot_end = slot_start + (slot->npages << PAGE_SHIFT);
+		hva_start = max(addr, slot_start);
+		hva_end = min(end, slot_end);
+
+		for (uaddr = hva_start; uaddr < hva_end; uaddr += PAGE_SIZE) {
+			if (signal_pending(current)) {
+				ret = -ERESTARTSYS;
+				break;
+			}
+
+			if (need_resched())
+				cond_resched();
+
+			/*
+			 * Fault in the page and sev_pin_page() will handle the
+			 * pinning
+			 */
+			gfn = hva_to_gfn_memslot(uaddr, slot);
+			ret = kvm_private_mem_get_pfn(slot, gfn, &pfn, &order);
+			if (ret) {
+				pr_err("%s: Error uaddr %lx gfn %llx ret %d\n", __func__, uaddr, gfn, ret);
+				continue;
+			}
+			if (is_error_noslot_pfn(pfn)) {
+				ret = -EFAULT;
+				pr_err("%s: Error uaddr %lx gfn %llx pfn %llx\n", __func__, uaddr, gfn, pfn);
+				continue;
+			}
+			pages[i++] = pfn_to_page(pfn);
+		}
+	}
+
+	return ret;
+}
+
+static int sev_put_memfile_pfn(struct kvm *kvm, unsigned long addr,
+			       unsigned long size, unsigned long npages,
+			       struct page **pages)
+{
+	unsigned long hva_start, hva_end, uaddr, end, slot_start, slot_end;
+	struct interval_tree_node *node;
+	struct kvm_memory_slot *slot;
+	struct kvm_memslots *slots;
+	int ret = 0, i = 0;
+
+	if (IS_ERR(pages))
+		return -EFAULT;
+
+	end = addr + (npages << PAGE_SHIFT);
+	slots = kvm_memslots(kvm);
+	kvm_for_each_memslot_in_hva_range(node, slots, addr, end) {
+		slot = container_of(node, struct kvm_memory_slot,
+				    hva_node[slots->node_idx]);
+		slot_start = slot->userspace_addr;
+		slot_end = slot_start + (slot->npages << PAGE_SHIFT);
+		hva_start = max(addr, slot_start);
+		hva_end = min(end, slot_end);
+
+		for (uaddr = hva_start; uaddr < hva_end; uaddr += PAGE_SIZE) {
+			kvm_private_mem_put_pfn(slot, page_to_pfn(pages[i++]));
+		}
+	}
+
+	return ret;
+}
+
 static struct page **sev_pin_memory(struct kvm *kvm, unsigned long uaddr,
 				    unsigned long ulen, unsigned long *n,
 				    int write)
@@ -519,16 +612,25 @@ static struct page **sev_pin_memory(struct kvm *kvm, unsigned long uaddr,
 	if (!pages)
 		return ERR_PTR(-ENOMEM);
 
-	/* Pin the user virtual address. */
-	npinned = pin_user_pages_fast(uaddr, npages, write ? FOLL_WRITE : 0, pages);
-	if (npinned != npages) {
-		pr_err("SEV: Failure locking %lu pages.\n", npages);
-		ret = -ENOMEM;
-		goto err;
+	if (kvm_is_upm_enabled(kvm)) {
+		/* Get the PFN from memfile */
+		if (sev_get_memfile_pfn(kvm, uaddr, ulen, npages, pages)) {
+			pr_err("%s: ERROR: unable to find slot for uaddr %lx", __func__, uaddr);
+			ret = -ENOMEM;
+			goto err;
+		}
+	} else {
+		/* Pin the user virtual address. */
+		npinned = pin_user_pages_fast(uaddr, npages, write ? FOLL_WRITE : 0, pages);
+		if (npinned != npages) {
+			pr_err("SEV: Failure locking %lu pages.\n", npages);
+			ret = -ENOMEM;
+			goto err;
+		}
+		sev->pages_locked = locked;
 	}
 
 	*n = npages;
-	sev->pages_locked = locked;
 
 	return pages;
 
@@ -606,6 +708,7 @@ static int sev_launch_update_data(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	vaddr = params.uaddr;
 	size = params.len;
 	vaddr_end = vaddr + size;
+	WARN_ON(size < PAGE_SIZE);
 
 	/* Lock the user memory. */
 	inpages = sev_pin_memory(kvm, vaddr, size, &npages, 1);
@@ -616,7 +719,8 @@ static int sev_launch_update_data(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	 * Flush (on non-coherent CPUs) before LAUNCH_UPDATE encrypts pages in
 	 * place; the cache may contain the data that was written unencrypted.
 	 */
-	sev_clflush_pages(inpages, npages);
+	if (!kvm_is_upm_enabled(kvm))
+		sev_clflush_pages(inpages, npages);
 
 	data.reserved = 0;
 	data.handle = sev->handle;
@@ -638,21 +742,28 @@ static int sev_launch_update_data(struct kvm *kvm, struct kvm_sev_cmd *argp)
 		data.len = len;
 		data.address = __sme_page_pa(inpages[i]) + offset;
 		ret = sev_issue_cmd(kvm, SEV_CMD_LAUNCH_UPDATE_DATA, &data, &argp->error);
-		if (ret)
+		if (ret) {
+			pr_err("%s: error page_num %lu addr %llx len %x\n", __func__, i, data.address, data.len);
 			goto e_unpin;
+		}
 
 		size -= len;
 		next_vaddr = vaddr + len;
 	}
 
 e_unpin:
-	/* content of memory is updated, mark pages dirty */
-	for (i = 0; i < npages; i++) {
-		set_page_dirty_lock(inpages[i]);
-		mark_page_accessed(inpages[i]);
+	if (kvm_is_upm_enabled(kvm)) {
+		sev_put_memfile_pfn(kvm, params.uaddr, params.len, npages, inpages);
+	} else {
+		/* content of memory is updated, mark pages dirty */
+		for (i = 0; i < npages; i++) {
+			set_page_dirty_lock(inpages[i]);
+			mark_page_accessed(inpages[i]);
+		}
+		/* unlock the user pages */
+		sev_unpin_memory(kvm, inpages, npages);
 	}
-	/* unlock the user pages */
-	sev_unpin_memory(kvm, inpages, npages);
+
 	return ret;
 }
 
@@ -2373,6 +2484,10 @@ int sev_mem_enc_register_region(struct kvm *kvm,
 
 	if (!sev_guest(kvm))
 		return -ENOTTY;
+
+	/* With UPM do not pin the pages */
+	if (kvm_is_upm_enabled(kvm))
+		return ret;
 
 	/* If kvm is mirroring encryption context it isn't responsible for it */
 	if (is_mirroring_enc_context(kvm))
