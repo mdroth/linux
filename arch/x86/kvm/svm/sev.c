@@ -461,9 +461,45 @@ e_free_dh:
 	return ret;
 }
 
+static int sev_private_mem_get_pages_handler(struct kvm *kvm, struct kvm_gfn_range *range,
+					     void *data)
+{
+	struct kvm_memory_slot *memslot = range->slot;
+	struct page **pages = data;
+	int ret = 0, i = 0;
+	kvm_pfn_t pfn;
+	gfn_t gfn;
+
+	for (gfn = range->start; gfn < range->end; gfn++) {
+		int order;
+
+		ret = kvm_gmem_get_pfn(kvm, memslot, gfn, &pfn, &order);
+		if (ret)
+			return ret;
+
+		if (is_error_noslot_pfn(pfn))
+			return -EFAULT;
+
+		pages[i++] = pfn_to_page(pfn);
+	}
+
+	return ret;
+}
+
+static int sev_private_mem_get_pages(struct kvm *kvm, unsigned long addr,
+				     unsigned long size, unsigned long npages,
+				     struct page **pages)
+{
+	return kvm_vm_do_hva_range_op(kvm, addr, addr + size,
+				      sev_private_mem_get_pages_handler, pages);
+}
+
 /*
  * Legacy SEV guest pin the pages and return the array populated with pinned
  * pages.
+ *
+ * SEV guests using gmem pages are already marked as unmovable and unevictable.
+ * Populate the pages array for these guests using the gmem PFN.
  */
 static struct page **sev_memory_get_pages(struct kvm *kvm, unsigned long uaddr,
 					  unsigned long ulen, unsigned long *n,
@@ -471,7 +507,7 @@ static struct page **sev_memory_get_pages(struct kvm *kvm, unsigned long uaddr,
 {
 	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
 	unsigned long npages, size;
-	int npinned;
+	int npinned = 0;
 	unsigned long locked, lock_limit;
 	struct page **pages;
 	unsigned long first, last;
@@ -507,16 +543,25 @@ static struct page **sev_memory_get_pages(struct kvm *kvm, unsigned long uaddr,
 	if (!pages)
 		return ERR_PTR(-ENOMEM);
 
-	/* Pin the user virtual address. */
-	npinned = pin_user_pages_fast(uaddr, npages, write ? FOLL_WRITE : 0, pages);
-	if (npinned != npages) {
-		pr_err("SEV: Failure locking %lu pages.\n", npages);
-		ret = -ENOMEM;
-		goto err;
+	if (kvm_arch_has_private_mem(kvm)) {
+		/* Get the PFN from memfile */
+		if (sev_private_mem_get_pages(kvm, uaddr, ulen, npages, pages)) {
+			pr_err("%s: ERROR: unable to find slot for uaddr %lx", __func__, uaddr);
+			ret = -ENOMEM;
+			goto err;
+		}
+	} else {
+		/* Pin the user virtual address. */
+		npinned = pin_user_pages_fast(uaddr, npages, write ? FOLL_WRITE : 0, pages);
+		if (npinned != npages) {
+			pr_err("SEV: Failure locking %lu pages.\n", npages);
+			ret = -ENOMEM;
+			goto err;
+		}
+		sev->pages_locked = locked;
 	}
 
 	*n = npages;
-	sev->pages_locked = locked;
 
 	return pages;
 
@@ -533,9 +578,11 @@ static void sev_memory_put_pages(struct kvm *kvm, struct page **pages,
 {
 	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
 
-	unpin_user_pages(pages, npages);
+	if (!kvm_arch_has_private_mem(kvm)) {
+		unpin_user_pages(pages, npages);
+		sev->pages_locked -= npages;
+	}
 	kvfree(pages);
-	sev->pages_locked -= npages;
 }
 
 static void sev_clflush_pages(struct page *pages[], unsigned long npages)
