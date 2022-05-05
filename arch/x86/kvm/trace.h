@@ -1841,6 +1841,27 @@ TRACE_EVENT(kvm_sev_es_unmap_ghcb,
 		  __entry->ghcb_sa0, __entry->ghcb_sa1)
 );
 
+TRACE_EVENT(
+	kvm_sev_track_upm,
+	TP_PROTO(u64 gfn, u64 npages, bool private),
+	TP_ARGS(gfn, npages, private),
+
+	TP_STRUCT__entry(
+		__field(u64, gfn)
+		__field(u64, npages)
+		__field(bool, private)
+		),
+
+	TP_fast_assign(
+		__entry->gfn = gfn;
+		__entry->npages = npages;
+		__entry->private = private;
+		),
+
+	TP_printk("%s: gfn %llx npages %llx", __entry->private ? "private" : "shared",
+		  __entry->gfn,	__entry->npages)
+);
+
 #endif /* _TRACE_KVM_H */
 
 #undef TRACE_INCLUDE_PATH

@@ -4742,6 +4742,8 @@ bool sev_update_gpa_range(struct kvm_vcpu *vcpu, gfn_t gfn, unsigned long npages
 		/* Private to shared */
 		bitmap_set(aslot->shared_bitmap, rel_gfn, npages);
 	}
+
+	trace_kvm_sev_track_upm(gfn, npages, op ? true : false);
 exit:
 	mutex_unlock(&kvm->slots_arch_lock);
 	return ret;
