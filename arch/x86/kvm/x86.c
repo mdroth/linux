@@ -9320,6 +9320,11 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 			break;
 		}
 
+		if (!static_call(kvm_x86_update_gpa_range)(vcpu, gpa_to_gfn(gpa), npages, attrs)) {
+			ret = 0;
+			break;
+		}
+
 		vcpu->run->exit_reason        = KVM_EXIT_HYPERCALL;
 		vcpu->run->hypercall.nr       = KVM_HC_MAP_GPA_RANGE;
 		vcpu->run->hypercall.args[0]  = gpa;

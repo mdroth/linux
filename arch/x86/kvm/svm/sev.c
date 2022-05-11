@@ -4566,3 +4566,68 @@ int sev_alloc_memslot_metadata(struct kvm *kvm,
 
 	return 0;
 }
+
+/* TODO: maybe this should return something like PF_RT_USER/HANDLED/CONTINUE */
+bool sev_update_gpa_range(struct kvm_vcpu *vcpu, gfn_t gfn, unsigned long npages, unsigned long op)
+{
+	struct kvm_arch_memory_slot *aslot;
+	struct kvm_memory_slot *slot;
+	struct kvm *kvm = vcpu->kvm;
+	gfn_t rel_gfn;
+	bool ret = true;
+
+	/*
+	 * TODO: Return true to fall through to other potential GPA_MAP_RANGE
+	 * handlers. This is mainly to handle private memfd self-tests, where
+	 * the range tracking happens elsewhere, but maybe this functionality
+	 * is common enough that the range tracking for SEV/TDX and other
+	 * guests test types can use common bitmap/region lists.
+	 */
+	if (!sev_guest(vcpu->kvm))
+		return true;
+
+	if (!kvm->arch.upm_mode)
+		return true;
+
+	slot = kvm_vcpu_gfn_to_memslot(vcpu, gfn);
+	if (!slot) {
+		pr_err("%s: memslot not found for gfn %llx, pages %lx, op %lx\n",
+		       __func__, gfn, npages, op);
+		return false;
+	}
+
+	if (!kvm_slot_is_private(slot))
+		return false;
+
+	mutex_lock(&kvm->slots_arch_lock);
+	aslot = &slot->arch;
+	rel_gfn = gfn - slot->base_gfn;
+	if (!aslot->shared_bitmap) {
+		pr_err("%s: memslot shared bitmap not found for base_gfn %llx, pages %lx\n",
+		       __func__, slot->base_gfn, slot->npages);
+		ret = false;
+		goto exit;
+	}
+
+	/* Set or clean the bitmap depending on the HC parameters */
+	if (op) {
+		/*
+		 * Check if pages are already private. During SEV guest boot
+		 * full RAM conversion hypercall is sent. As all the pages start
+		 * as private, there is no reason alter the bitmap.
+		 */
+#if 0
+		if (find_next_bit(aslot->shared_bitmap, npages, rel_gfn) < npages)
+			bitmap_clear(aslot->shared_bitmap, rel_gfn, npages);
+		else
+			ret = false;
+#endif
+		bitmap_clear(aslot->shared_bitmap, rel_gfn, npages);
+	} else {
+		/* Private to shared */
+		bitmap_set(aslot->shared_bitmap, rel_gfn, npages);
+	}
+exit:
+	mutex_unlock(&kvm->slots_arch_lock);
+	return ret;
+}

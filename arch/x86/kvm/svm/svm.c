@@ -4811,6 +4811,7 @@ static struct kvm_x86_ops svm_x86_ops __initdata = {
 
 	.alloc_memslot_metadata = sev_alloc_memslot_metadata,
 	.free_memslot = sev_free_memslot,
+	.update_gpa_range = sev_update_gpa_range,
 };
 
 /*
