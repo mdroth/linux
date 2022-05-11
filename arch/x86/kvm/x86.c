@@ -9692,6 +9692,7 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 	case KVM_HC_MAP_GPA_RANGE: {
 		u64 gpa = a0, npages = a1, attrs = a2;
 		bool exit_to_userspace = true;
+		struct kvm_memory_slot *slot;
 		gfn_t gfn;
 
 		ret = -KVM_ENOSYS;
@@ -9699,6 +9700,7 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 			break;
 
 		gfn = gpa_to_gfn(gpa);
+		//FIXME: Subtle change "<=" => "<"
 		if (!PAGE_ALIGNED(gpa) || (gfn + npages < gfn) || !npages) {
 			ret = -KVM_EINVAL;
 			break;
@@ -9720,6 +9722,13 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 #endif
 		if (!exit_to_userspace)
 			break;
+
+		slot = kvm_vcpu_gfn_to_memslot(vcpu, gfn);
+		if (!vcpu->kvm->arch.upm_mode ||
+		    !kvm_slot_can_be_private(slot)) {
+			ret = 0;
+			break;
+		}
 
 		vcpu->run->exit_reason        = KVM_EXIT_HYPERCALL;
 		vcpu->run->hypercall.nr       = KVM_HC_MAP_GPA_RANGE;
