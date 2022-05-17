@@ -1255,25 +1255,27 @@ static ssize_t branches_show(struct device *cdev,
 	return snprintf(buf, PAGE_SIZE, "%d\n", x86_pmu.lbr_nr);
 }
 
+/* For BRS and LBR */
 static DEVICE_ATTR_RO(branches);
 
-static struct attribute *amd_pmu_brs_attrs[] = {
+static struct attribute *amd_pmu_lbr_attrs[] = {
 	&dev_attr_branches.attr,
 	NULL,
 };
 
 static umode_t
-amd_brs_is_visible(struct kobject *kobj, struct attribute *attr, int i)
+amd_lbr_is_visible(struct kobject *kobj, struct attribute *attr, int i)
 {
 	return x86_pmu.lbr_nr ? attr->mode : 0;
 }
 
 static struct attribute_group group_caps_amd_brs = {
 	.name  = "caps",
-	.attrs = amd_pmu_brs_attrs,
-	.is_visible = amd_brs_is_visible,
+	.attrs = amd_pmu_lbr_attrs,
+	.is_visible = amd_lbr_is_visible,
 };
 
+/* For BRS only */
 EVENT_ATTR_STR(branch-brs, amd_branch_brs,
 	       "event=" __stringify(AMD_FAM19H_BRS_EVENT)"\n");
 
@@ -1281,6 +1283,13 @@ static struct attribute *amd_brs_events_attrs[] = {
 	EVENT_PTR(amd_branch_brs),
 	NULL,
 };
+
+static umode_t
+amd_brs_is_visible(struct kobject *kobj, struct attribute *attr, int i)
+{
+	return static_cpu_has(X86_FEATURE_BRS) && x86_pmu.lbr_nr ?
+	       attr->mode : 0;
+}
 
 static struct attribute_group group_events_amd_brs = {
 	.name       = "events",
