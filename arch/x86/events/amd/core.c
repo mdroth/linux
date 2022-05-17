@@ -330,16 +330,10 @@ static inline bool amd_is_pair_event_code(struct hw_perf_event *hwc)
 	}
 }
 
-#define AMD_FAM19H_BRS_EVENT 0xc4 /* RETIRED_TAKEN_BRANCH_INSTRUCTIONS */
-static inline int amd_is_brs_event(struct perf_event *e)
-{
-	return (e->hw.config & AMD64_RAW_EVENT_MASK) == AMD_FAM19H_BRS_EVENT;
-}
+DEFINE_STATIC_CALL_RET0(amd_pmu_branch_hw_config, *x86_pmu.hw_config);
 
 static int amd_core_hw_config(struct perf_event *event)
 {
-	int ret = 0;
-
 	if (event->attr.exclude_host && event->attr.exclude_guest)
 		/*
 		 * When HO == GO == 1 the hardware treats that as GO == HO == 0
@@ -359,63 +353,10 @@ static int amd_core_hw_config(struct perf_event *event)
 	/*
 	 * if branch stack is requested
 	 */
-	if (has_branch_stack(event)) {
-		/*
-		 * Due to interrupt holding, BRS is not recommended in
-		 * counting mode.
-		 */
-		if (!is_sampling_event(event))
-			return -EINVAL;
+	if (has_branch_stack(event))
+		return static_call(amd_pmu_branch_hw_config)(event);
 
-		/*
-		 * Due to the way BRS operates by holding the interrupt until
-		 * lbr_nr entries have been captured, it does not make sense
-		 * to allow sampling on BRS with an event that does not match
-		 * what BRS is capturing, i.e., retired taken branches.
-		 * Otherwise the correlation with the event's period is even
-		 * more loose:
-		 *
-		 * With retired taken branch:
-		 *   Effective P = P + 16 + X
-		 * With any other event:
-		 *   Effective P = P + Y + X
-		 *
-		 * Where X is the number of taken branches due to interrupt
-		 * skid. Skid is large.
-		 *
-		 * Where Y is the occurences of the event while BRS is
-		 * capturing the lbr_nr entries.
-		 *
-		 * By using retired taken branches, we limit the impact on the
-		 * Y variable. We know it cannot be more than the depth of
-		 * BRS.
-		 */
-		if (!amd_is_brs_event(event))
-			return -EINVAL;
-
-		/*
-		 * BRS implementation does not work with frequency mode
-		 * reprogramming of the period.
-		 */
-		if (event->attr.freq)
-			return -EINVAL;
-		/*
-		 * The kernel subtracts BRS depth from period, so it must
-		 * be big enough.
-		 */
-		if (event->attr.sample_period <= x86_pmu.lbr_nr)
-			return -EINVAL;
-
-		/*
-		 * Check if we can allow PERF_SAMPLE_BRANCH_STACK
-		 */
-		ret = amd_brs_setup_filter(event);
-
-		/* only set in case of success */
-		if (!ret)
-			event->hw.flags |= PERF_X86_EVENT_AMD_BRS;
-	}
-	return ret;
+	return 0;
 }
 
 static inline int amd_is_nb_event(struct hw_perf_event *hwc)
@@ -582,8 +523,14 @@ static struct amd_nb *amd_alloc_nb(int cpu)
 	return nb;
 }
 
-static void amd_pmu_cpu_reset(int cpu)
+typedef void (amd_pmu_branch_reset_t)(void);
+DEFINE_STATIC_CALL_NULL(amd_pmu_branch_reset, amd_pmu_branch_reset_t);
+
+static void amd_pmu_cpu_reset(void)
 {
+	if (x86_pmu.lbr_nr)
+		static_call(amd_pmu_branch_reset)();
+
 	if (x86_pmu.version < 2)
 		return;
 
@@ -640,8 +587,7 @@ static void amd_pmu_cpu_starting(int cpu)
 	cpuc->amd_nb->nb_id = nb_id;
 	cpuc->amd_nb->refcnt++;
 
-	amd_brs_reset();
-	amd_pmu_cpu_reset(cpu);
+	amd_pmu_cpu_reset();
 }
 
 static void amd_pmu_cpu_dead(int cpu)
@@ -662,7 +608,7 @@ static void amd_pmu_cpu_dead(int cpu)
 		cpuhw->amd_nb = NULL;
 	}
 
-	amd_pmu_cpu_reset(cpu);
+	amd_pmu_cpu_reset();
 }
 
 static inline void amd_pmu_set_global_ctl(u64 ctl)
@@ -838,16 +784,20 @@ static void amd_pmu_v2_disable_all(void)
 	amd_pmu_check_overflow();
 }
 
+DEFINE_STATIC_CALL_NULL(amd_pmu_branch_add, *x86_pmu.add);
+
 static void amd_pmu_add_event(struct perf_event *event)
 {
 	if (needs_branch_stack(event))
-		amd_pmu_brs_add(event);
+		static_call(amd_pmu_branch_add)(event);
 }
+
+DEFINE_STATIC_CALL_NULL(amd_pmu_branch_del, *x86_pmu.del);
 
 static void amd_pmu_del_event(struct perf_event *event)
 {
 	if (needs_branch_stack(event))
-		amd_pmu_brs_del(event);
+		static_call(amd_pmu_branch_del)(event);
 }
 
 /*
@@ -1251,13 +1201,6 @@ static ssize_t amd_event_sysfs_show(char *page, u64 config)
 	return x86_event_sysfs_show(page, config, event);
 }
 
-static void amd_pmu_sched_task(struct perf_event_context *ctx,
-				 bool sched_in)
-{
-	if (sched_in && x86_pmu.lbr_nr)
-		amd_pmu_brs_sched_task(ctx, sched_in);
-}
-
 static u64 amd_pmu_limit_period(struct perf_event *event, u64 left)
 {
 	/*
@@ -1429,8 +1372,12 @@ static int __init amd_core_pmu_init(void)
 	 */
 	if (boot_cpu_data.x86 >= 0x19 && !amd_brs_init()) {
 		x86_pmu.get_event_constraints = amd_get_event_constraints_f19h;
-		x86_pmu.sched_task = amd_pmu_sched_task;
+		x86_pmu.sched_task = amd_pmu_brs_sched_task;
 		x86_pmu.limit_period = amd_pmu_limit_period;
+		static_call_update(amd_pmu_branch_hw_config, amd_brs_hw_config);
+		static_call_update(amd_pmu_branch_reset, amd_brs_reset);
+		static_call_update(amd_pmu_branch_add, amd_pmu_brs_add);
+		static_call_update(amd_pmu_branch_del, amd_pmu_brs_del);
 		/*
 		 * put_event_constraints callback same as Fam17h, set above
 		 */
