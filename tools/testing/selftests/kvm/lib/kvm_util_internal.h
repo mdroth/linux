@@ -53,6 +53,11 @@ struct vm_memcrypt {
 	int8_t enc_bit;
 };
 
+struct pgt_page {
+	vm_paddr_t paddr;
+	struct list_head list;
+};
+
 struct kvm_vm {
 	int mode;
 	unsigned long type;
@@ -77,6 +82,10 @@ struct kvm_vm {
 	vm_vaddr_t handlers;
 	uint32_t dirty_ring_size;
 	struct vm_memcrypt memcrypt;
+	struct list_head pgt_pages;
+	bool track_pgt_pages;
+	uint32_t num_pgt_pages;
+	vm_vaddr_t pgt_vaddr_start;
 };
 
 struct vcpu *vcpu_find(struct kvm_vm *vm, uint32_t vcpuid);

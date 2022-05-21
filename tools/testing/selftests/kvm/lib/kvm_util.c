@@ -264,6 +264,7 @@ struct kvm_vm *vm_create(enum vm_guest_mode mode, uint64_t phy_pages, int perm)
 	TEST_ASSERT(vm != NULL, "Insufficient Memory");
 
 	INIT_LIST_HEAD(&vm->vcpus);
+	INIT_LIST_HEAD(&vm->pgt_pages);
 	vm->regions.gpa_tree = RB_ROOT;
 	vm->regions.hva_tree = RB_ROOT;
 	hash_init(vm->regions.slot_hash);
@@ -700,6 +701,7 @@ void kvm_vm_free(struct kvm_vm *vmp)
 {
 	int ctr;
 	struct hlist_node *node;
+	struct pgt_page *entry, *nentry;
 	struct userspace_mem_region *region;
 
 	if (vmp == NULL)
@@ -708,6 +710,9 @@ void kvm_vm_free(struct kvm_vm *vmp)
 	/* Free userspace_mem_regions. */
 	hash_for_each_safe(vmp->regions.slot_hash, ctr, node, region, slot_node)
 		__vm_mem_region_delete(vmp, region, false);
+
+	list_for_each_entry_safe(entry, nentry, &vmp->pgt_pages, list)
+		free(entry);
 
 	/* Free sparsebit arrays. */
 	sparsebit_free(&vmp->vpages_valid);
@@ -1325,9 +1330,25 @@ vm_paddr_t vm_phy_page_alloc(struct kvm_vm *vm, vm_paddr_t paddr_min,
 /* Arbitrary minimum physical address used for virtual translation tables. */
 #define KVM_GUEST_PAGE_TABLE_MIN_PADDR 0x180000
 
+void vm_set_pgt_alloc_tracking(struct kvm_vm *vm)
+{
+	vm->track_pgt_pages = true;
+}
+
 vm_paddr_t vm_alloc_page_table(struct kvm_vm *vm)
 {
-	return vm_phy_page_alloc(vm, KVM_GUEST_PAGE_TABLE_MIN_PADDR, 0);
+	struct pgt_page *pgt;
+	vm_paddr_t paddr = vm_phy_page_alloc(vm,
+			KVM_GUEST_PAGE_TABLE_MIN_PADDR, 0);
+
+	if (vm->track_pgt_pages) {
+		pgt = calloc(1, sizeof(*pgt));
+		TEST_ASSERT(pgt != NULL, "Insufficient memory");
+		pgt->paddr = addr_gpa2raw(vm, paddr);
+		list_add(&pgt->list, &vm->pgt_pages);
+		vm->num_pgt_pages++;
+	}
+	return paddr;
 }
 
 /*
@@ -1416,6 +1437,27 @@ va_found:
 	return pgidx_start * vm->page_size;
 }
 
+void vm_map_page_table(struct kvm_vm *vm, vm_vaddr_t vaddr_min)
+{
+	struct pgt_page *pgt_page_entry;
+	vm_vaddr_t vaddr;
+
+	/* Stop tracking further pgt pages, mapping pagetable may itself need
+	 * new pages.
+	 */
+	vm->track_pgt_pages = false;
+	vm_vaddr_t vaddr_start = vm_vaddr_unused_gap(vm,
+		vm->num_pgt_pages * vm->page_size, vaddr_min);
+	vaddr = vaddr_start;
+	list_for_each_entry(pgt_page_entry, &vm->pgt_pages, list) {
+		/* Map the virtual page. */
+		virt_pg_map(vm, vaddr, addr_raw2gpa(vm, pgt_page_entry->paddr));
+		sparsebit_set(vm->vpages_mapped, vaddr >> vm->page_shift);
+		vaddr += vm->page_size;
+	}
+	vm->pgt_vaddr_start = vaddr_start;
+}
+
 /*
  * VM Virtual Address Allocate Shared/Encrypted
  *
@@ -1473,6 +1515,43 @@ vm_vaddr_t vm_vaddr_alloc(struct kvm_vm *vm, size_t sz, vm_vaddr_t vaddr_min)
 vm_vaddr_t vm_vaddr_alloc_shared(struct kvm_vm *vm, size_t sz, vm_vaddr_t vaddr_min)
 {
 	return _vm_vaddr_alloc(vm, sz, vaddr_min, false);
+}
+
+void *guest_code_get_pgt_vaddr(struct guest_pgt_info *gpgt_info,
+		uint64_t pgt_pa)
+{
+	uint64_t num_pgt_pages = gpgt_info->num_pgt_pages;
+	uint64_t pgt_vaddr_start = gpgt_info->pgt_vaddr_start;
+	uint64_t page_size = gpgt_info->page_size;
+
+	for (uint32_t i = 0; i < num_pgt_pages; i++) {
+		if (gpgt_info->paddrs[i] == pgt_pa)
+			return (void *)(pgt_vaddr_start + i * page_size);
+	}
+	return NULL;
+}
+
+vm_vaddr_t vm_setup_pgt_info_buf(struct kvm_vm *vm, vm_vaddr_t vaddr_min)
+{
+	struct pgt_page *pgt_page_entry;
+	struct guest_pgt_info *gpgt_info;
+	uint64_t info_size = sizeof(*gpgt_info) +
+		(sizeof(uint64_t) * vm->num_pgt_pages);
+	uint64_t num_pages = align_up(info_size, vm->page_size);
+	vm_vaddr_t buf_start = vm_vaddr_alloc_shared(vm, num_pages, vaddr_min);
+	uint32_t i = 0;
+
+	gpgt_info = (struct guest_pgt_info *)addr_gva2hva(vm, buf_start);
+	gpgt_info->num_pgt_pages = vm->num_pgt_pages;
+	gpgt_info->pgt_vaddr_start = vm->pgt_vaddr_start;
+	gpgt_info->page_size = vm->page_size;
+	list_for_each_entry(pgt_page_entry, &vm->pgt_pages, list) {
+		gpgt_info->paddrs[i] = pgt_page_entry->paddr;
+		i++;
+	}
+	TEST_ASSERT((i == vm->num_pgt_pages),
+		"pgt entries mismatch with the counter");
+	return buf_start;
 }
 
 /*

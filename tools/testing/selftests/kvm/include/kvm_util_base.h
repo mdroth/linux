@@ -88,6 +88,23 @@ struct vm_guest_mode_params {
 	unsigned int page_size;
 	unsigned int page_shift;
 };
+
+/*
+ * Structure shared with the guest containing information about:
+ * - Starting virtual address for num_pgt_pages physical pagetable
+ *   page addresses tracked via paddrs array
+ * - page size of the guest
+ *
+ * Guest can walk through its pagetables using this information to
+ *   read/modify pagetable attributes.
+ */
+struct guest_pgt_info {
+	uint64_t num_pgt_pages;
+	uint64_t pgt_vaddr_start;
+	uint64_t page_size;
+	uint64_t paddrs[];
+};
+
 extern const struct vm_guest_mode_params vm_guest_mode_params[];
 
 int open_path_or_exit(const char *path, int flags);
@@ -156,6 +173,50 @@ void vm_mem_region_move(struct kvm_vm *vm, uint32_t slot, uint64_t new_gpa);
 void vm_mem_region_delete(struct kvm_vm *vm, uint32_t slot);
 void vm_vcpu_add(struct kvm_vm *vm, uint32_t vcpuid);
 vm_vaddr_t vm_vaddr_alloc(struct kvm_vm *vm, size_t sz, vm_vaddr_t vaddr_min);
+void vm_map_page_table(struct kvm_vm *vm, vm_vaddr_t vaddr_min);
+
+/*
+ * function called by guest code to translate physical address of a pagetable
+ * page to guest virtual address.
+ *
+ * input args:
+ *	gpgt_info - pointer to the guest_pgt_info structure containing info
+ *		about guest virtual address mappings for guest physical
+ *		addresses of page table pages.
+ *	pgt_pa - physical address of guest page table page to be translated
+ *		to a virtual address.
+ *
+ * output args: none
+ *
+ * return:
+ *	pointer to the pagetable page, null in case physical address
+ *	is not tracked via given guest_pgt_info structure.
+ */
+void *guest_code_get_pgt_vaddr(struct guest_pgt_info *gpgt_info,
+		uint64_t pgt_pa);
+
+/*
+ * Allocate and setup a page to be shared with guest containing
+ * guest_pgt_info structure.
+ *
+ * Note:
+ *	1) vm_set_pgt_alloc_tracking function should be used to
+ *	start tracking of physical page table page allocation.
+ *	2) This function should be invoked after needed pagetable
+ *	pages are mapped to the VM using virt_pg_map.
+ *
+ * input args:
+ *	vm - virtual machine
+ *	vaddr_min - Minimum guest virtual address to start mapping
+ *		the guest_pgt_info structure page(s).
+ *
+ * output args: none
+ *
+ * return:
+ *	virtual address mapping guest_pgt_info structure.
+ */
+vm_vaddr_t vm_setup_pgt_info_buf(struct kvm_vm *vm, vm_vaddr_t vaddr_min);
+
 vm_vaddr_t vm_vaddr_alloc_shared(struct kvm_vm *vm, size_t sz, vm_vaddr_t vaddr_min);
 vm_vaddr_t vm_vaddr_alloc_pages(struct kvm_vm *vm, int nr_pages);
 vm_vaddr_t vm_vaddr_alloc_page(struct kvm_vm *vm);
@@ -291,10 +352,47 @@ void virt_pgd_alloc(struct kvm_vm *vm);
  */
 void virt_pg_map(struct kvm_vm *vm, uint64_t vaddr, uint64_t paddr);
 
+#ifdef __x86_64__
+/*
+ * Guest called function to get a pointer to pte corresponding to a given
+ * guest virtual address and pointer to the guest_pgt_info structure.
+ *
+ * input args:
+ *	gpgt_info - pointer to guest_pgt_info structure containing
+ *		information about guest virtual addresses mapped to pagetable
+ *		physical addresses.
+ *	vaddr - guest virtual address
+ *
+ * output args: none
+ *
+ * return:
+ *	pointer to the pte corresponding to guest virtual address,
+ *	Null if pte is not found
+ */
+uint64_t *guest_code_get_pte(struct guest_pgt_info *gpgt_info,
+		uint64_t vaddr);
+#endif
+
 vm_paddr_t vm_phy_page_alloc(struct kvm_vm *vm, vm_paddr_t paddr_min,
 			     uint32_t memslot);
 vm_paddr_t vm_phy_pages_alloc(struct kvm_vm *vm, size_t num,
 			      vm_paddr_t paddr_min, uint32_t memslot);
+
+/*
+ * Enable tracking of physical guest pagetable pages for the given vm.
+ * This function should be called right after vm creation before any pages are
+ * mapped into the VM using vm_alloc_* / vm_vaddr_alloc* functions.
+ *
+ * input args:
+ *	vm - virtual machine
+ *
+ * output args: none
+ *
+ * return:
+ *	None
+ */
+void vm_set_pgt_alloc_tracking(struct kvm_vm *vm);
+
 vm_paddr_t vm_alloc_page_table(struct kvm_vm *vm);
 
 /*

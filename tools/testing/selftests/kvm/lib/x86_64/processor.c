@@ -284,6 +284,42 @@ void virt_pg_map(struct kvm_vm *vm, uint64_t vaddr, uint64_t paddr)
 	__virt_pg_map(vm, vaddr, paddr, X86_PAGE_SIZE_4K);
 }
 
+uint64_t *guest_code_get_pte(struct guest_pgt_info *gpgt_info,
+		uint64_t vaddr)
+{
+	uint16_t index[4];
+	struct pageUpperEntry *pml4e, *pdpe, *pde;
+	struct pageTableEntry *pte;
+	uint64_t pgt_paddr = get_cr3();
+	uint64_t page_size = gpgt_info->page_size;
+
+	index[0] = (vaddr >> 12) & 0x1ffu;
+	index[1] = (vaddr >> 21) & 0x1ffu;
+	index[2] = (vaddr >> 30) & 0x1ffu;
+	index[3] = (vaddr >> 39) & 0x1ffu;
+
+	pml4e = guest_code_get_pgt_vaddr(gpgt_info, pgt_paddr);
+	if (!pml4e || !pml4e[index[3]].present)
+		return NULL;
+
+	pgt_paddr = (pml4e[index[3]].pfn * page_size);
+	pdpe = guest_code_get_pgt_vaddr(gpgt_info, pgt_paddr);
+	if (!pdpe || !pdpe[index[2]].present || pdpe[index[2]].page_size)
+		return NULL;
+
+	pgt_paddr = (pdpe[index[2]].pfn * page_size);
+	pde = guest_code_get_pgt_vaddr(gpgt_info, pgt_paddr);
+	if (!pde || !pde[index[1]].present || pde[index[1]].page_size)
+		return NULL;
+
+	pgt_paddr = (pde[index[1]].pfn * page_size);
+	pte = guest_code_get_pgt_vaddr(gpgt_info, pgt_paddr);
+	if (!pte || !pte[index[0]].present)
+		return NULL;
+
+	return (uint64_t *)&pte[index[0]];
+}
+
 static struct pageTableEntry *_vm_get_page_table_entry(struct kvm_vm *vm, int vcpuid,
 						       uint64_t vaddr)
 {
