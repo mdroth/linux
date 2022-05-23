@@ -13,7 +13,9 @@
 #include "processor.h"
 #include "svm_util.h"
 
+#ifndef SEV_DEV_PATH
 #define SEV_DEV_PATH "/dev/sev"
+#endif
 
 struct gpr64_regs guest_regs;
 u64 rflags;
