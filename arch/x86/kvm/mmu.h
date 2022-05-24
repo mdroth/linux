@@ -165,6 +165,7 @@ struct kvm_page_fault {
 	/* arguments to kvm_mmu_do_page_fault.  */
 	const gpa_t addr;
 	const u32 error_code;
+	const u64 error_code_ext;
 	const bool prefetch;
 
 	/* Derived from error_code.  */
@@ -173,6 +174,8 @@ struct kvm_page_fault {
 	const bool present;
 	const bool rsvd;
 	const bool user;
+	const bool enc;
+	const bool rmp;
 
 	/* Derived from mmu and global state.  */
 	const bool is_tdp;
@@ -226,16 +229,19 @@ static inline bool is_nx_huge_page_enabled(void)
 bool kvm_mmu_get_tdp_walk(struct kvm_vcpu *vcpu, gpa_t gpa, kvm_pfn_t *pfn, int *level);
 
 static inline int kvm_mmu_do_page_fault(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa,
-					u32 err, bool prefetch)
+					u64 err, bool prefetch)
 {
 	struct kvm_page_fault fault = {
 		.addr = cr2_or_gpa,
-		.error_code = err,
+		.error_code = lower_32_bits(err),
+		.error_code_ext = err,
 		.exec = err & PFERR_FETCH_MASK,
 		.write = err & PFERR_WRITE_MASK,
 		.present = err & PFERR_PRESENT_MASK,
 		.rsvd = err & PFERR_RSVD_MASK,
 		.user = err & PFERR_USER_MASK,
+		.rmp = err & PFERR_GUEST_RMP_MASK,
+		.enc = err & PFERR_GUEST_ENC_MASK,
 		.prefetch = prefetch,
 		.is_tdp = likely(vcpu->arch.mmu->page_fault == kvm_tdp_page_fault),
 		.nx_huge_page_workaround_enabled = is_nx_huge_page_enabled(),
@@ -252,7 +258,7 @@ static inline int kvm_mmu_do_page_fault(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa,
 }
 
 kvm_pfn_t kvm_mmu_map_tdp_page(struct kvm_vcpu *vcpu, gpa_t gpa,
-			       u32 error_code, int max_level);
+			       u64 error_code, int max_level);
 
 /*
  * Check if a given access (described through the I/D, W/R and U/S bits of a
