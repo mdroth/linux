@@ -3722,6 +3722,36 @@ out:
 	return rc ? map_to_psc_vmgexit_code(rc) : 0;
 }
 
+/*
+ * TODO: need to process the GHCB contents and report the proper error code
+ * instead of assuming success.
+ */
+static int snp_complete_psc(struct kvm_vcpu *vcpu)
+{
+	svm_set_ghcb_sw_exit_info_2(vcpu, 0);
+
+	return 1;
+}
+
+/*
+ * TODO: need to get the value set by userspace in vcpu->run->vmgexit.ghcb_msr
+ * and process that here accordingly. But for now userspace treats these as
+ * no-ops so fake a success response and let the RMP fault handle the PSC later
+ * as an implicit PSC.
+ */
+static int snp_complete_psc_msr_protocol(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+
+	set_ghcb_msr_bits(svm, 0,
+			  GHCB_MSR_PSC_ERROR_MASK, GHCB_MSR_PSC_ERROR_POS);
+
+	set_ghcb_msr_bits(svm, 0, GHCB_MSR_PSC_RSVD_MASK, GHCB_MSR_PSC_RSVD_POS);
+	set_ghcb_msr_bits(svm, GHCB_MSR_PSC_RESP, GHCB_MSR_INFO_MASK, GHCB_MSR_INFO_POS);
+
+	return 1; /* resume */
+}
+
 static unsigned long snp_setup_guest_buf(struct vcpu_svm *svm,
 					 struct sev_data_snp_guest_request *data,
 					 gpa_t req_gpa, gpa_t resp_gpa)
@@ -4144,24 +4174,33 @@ static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
 		break;
 	}
 	case GHCB_MSR_PSC_REQ: {
-		gfn_t gfn;
-		int ret;
-		enum psc_op op;
+		if (kvm_is_upm_enabled(vcpu->kvm)) {
+			vcpu->run->exit_reason = KVM_EXIT_VMGEXIT;
+			vcpu->run->vmgexit.ghcb_msr = control->ghcb_gpa;
+			vcpu->arch.complete_userspace_io = snp_complete_psc_msr_protocol;
 
-		gfn = get_ghcb_msr_bits(svm, GHCB_MSR_PSC_GFN_MASK, GHCB_MSR_PSC_GFN_POS);
-		op = get_ghcb_msr_bits(svm, GHCB_MSR_PSC_OP_MASK, GHCB_MSR_PSC_OP_POS);
+			ret = -1;
+		} else {
+			gfn_t gfn;
+			int ret;
+			enum psc_op op;
 
-		ret = __snp_handle_page_state_change(vcpu, op, gfn_to_gpa(gfn), PG_LEVEL_4K);
 
-		if (ret)
-			set_ghcb_msr_bits(svm, GHCB_MSR_PSC_ERROR,
-					  GHCB_MSR_PSC_ERROR_MASK, GHCB_MSR_PSC_ERROR_POS);
-		else
-			set_ghcb_msr_bits(svm, 0,
-					  GHCB_MSR_PSC_ERROR_MASK, GHCB_MSR_PSC_ERROR_POS);
+			gfn = get_ghcb_msr_bits(svm, GHCB_MSR_PSC_GFN_MASK, GHCB_MSR_PSC_GFN_POS);
+			op = get_ghcb_msr_bits(svm, GHCB_MSR_PSC_OP_MASK, GHCB_MSR_PSC_OP_POS);
 
-		set_ghcb_msr_bits(svm, 0, GHCB_MSR_PSC_RSVD_MASK, GHCB_MSR_PSC_RSVD_POS);
-		set_ghcb_msr_bits(svm, GHCB_MSR_PSC_RESP, GHCB_MSR_INFO_MASK, GHCB_MSR_INFO_POS);
+			ret = __snp_handle_page_state_change(vcpu, op, gfn_to_gpa(gfn), PG_LEVEL_4K);
+
+			if (ret)
+				set_ghcb_msr_bits(svm, GHCB_MSR_PSC_ERROR,
+						  GHCB_MSR_PSC_ERROR_MASK, GHCB_MSR_PSC_ERROR_POS);
+			else
+				set_ghcb_msr_bits(svm, 0,
+						  GHCB_MSR_PSC_ERROR_MASK, GHCB_MSR_PSC_ERROR_POS);
+
+			set_ghcb_msr_bits(svm, 0, GHCB_MSR_PSC_RSVD_MASK, GHCB_MSR_PSC_RSVD_POS);
+			set_ghcb_msr_bits(svm, GHCB_MSR_PSC_RESP, GHCB_MSR_INFO_MASK, GHCB_MSR_INFO_POS);
+		}
 		break;
 	}
 	case GHCB_MSR_TERM_REQ: {
@@ -4285,12 +4324,19 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 		break;
 	}
 	case SVM_VMGEXIT_PSC: {
-		unsigned long rc;
+		/* Let userspace handling allocating/deallocating backing pages. */
+		if (kvm_is_upm_enabled(vcpu->kvm)) {
+			vcpu->run->exit_reason = KVM_EXIT_VMGEXIT;
+			vcpu->run->vmgexit.ghcb_msr = ghcb_gpa;
+			vcpu->arch.complete_userspace_io = snp_complete_psc;
+		} else {
+			unsigned long rc;
 
-		ret = 1;
+			ret = 1;
 
-		rc = snp_handle_page_state_change(svm);
-		svm_set_ghcb_sw_exit_info_2(vcpu, rc);
+			rc = snp_handle_page_state_change(svm);
+			svm_set_ghcb_sw_exit_info_2(vcpu, rc);
+		}
 		break;
 	}
 	case SVM_VMGEXIT_GUEST_REQUEST: {
