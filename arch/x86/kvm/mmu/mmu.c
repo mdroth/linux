@@ -7251,4 +7251,17 @@ void kvm_arch_set_memory_attributes(struct kvm *kvm,
 		linfo_update_mixed(gfn, slot, level, mixed);
 	}
 }
+
+void kvm_arch_post_set_memory_attributes(struct kvm *kvm,
+					 struct kvm_memory_slot *slot,
+					 unsigned long attrs,
+					 gfn_t start, gfn_t end)
+{
+	int ret;
+
+	ret = static_call(kvm_x86_update_mem_attr)(slot, attrs, start, end);
+	if (ret)
+		pr_warn_ratelimited("Failed to update GFN range 0x%llx-0x%llx with attributes 0x%lx. Ret: %d\n",
+				    start, end, attrs, ret);
+}
 #endif
