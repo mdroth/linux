@@ -4813,6 +4813,7 @@ static struct kvm_x86_ops svm_x86_ops __initdata = {
 	.free_memslot = sev_free_memslot,
 	.update_gpa_range = sev_update_gpa_range,
 	.fault_is_private = sev_fault_is_private,
+	.rmp_update = sev_snp_rmp_update,
 };
 
 /*

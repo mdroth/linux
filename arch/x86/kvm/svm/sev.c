@@ -4792,3 +4792,94 @@ out_unlock:
 out:
 	return private ? 1 : 0;
 }
+
+int sev_snp_rmp_update(struct kvm *kvm, struct kvm_gfn_range *gfn_range, bool private_to_shared,
+		       unsigned long pfn_start)
+{
+	gfn_t gfn = gfn_range->start;
+	enum psc_op op = private_to_shared ? SNP_PAGE_STATE_SHARED : SNP_PAGE_STATE_PRIVATE;
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	unsigned long pfn;
+
+	/* TODO: SEV/SEV-ES may need some handling too, clflush etc. */
+	if (!sev_snp_guest(kvm))
+		return 0;
+
+	/*
+	 * TODO: this code relies on invalidation/fallocates being contiguous
+	 * both for the GFN range as well as the PFN range. That seems to be
+	 * true for memfd notifier events at folio-granularity, but is it safe
+	 * to rely on this?
+	 *
+	 * TODO: we don't even have handling for anything greater than pfn_start,
+	 * I guess notifications are being delivered per-page. Since it's working,
+	 * leave it be, but add a warning since this is likely to change at some
+	 * point.
+	 */
+	pfn = pfn_start;
+
+	if ((gfn_range->end - gfn_range->start) > 1)
+		pr_warn_ratelimited("sev_snp_rmp_update called for more than 1 page\n");
+
+	/*
+	 * TODO: for now we assume 4K, but userspace should have a way to hint
+	 * 2M. We could try automatically if range is > 2M, but that requires
+	 * userspace not do any batching of individual PSC requests. Ideally
+	 * there'd be a way to provide the page size, so that constraint can
+	 * be relaxed so userspace can optimize/batch fallocate in either case.
+	 */
+	while (gfn < gfn_range->end) {
+		int rc;
+		struct kvm_memory_slot *slot;
+		int level = PG_LEVEL_4K;
+		gpa_t gpa = gfn << PAGE_SHIFT;
+
+		slot = gfn_to_memslot(kvm, gfn);
+		if (!kvm_slot_is_private(slot)) {
+			pr_err("SEV: RMP update callback for private FD, gfn: 0x%llx, but slot is not private.\n", gfn);
+			return -1;
+		}
+
+		/*
+		 * TODO: ideally we'd go ahead and map the new PFN into TDP, but
+		 * callback is not per-vcpu, is there some alternative?
+		 *
+		 * For now just grab the PFN from memslot/private FD and let the
+		 * guest fault it in after exit. Previously SNP implementation
+		 * didn't rely on this so check performance and address if it's
+		 * an issue.
+		 *
+		 * For private_to_shared, the private PFN is still locked by
+		 * memfile notifier caller, and that's what needs to be
+		 * rmpupdated, so can't use kvm_memfile_get_pfn().
+		 *
+		 * For !private_to_shared, the shared PFN may or may not have
+		 * been deallocated by userspace already. That's okay, because
+		 * it's already hypervisor-owned. We want the new private PFN
+		 * that's just been allocated.
+		 *
+		 * So in both cases, we expect the PFN to be available via
+		 * kvm_memfile_get_pfn(), and perform the rmpupdate on that.
+		 */
+		switch (op) {
+		case SNP_PAGE_STATE_SHARED:
+			rc = snp_make_page_shared(kvm, gpa, pfn, level);
+			break;
+		case SNP_PAGE_STATE_PRIVATE:
+			rc = rmp_make_private(pfn, gpa, level, sev->asid, false);
+			break;
+		default:
+			rc = PSC_INVALID_ENTRY;
+			break;
+		}
+
+		if (rc) {
+			pr_err_ratelimited("Error op %d gpa %llx pfn %lx level %d rc %d\n",
+					   op, gpa, pfn, level, rc);
+			return -1;
+		}
+		gfn++;
+	}
+
+	return 0;
+}

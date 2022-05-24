@@ -727,6 +727,8 @@ void sev_snp_init_protected_guest_state(struct kvm_vcpu *vcpu);
 int sev_snp_update_protected_guest_state(struct kvm_vcpu *vcpu);
 bool sev_update_gpa_range(struct kvm_vcpu *vcpu, gfn_t gfn, unsigned long npages, unsigned long op);
 int sev_fault_is_private(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault);
+int sev_snp_rmp_update(struct kvm *kvm, struct kvm_gfn_range *gfn_range, bool private_to_shared,
+		       unsigned long pfn_start);
 
 /* vmenter.S */
 
