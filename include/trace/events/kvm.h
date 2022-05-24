@@ -438,6 +438,31 @@ TRACE_EVENT(kvm_dirty_ring_exit,
 	TP_printk("vcpu %d", __entry->vcpu_id)
 );
 
+TRACE_EVENT(kvm_upm_psc,
+	TP_PROTO(unsigned int marker, unsigned int op, u64 start, u64 end, u64 pfn),
+	TP_ARGS(marker, op, start, end, pfn),
+
+	TP_STRUCT__entry(
+		__field(unsigned int,	marker)
+		__field(unsigned int,	op)
+		__field(u64,		start)
+		__field(u64,		end)
+		__field(u64,		pfn)
+	),
+
+	TP_fast_assign(
+		__entry->marker		= marker;
+		__entry->op		= op;
+		__entry->start		= start;
+		__entry->end		= end;
+		__entry->pfn		= pfn;
+	),
+
+	TP_printk("marker %x op %s range: %#016llx -- %#016llx pfn_start %#016llx",
+		  __entry->marker, __entry->op ? "invalidate" : "populate",
+		  __entry->start, __entry->end, __entry->pfn)
+);
+
 TRACE_EVENT(kvm_unmap_hva_range,
 	TP_PROTO(unsigned long start, unsigned long end),
 	TP_ARGS(start, end),
