@@ -4763,6 +4763,10 @@ int sev_fault_is_private(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 	if (!kvm->arch.upm_mode)
 		goto out;
 
+	/* TODO: upstream makes kvm_page_fault MMU-internal, so maybe just pass the error code. */
+	if (sev_snp_guest(vcpu->kvm))
+		return fault->enc ? 1 : 0;
+
 	gfn = fault->gfn;
 	slot = gfn_to_memslot(kvm, gfn);
 	if (!slot) {
