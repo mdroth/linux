@@ -2330,6 +2330,10 @@ void kvm_arch_set_memory_attributes(struct kvm *kvm,
 				    struct kvm_memory_slot *slot,
 				    unsigned long attrs,
 				    gfn_t start, gfn_t end);
+void kvm_arch_post_set_memory_attributes(struct kvm *kvm,
+					 struct kvm_memory_slot *slot,
+					 unsigned long attrs,
+					 gfn_t start, gfn_t end);
 
 static inline bool kvm_mem_is_private(struct kvm *kvm, gfn_t gfn)
 {

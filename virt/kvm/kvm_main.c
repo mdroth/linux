@@ -2561,6 +2561,32 @@ static void kvm_mem_attrs_changed(struct kvm *kvm, unsigned long attrs,
 		kvm_flush_remote_tlbs(kvm);
 }
 
+static void kvm_post_mem_attrs_changed(struct kvm *kvm, unsigned long attrs,
+				       gfn_t start_orig, gfn_t end_orig)
+{
+	struct kvm_memory_slot *slot;
+	struct kvm_memslots *slots;
+	struct kvm_memslot_iter iter;
+	int i;
+
+	for (i = 0; i < kvm_arch_nr_memslot_as_ids(kvm); i++) {
+		slots = __kvm_memslots(kvm, i);
+
+		kvm_for_each_memslot_in_gfn_range(&iter, slots, start_orig, end_orig) {
+			gfn_t start, end;
+
+			slot = iter.slot;
+			start = max(start_orig, slot->base_gfn);
+			end = min(end_orig, slot->base_gfn + slot->npages);
+
+			if (start >= end)
+				continue;
+
+			kvm_arch_post_set_memory_attributes(kvm, slot, attrs, start, end);
+		}
+	}
+}
+
 static int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
 					   struct kvm_memory_attributes *attrs)
 {
@@ -2601,6 +2627,9 @@ static int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
 		kvm_mem_attrs_changed(kvm, attrs->attributes, start, i);
 	kvm_mmu_invalidate_end(kvm);
 	KVM_MMU_UNLOCK(kvm);
+
+	if (i > start)
+		kvm_post_mem_attrs_changed(kvm, attrs->attributes, start, i);
 
 	mutex_unlock(&kvm->slots_lock);
 
