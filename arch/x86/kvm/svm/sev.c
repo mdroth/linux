@@ -3476,7 +3476,7 @@ static int snp_make_page_shared(struct kvm *kvm, gpa_t gpa, kvm_pfn_t pfn, int l
 	return rmp_make_shared(pfn, level);
 }
 
-static int snp_check_and_build_npt(struct kvm_vcpu *vcpu, gpa_t gpa, int level)
+static int snp_check_and_build_npt(struct kvm_vcpu *vcpu, gpa_t gpa, int level, bool private)
 {
 	struct kvm *kvm = vcpu->kvm;
 	int rc, npt_level;
@@ -3492,7 +3492,17 @@ static int snp_check_and_build_npt(struct kvm_vcpu *vcpu, gpa_t gpa, int level)
 	rc = kvm_mmu_get_tdp_walk(vcpu, gpa, &pfn, &npt_level);
 	write_unlock(&kvm->mmu_lock);
 	if (!rc) {
-		pfn = kvm_mmu_map_tdp_page(vcpu, gpa, PFERR_USER_MASK, level);
+		u64 flags = PFERR_USER_MASK;
+
+		if (kvm_is_upm_enabled(kvm)) {
+			/* TODO: why is this needed again? is it? */
+			flags |= PFERR_WRITE_MASK;
+
+			if (private)
+				flags |= PFERR_GUEST_ENC_MASK;
+		}
+
+		pfn = kvm_mmu_map_tdp_page(vcpu, gpa, flags, level);
 		if (is_error_noslot_pfn(pfn))
 			return -EINVAL;
 	}
@@ -3540,7 +3550,7 @@ static int __snp_handle_page_state_change(struct kvm_vcpu *vcpu, enum psc_op op,
 		/*
 		 * If the gpa is not present in the NPT then build the NPT.
 		 */
-		rc = snp_check_and_build_npt(vcpu, gpa, level);
+		rc = snp_check_and_build_npt(vcpu, gpa, level, op == SNP_PAGE_STATE_PRIVATE);
 		if (rc)
 			return PSC_UNDEF_ERR;
 
