@@ -199,6 +199,31 @@ static int handle_vc_cpuid(struct ghcb *ghcb, u64 ghcb_gpa, struct ex_regs *regs
 	return 0;
 }
 
+static int handle_vc_vmmcall(struct ghcb *ghcb, u64 ghcb_gpa, struct ex_regs *regs)
+{
+	int ret;
+
+	ghcb_set_rax(ghcb, regs->rax);
+	ghcb_set_rbx(ghcb, regs->rbx);
+	ghcb_set_rcx(ghcb, regs->rcx);
+	ghcb_set_rdx(ghcb, regs->rdx);
+	ghcb_set_rsi(ghcb, regs->rsi);
+	ghcb_set_cpl(ghcb, 0);
+
+	ret = sev_es_ghcb_hv_call(ghcb, ghcb_gpa, SVM_EXIT_VMMCALL);
+	if (ret)
+		return ret;
+
+	if (!ghcb_rax_is_valid(ghcb))
+		return 1;
+
+	regs->rax = ghcb->save.rax;
+
+	regs->rip += 3;
+
+	return 0;
+}
+
 static int handle_msr_vc_cpuid(struct ex_regs *regs)
 {
 	uint32_t fn = regs->rax & 0xFFFFFFFF;
@@ -239,11 +264,15 @@ static int handle_msr_vc_cpuid(struct ex_regs *regs)
 
 int sev_es_handle_vc(void *ghcb, u64 ghcb_gpa, struct ex_regs *regs)
 {
-	if (regs->error_code != SVM_EXIT_CPUID)
-		return 1;
+	if (regs->error_code == SVM_EXIT_CPUID) {
+		if (!ghcb)
+			return handle_msr_vc_cpuid(regs);
 
-	if (!ghcb)
-		return handle_msr_vc_cpuid(regs);
+		return handle_vc_cpuid(ghcb, ghcb_gpa, regs);
+	}
 
-	return handle_vc_cpuid(ghcb, ghcb_gpa, regs);
+	if (regs->error_code == SVM_EXIT_VMMCALL)
+		return handle_vc_vmmcall(ghcb, ghcb_gpa, regs);
+
+	return 1;
 }
