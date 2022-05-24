@@ -4876,6 +4876,7 @@ static struct kvm_x86_ops svm_x86_ops __initdata = {
 	.fault_is_private = sev_fault_is_private,
 
 	.rmp_page_level_adjust = sev_rmp_page_level_adjust,
+	.update_mem_attr = sev_update_mem_attr,
 };
 
 /*
