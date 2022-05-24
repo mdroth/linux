@@ -1563,6 +1563,7 @@ struct kvm_x86_ops {
 			     int root_level);
 	int (*private_mem_enabled)(struct kvm *kvm);
 	int (*fault_is_private)(struct kvm *kvm, gpa_t cr2_gpa, u64 error_code);
+	int (*update_mem_attr)(struct kvm *kvm, unsigned int attr, gfn_t start, gfn_t end);
 
 	bool (*has_wbinvd_exit)(void);
 
