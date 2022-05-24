@@ -4715,3 +4715,76 @@ out:
 unlock:
 	write_unlock(&kvm->mmu_lock);
 }
+
+int sev_update_mem_attr(struct kvm *kvm, unsigned int attr, gfn_t start, gfn_t end)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	enum psc_op op = (attr & KVM_MEM_ATTR_PRIVATE) ? SNP_PAGE_STATE_PRIVATE
+						       : SNP_PAGE_STATE_SHARED;
+	gfn_t gfn = start;
+
+	if (!sev_snp_guest(kvm))
+		return 0;
+
+	while (gfn < end) {
+		struct kvm_memory_slot *slot;
+		kvm_pfn_t pfn;
+		int level = PG_LEVEL_4K; /* TODO: take actual order into account */
+		gpa_t gpa = gfn_to_gpa(gfn);
+		int order;
+		int rc;
+
+		slot = gfn_to_memslot(kvm, gfn);
+		if (!kvm_slot_can_be_private(slot)) {
+			pr_err_ratelimited("%s: memslot for gfn: 0x%llx is not private.\n",
+					   __func__, gfn);
+			return -EPERM;
+		}
+
+		/*
+		 * No work to do if there was never a page allocated from private
+		 * memory. If there was a page that was deallocated previously,
+		 * the invalidation notifier should have restored the page to
+		 * shared.
+		 */
+		rc = kvm_private_mem_get_pfn(slot, gfn, &pfn, &order);
+		if (rc) {
+			pr_warn_ratelimited("%s: failed to retrieve gfn 0x%llx from private FD\n",
+					    __func__, gfn);
+			gfn++;
+			continue;
+		}
+
+		/*
+		 * Grab the PFN from private memslot and update the RMP entry.
+		 * It may be worthwhile to go ahead and map it into the TDP at
+		 * this point if the guest is doing lazy acceptance, but for
+		 * up-front bulk shared->private conversions it's not likely
+		 * the guest will try to access the PFN any time soon, so for
+		 * now just take the let KVM MMU handle faulting it on the next
+		 * access.
+		 */
+		switch (op) {
+		case SNP_PAGE_STATE_SHARED:
+			rc = snp_make_page_shared(kvm, gpa, pfn, level);
+			break;
+		case SNP_PAGE_STATE_PRIVATE:
+			rc = rmp_make_private(pfn, gpa, level, sev->asid, false);
+			break;
+		default:
+			rc = PSC_INVALID_ENTRY;
+			break;
+		}
+
+		kvm_private_mem_put_pfn(slot, pfn);
+
+		if (rc) {
+			pr_err_ratelimited("%s: failed op %d gpa %llx pfn %llx level %d rc %d\n",
+					   __func__, op, gpa, pfn, level, rc);
+			return -EINVAL;
+		}
+		gfn++;
+	}
+
+	return 0;
+}
