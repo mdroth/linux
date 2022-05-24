@@ -771,6 +771,8 @@ struct page *snp_safe_alloc_page(struct kvm_vcpu *vcpu);
 void sev_adjust_mapping_level(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn, int *level);
 void handle_rmp_page_fault(struct kvm_vcpu *vcpu, gpa_t gpa, u64 error_code);
 void sev_snp_init_protected_guest_state(struct kvm_vcpu *vcpu);
+int sev_gmem_prepare(struct kvm *kvm, struct kvm_memory_slot *slot,
+		     kvm_pfn_t pfn_start, gfn_t gfn_start, int order);
 
 /* vmenter.S */
 

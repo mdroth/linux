@@ -4066,3 +4066,58 @@ out:
 	kvm_zap_gfn_range(kvm, gfn, gfn + PTRS_PER_PMD);
 	put_page(pfn_to_page(pfn));
 }
+
+static inline u8 order_to_level(int order)
+{
+	BUILD_BUG_ON(KVM_MAX_HUGEPAGE_LEVEL > PG_LEVEL_1G);
+
+	if (order >= KVM_HPAGE_GFN_SHIFT(PG_LEVEL_1G))
+		return PG_LEVEL_1G;
+
+	if (order >= KVM_HPAGE_GFN_SHIFT(PG_LEVEL_2M))
+		return PG_LEVEL_2M;
+
+	return PG_LEVEL_4K;
+}
+
+int sev_gmem_prepare(struct kvm *kvm, struct kvm_memory_slot *slot,
+		     kvm_pfn_t pfn_start, gfn_t gfn_start, int order)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	int level = PG_LEVEL_4K;
+	gfn_t gfn, end;
+	kvm_pfn_t pfn;
+
+	if (!sev_snp_guest(kvm))
+		return 0;
+
+	pfn = pfn_start;
+	gfn = gfn_start;
+	end = gfn_start + (1 << order);
+
+	if (IS_ALIGNED(gfn, 1 << order) && IS_ALIGNED(pfn, 1 << order))
+		level = order_to_level(order);
+
+	while (gfn < end) {
+		int rc, rmp_level;
+		int assigned;
+		gpa_t gpa;
+
+		assigned = snp_lookup_rmpentry(pfn, &rmp_level);
+		if (assigned == 1 && rmp_level == level)
+			return 0;
+
+		gpa = gfn_to_gpa(gfn);
+		rc = rmp_make_private(pfn, gpa, level, sev->asid, false);
+		if (rc) {
+			pr_err_ratelimited("%s: failed gpa %llx pfn %llx level %d rc %d\n",
+					   __func__, gpa, pfn, level, rc);
+			return -EINVAL;
+		}
+
+		gfn += (1 << order);
+		pfn += (1 << order);
+	}
+
+	return 0;
+}
