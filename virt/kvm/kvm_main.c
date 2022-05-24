@@ -885,6 +885,8 @@ static void kvm_private_mem_notifier_handler(struct memfile_notifier *notifier,
 		kvm_flush_remote_tlbs(kvm);
 	kvm->mmu_notifier_seq++;
 	KVM_MMU_UNLOCK(kvm);
+	/* TODO: make this arch-agnostic */
+	static_call_cond(kvm_x86_rmp_update)(kvm, &gfn_range, invalidate, pfn_start);
 	srcu_read_unlock(&kvm->srcu, idx);
 }
 

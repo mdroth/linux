@@ -136,6 +136,7 @@ KVM_X86_OP_OPTIONAL(rmp_page_level_adjust)
 KVM_X86_OP(update_protected_guest_state)
 KVM_X86_OP_OPTIONAL_RET0(update_gpa_range)
 KVM_X86_OP_OPTIONAL_RET0(fault_is_private)
+KVM_X86_OP_OPTIONAL_RET0(rmp_update)
 
 #undef KVM_X86_OP
 #undef KVM_X86_OP_OPTIONAL

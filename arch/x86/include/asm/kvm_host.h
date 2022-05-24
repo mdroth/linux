@@ -25,6 +25,7 @@
 #include <linux/clocksource.h>
 #include <linux/irqbypass.h>
 #include <linux/hyperv.h>
+#include <linux/kvm_host.h>
 
 #include <asm/apic.h>
 #include <asm/pvclock-abi.h>
@@ -1341,6 +1342,8 @@ static inline u16 kvm_lapic_irq_dest_mode(bool dest_mode_logical)
 	return dest_mode_logical ? APIC_DEST_LOGICAL : APIC_DEST_PHYSICAL;
 }
 
+struct kvm_gfn_range;
+
 struct kvm_x86_ops {
 	const char *name;
 
@@ -1543,6 +1546,8 @@ struct kvm_x86_ops {
 	void (*rmp_page_level_adjust)(struct kvm *kvm, kvm_pfn_t pfn, int *level);
 
 	int (*update_protected_guest_state)(struct kvm_vcpu *vcpu);
+	int (*rmp_update)(struct kvm *kvm, struct kvm_gfn_range *gfn_range,
+			  bool private_to_shared, unsigned long pfn_start);
 };
 
 struct kvm_x86_nested_ops {
