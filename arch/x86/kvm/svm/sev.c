@@ -4076,6 +4076,30 @@ e_fail:
 	svm_set_ghcb_sw_exit_info_2(vcpu, rc);
 }
 
+static kvm_pfn_t gfn_to_pfn_private(struct kvm *kvm, gfn_t gfn)
+{
+	struct kvm_memory_slot *slot;
+	kvm_pfn_t pfn;
+	int order = 0;
+
+	slot = gfn_to_memslot(kvm, gfn);
+	if (!kvm_slot_is_private(slot)) {
+		pr_err("SEV: Failure retrieving private memslot for gfn 0x%llx, flags 0x%x, userspace_addr: 0x%lx\n",
+		       gfn, slot->flags, slot->userspace_addr);
+		return -EINVAL;
+	}
+
+	if (kvm_private_mem_get_pfn(slot, gfn, &pfn, &order)) {
+		pr_err("SEV: Failure retrieving private pfn for gfn 0x%llx\n", gfn);
+		return -EINVAL;
+	}
+
+	/* TODO: should we hold on to the lock? What happens if userspace does PSC? */
+	kvm_private_mem_put_pfn(slot, pfn);
+
+	return pfn;
+}
+
 static int __sev_snp_update_protected_guest_state(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
@@ -4099,7 +4123,14 @@ static int __sev_snp_update_protected_guest_state(struct kvm_vcpu *vcpu)
 		 * of the about to be replaced VMSA which will no longer be used
 		 * or referenced, so un-pin it.
 		 */
-		kvm_release_pfn_dirty(svm->sev_es.snp_vmsa_pfn);
+		if (kvm_is_upm_enabled(vcpu->kvm)) {
+			/* The initial VMSA is allocated by kernel, not UPM interface. */
+			pfn = gfn_to_pfn_private(vcpu->kvm, gpa_to_gfn(svm->sev_es.snp_vmsa_gpa));
+			if (pfn < 0)
+				kvm_release_pfn_dirty(svm->sev_es.snp_vmsa_pfn);
+		} else {
+			kvm_release_pfn_dirty(svm->sev_es.snp_vmsa_pfn);
+		}
 		svm->sev_es.snp_vmsa_pfn = INVALID_PAGE;
 	}
 
@@ -4108,9 +4139,15 @@ static int __sev_snp_update_protected_guest_state(struct kvm_vcpu *vcpu)
 		 * The VMSA is referenced by the hypervisor physical address,
 		 * so retrieve the PFN and pin it.
 		 */
-		pfn = gfn_to_pfn(vcpu->kvm, gpa_to_gfn(svm->sev_es.snp_vmsa_gpa));
-		if (is_error_pfn(pfn))
-			return -EINVAL;
+		if (kvm_is_upm_enabled(vcpu->kvm)) {
+			pfn = gfn_to_pfn_private(vcpu->kvm, gpa_to_gfn(svm->sev_es.snp_vmsa_gpa));
+			if (pfn < 0)
+				return pfn;
+		} else {
+			pfn = gfn_to_pfn(vcpu->kvm, gpa_to_gfn(svm->sev_es.snp_vmsa_gpa));
+			if (is_error_pfn(pfn))
+				return -EINVAL;
+		}
 
 		svm->sev_es.snp_vmsa_pfn = pfn;
 
