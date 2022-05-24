@@ -4022,3 +4022,98 @@ out:
 	kvm_zap_gfn_range(kvm, gfn, gfn + PTRS_PER_PMD);
 	put_page(pfn_to_page(pfn));
 }
+
+/* Check if GFN range is marked private in the KVM/gmem xarray. */
+static bool is_gfn_range_private(struct kvm *kvm, gfn_t start, gfn_t end)
+{
+	gfn_t gfn = start;
+
+	while (gfn++ < end)
+		if (!kvm_mem_is_private(kvm, gfn)) {
+			pr_debug("%s: overlap detected, GFN 0x%llx start 0x%llx end 0x%llx\n",
+				 __func__, gfn, start, end);
+			return false;
+		}
+
+	return true;
+}
+
+/* Check that no pages in PFN range have already been set to private in RMP table. */
+static bool is_pfn_range_shared(kvm_pfn_t start, kvm_pfn_t end)
+{
+	kvm_pfn_t pfn = start;
+
+	while (pfn++ < end) {
+		int ret, rmp_level;
+		bool assigned;
+
+		ret = snp_lookup_rmpentry(pfn, &assigned, &rmp_level);
+		if (ret) {
+			pr_debug("%s: failed to retrieve RMP entry, assuming overlap, PFN 0x%llx start 0x%llx end 0x%llx RMP level %d error %d\n",
+				 __func__, pfn, start, end, rmp_level, ret);
+			return false;
+		}
+
+		if (assigned == 1) {
+			pr_debug("%s: overlap detected, PFN 0x%llx start 0x%llx end 0x%llx RMP level %d\n",
+				 __func__, pfn, start, end, rmp_level);
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static int get_supported_rmp_level(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn)
+{
+	if (!IS_ALIGNED(pfn, PTRS_PER_PMD) || !IS_ALIGNED(gfn, PTRS_PER_PMD))
+		return PG_LEVEL_4K;
+
+	/*
+	 * Check that both the desired GFN range states in the xarray, and
+	 * current PFN range states in the RMP table, are conducive to
+	 * creating a 2M private RMP entry.
+	 */
+	if (is_gfn_range_private(kvm, gfn, gfn + PTRS_PER_PMD) &&
+	    is_pfn_range_shared(pfn, pfn + PTRS_PER_PMD))
+		return PG_LEVEL_2M;
+
+	return PG_LEVEL_4K;
+}
+
+int sev_gmem_prepare(struct kvm *kvm, struct kvm_memory_slot *slot,
+		     kvm_pfn_t pfn, gfn_t gfn, u8 *max_level)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	int level, rc = 0;
+	bool assigned;
+
+	if (!sev_snp_guest(kvm))
+		return 0;
+
+	rc = snp_lookup_rmpentry(pfn, &assigned, &level);
+	if (rc)
+		return rc;
+
+	/* No conversion needed, just clamp xax_level according to RMP entry. */
+	if (assigned)
+		goto out_adjust_level;
+
+	if (*max_level == PG_LEVEL_4K)
+		level = PG_LEVEL_4K;
+	else
+		level = get_supported_rmp_level(kvm, pfn, gfn);
+
+	rc = rmp_make_private(pfn, gfn_to_gpa(gfn), level, sev->asid, false);
+	if (rc)
+		pr_err_ratelimited("%s: failed gfn %llx pfn %llx level %d rc %d\n",
+				   __func__, gfn, pfn, level, rc);
+
+out_adjust_level:
+	pr_debug("%s: pfn %llx gfn %llx max_level %d level %d assigned %d\n",
+		 __func__, pfn, gfn, *max_level, level, assigned);
+	if (*max_level > level)
+		*max_level = level;
+
+	return rc;
+}
