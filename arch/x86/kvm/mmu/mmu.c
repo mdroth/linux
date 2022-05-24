@@ -7130,7 +7130,7 @@ static void kvm_update_lpage_private_shared_mixed(struct kvm *kvm,
 {
 	unsigned long pages, mask;
 	gfn_t gfn, gfn_end, first, last;
-	int level;
+	int level, ret;
 	bool mixed;
 
 	/*
@@ -7153,7 +7153,7 @@ static void kvm_update_lpage_private_shared_mixed(struct kvm *kvm,
 		linfo_set_mixed(gfn, slot, level, mixed);
 
 		if (first == last)
-			return;
+			goto out;
 
 		for (gfn = first + pages; gfn < last; gfn += pages)
 			linfo_set_mixed(gfn, slot, level, false);
@@ -7166,6 +7166,12 @@ static void kvm_update_lpage_private_shared_mixed(struct kvm *kvm,
 		mixed = mem_attrs_mixed(kvm, slot, level, attrs, gfn, gfn_end);
 		linfo_set_mixed(gfn, slot, level, mixed);
 	}
+
+out:
+	ret = static_call(kvm_x86_update_mem_attr)(slot, attrs, start, end);
+	if (ret)
+		pr_warn_ratelimited("Failed to update GFN range 0x%llx-0x%llx with attributes 0x%lx. Ret: %d\n",
+				    start, end, attrs, ret);
 }
 
 void kvm_arch_set_memory_attributes(struct kvm *kvm,
