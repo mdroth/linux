@@ -4029,6 +4029,27 @@ e_fail:
 	svm_set_ghcb_sw_exit_info_2(vcpu, rc);
 }
 
+static kvm_pfn_t gfn_to_pfn_private(struct kvm *kvm, gfn_t gfn)
+{
+	struct kvm_memory_slot *slot;
+	kvm_pfn_t pfn;
+	int order = 0;
+
+	slot = gfn_to_memslot(kvm, gfn);
+	if (!kvm_slot_can_be_private(slot)) {
+		pr_err("SEV: Failure retrieving private memslot for gfn 0x%llx, flags 0x%x, userspace_addr: 0x%lx\n",
+		       gfn, slot->flags, slot->userspace_addr);
+		return -EINVAL;
+	}
+
+	if (kvm_restricted_mem_get_pfn(slot, gfn, &pfn, &order)) {
+		pr_err("SEV: Failure retrieving private pfn for gfn 0x%llx\n", gfn);
+		return -EINVAL;
+	}
+
+	return pfn;
+}
+
 static int __sev_snp_update_protected_guest_state(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
@@ -4054,7 +4075,22 @@ static int __sev_snp_update_protected_guest_state(struct kvm_vcpu *vcpu)
 		 * address of the about to be replaced VMSA which will no longer
 		 * be used or referenced, so un-pin it.
 		 */
-		kvm_release_pfn_dirty(__phys_to_pfn(cur_pa));
+		if (kvm_is_upm_enabled(vcpu->kvm)) {
+			/* The initial VMSA is allocated by kernel, not UPM interface. */
+			/* TODO: currently this will likely just fault in a restricted
+			 * page and never free the initial kernel-allocated one. Need a
+			 * better way to distinguish between the two instances
+			 * TODO: restricted memory is already pinned, but we may still want
+			 * to keep a pageref just in case it's possible that userspace can
+			 * holepunch/free it via the FD.
+			 */
+			pfn = gfn_to_pfn_private(vcpu->kvm, gpa_to_gfn(svm->sev_es.snp_vmsa_gpa));
+			if (pfn < 0)
+				kvm_release_pfn_dirty(__phys_to_pfn(cur_pa));
+			put_page(pfn_to_page(pfn));
+		} else {
+			kvm_release_pfn_dirty(__phys_to_pfn(cur_pa));
+		}
 	}
 
 	if (VALID_PAGE(svm->sev_es.snp_vmsa_gpa)) {
@@ -4062,9 +4098,16 @@ static int __sev_snp_update_protected_guest_state(struct kvm_vcpu *vcpu)
 		 * The VMSA is referenced by the hypervisor physical address,
 		 * so retrieve the PFN and pin it.
 		 */
-		pfn = gfn_to_pfn(vcpu->kvm, gpa_to_gfn(svm->sev_es.snp_vmsa_gpa));
-		if (is_error_pfn(pfn))
-			return -EINVAL;
+		if (kvm_is_upm_enabled(vcpu->kvm)) {
+			pfn = gfn_to_pfn_private(vcpu->kvm, gpa_to_gfn(svm->sev_es.snp_vmsa_gpa));
+			if (pfn < 0)
+				return pfn;
+			put_page(pfn_to_page(pfn));
+		} else {
+			pfn = gfn_to_pfn(vcpu->kvm, gpa_to_gfn(svm->sev_es.snp_vmsa_gpa));
+			if (is_error_pfn(pfn))
+				return -EINVAL;
+		}
 
 		/* Use the new VMSA */
 		svm->sev_es.vmsa_pa = pfn_to_hpa(pfn);
