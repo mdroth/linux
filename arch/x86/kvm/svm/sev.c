@@ -3613,6 +3613,89 @@ static int __snp_handle_page_state_change(struct kvm_vcpu *vcpu, enum psc_op op,
 		switch (op) {
 		case SNP_PAGE_STATE_SHARED:
 			rc = snp_make_page_shared(kvm, gpa, pfn, level);
+			trace_kvm_snp_psc(vcpu->vcpu_id, pfn, gpa, op, 42);
+			break;
+		case SNP_PAGE_STATE_PRIVATE:
+			rc = rmp_make_private(pfn, gpa, level, sev->asid, false);
+			trace_kvm_snp_psc(vcpu->vcpu_id, pfn, gpa, op, 43);
+			break;
+		default:
+			rc = PSC_INVALID_ENTRY;
+			trace_kvm_snp_psc(vcpu->vcpu_id, pfn, gpa, op, 44);
+			break;
+		}
+
+		write_unlock(&kvm->mmu_lock);
+
+		spin_unlock(&sev->psc_lock);
+
+		if (rc) {
+			pr_err_ratelimited("Error op %d gpa %llx pfn %llx level %d rc %d\n",
+					   op, gpa, pfn, level, rc);
+			return rc;
+		}
+
+		gpa = gpa + page_level_size(level);
+	}
+
+	return 0;
+}
+
+static int __snp_handle_page_state_change_upm(struct kvm_vcpu *vcpu, enum psc_op op,
+					      gpa_t gpa, int level)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(vcpu->kvm)->sev_info;
+	struct kvm *kvm = vcpu->kvm;
+	int rc, npt_level;
+	kvm_pfn_t pfn;
+	gpa_t gpa_end;
+
+	gpa_end = gpa + page_level_size(level);
+
+	while (gpa < gpa_end) {
+		/* TODO: atm we only do PSC as a result of an RMP fault, which can only
+		 * occur if there's a previous NPT mapping for gfn->pfn (?). If there isn't
+		 * a mapping there would have been an exit to userspace and this code would
+		 * have been skipped. On re-entry the NPT should trigger again, and then maybe
+		 * RMP at the same time (?) or NPT and then a subsequent RMP fault. Too many
+		 * exits but good enough for testing hopefully.
+		 */
+
+		/*
+		 * If the gpa is not present in the NPT then build the NPT.
+		 *
+		 * TODO: this needs handling to deal with SNP PFERR flags, like
+		 * we have for the other direct_page_fault() path.
+		 */
+		rc = snp_check_and_build_npt(vcpu, gpa, level, op == SNP_PAGE_STATE_PRIVATE);
+		if (rc)
+			return PSC_UNDEF_ERR;
+
+		spin_lock(&sev->psc_lock);
+
+		write_lock(&kvm->mmu_lock);
+
+		rc = kvm_mmu_get_tdp_walk(vcpu, gpa, &pfn, &npt_level);
+		if (!rc) {
+			/*
+			 * This may happen if another vCPU unmapped the page
+			 * before we acquire the lock. Retry the PSC.
+			 */
+			write_unlock(&kvm->mmu_lock);
+			return 0;
+		}
+
+		/*
+		 * Adjust the level so that we don't go higher than the backing
+		 * page level.
+		 */
+		level = min_t(size_t, level, npt_level);
+
+		trace_kvm_snp_psc(vcpu->vcpu_id, pfn, gpa, op, level);
+
+		switch (op) {
+		case SNP_PAGE_STATE_SHARED:
+			rc = snp_make_page_shared(kvm, gpa, pfn, level);
 			break;
 		case SNP_PAGE_STATE_PRIVATE:
 			rc = rmp_make_private(pfn, gpa, level, sev->asid, false);
@@ -4646,8 +4729,13 @@ void handle_rmp_page_fault(struct kvm_vcpu *vcpu, gpa_t gpa, u64 error_code)
 out:
 	write_unlock(&kvm->mmu_lock);
 
-	if (need_psc)
-		rc = __snp_handle_page_state_change(vcpu, psc_op, gpa, PG_LEVEL_4K);
+	if (need_psc) {
+
+		if (kvm_is_upm_enabled(kvm))
+			rc = __snp_handle_page_state_change_upm(vcpu, psc_op, gpa, PG_LEVEL_4K);
+		else
+			rc = __snp_handle_page_state_change(vcpu, psc_op, gpa, PG_LEVEL_4K);
+	}
 
 	/*
 	 * The fault handler has updated the RMP pagesize, zap the existing
