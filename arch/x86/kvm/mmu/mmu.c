@@ -7078,6 +7078,11 @@ void kvm_arch_update_mem_attr(struct kvm *kvm, unsigned int attr,
 				continue;
 
 			update_mem_lpage_info(kvm, slot, attr, start, end);
+
+			if (static_call(kvm_x86_update_mem_attr)(slot, attr, start, end)) {
+				pr_warn_ratelimited("Failed to update GFN range 0x%llx-0x%llx to %s.\n",
+					start, end, (attr & KVM_MEM_ATTR_PRIVATE) ? "private" : "shared");
+			}
 		}
 	}
 }
