@@ -528,6 +528,15 @@ struct kvm_pmu {
 	u64 pebs_data_cfg_mask;
 
 	/*
+	 * If a guest counter is cross-mapped to host counter with different
+	 * index, its PEBS capability will be temporarily disabled.
+	 *
+	 * The user should make sure that this mask is updated
+	 * after disabling interrupts and before perf_guest_get_msrs();
+	 */
+	u64 host_cross_mapped_mask;
+
+	/*
 	 * The gate to release perf_events not marked in
 	 * pmc_in_use only once in a vcpu time slice.
 	 */
@@ -1164,6 +1173,8 @@ struct kvm_arch {
 
 	bool guest_can_read_msr_platform_info;
 	bool exception_payload_enabled;
+
+	bool triple_fault_event;
 
 	bool bus_lock_detection_enabled;
 	bool enable_pmu;
