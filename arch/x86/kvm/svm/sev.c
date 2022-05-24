@@ -2196,6 +2196,131 @@ static int snp_mark_unmergable(struct kvm *kvm, u64 start, u64 size)
 	return ret;
 }
 
+static int snp_launch_update_upm(struct kvm *kvm, struct kvm_sev_cmd *argp)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	struct sev_data_snp_launch_update data = {0};
+	struct kvm_sev_snp_launch_update params;
+	unsigned long npages, n = 0;
+	int *error = &argp->error;
+	int ret, i, level;
+	kvm_pfn_t *pfns;
+	kvm_pfn_t pfn;
+	u64 gfn;
+
+	if (!sev_snp_guest(kvm))
+		return -ENOTTY;
+
+	if (!sev->snp_context)
+		return -EINVAL;
+
+	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data, sizeof(params)))
+		return -EFAULT;
+
+	npages = params.len >> PAGE_SHIFT;
+	pfns = kvmalloc(npages * sizeof(*pfns), GFP_KERNEL_ACCOUNT);
+
+	/*
+	 * Verify that all the pages are marked shared in the RMP table before
+	 * going further. This is avoid the cases where the userspace may try
+	 * updating the same page twice.
+	 *
+	 * TODO: shouldn't need to look up the memslot every time.
+	 */
+	for (i = 0; i < npages; i++) {
+		struct kvm_memory_slot *slot;
+		int order = 0;
+
+		gfn = params.start_gfn + i;
+		slot = gfn_to_memslot(kvm, params.start_gfn + i);
+
+		if (!kvm_slot_can_be_private(slot)) {
+			pr_err("SEV: Failure retrieving private memslot for gfn 0x%llx, flags 0x%x, userspace_addr: 0x%lx\n",
+			       gfn, slot->flags, slot->userspace_addr);
+			return -EINVAL;
+		}
+
+		if (kvm_restricted_mem_get_pfn(slot, gfn, &pfns[i], &order)) {
+			pr_err("SEV: Failure retrieving private pfn for gfn 0x%llx, ret: %lld\n",
+			       gfn, pfns[i]);
+			return -EINVAL;
+		}
+
+		ret = snp_lookup_rmpentry((u64)pfns[i], &level);
+		if (ret != 0) {
+			pr_warn("SEV: Failed to ensure GFN 0x%llx is in initial shared state, ret: %d\n",
+				gfn, ret);
+			return -EFAULT;
+		}
+	}
+
+	gfn = params.start_gfn;
+	level = PG_LEVEL_4K;
+	data.gctx_paddr = __psp_pa(sev->snp_context);
+
+	for (i = 0; i < npages; i++) {
+		void *addr;
+		pfn = pfns[i];
+
+		addr = pfn_to_kaddr(pfn);
+		if (!virt_addr_valid(addr)) {
+			pr_err("%s: Invalid kernel address: 0x%llx\n",
+			       __func__, (uint64_t)addr);
+			return -EFAULT;
+		}
+
+		ret = kvm_read_guest_page(kvm, gfn, addr, 0, PAGE_SIZE);
+		if (ret) {
+			pr_err("%s: Guest read failed: %d\n", __func__, ret);
+			return -EFAULT;
+		}
+
+		ret = rmp_make_private(pfn, gfn << PAGE_SHIFT, level, sev_get_asid(kvm), true);
+		if (ret) {
+			ret = -EFAULT;
+			goto e_release;
+		}
+
+		n++;
+		data.address = __sme_set(pfn << PAGE_SHIFT);
+		data.page_size = X86_TO_RMP_PG_LEVEL(level);
+		data.page_type = params.page_type;
+		data.vmpl3_perms = params.vmpl3_perms;
+		data.vmpl2_perms = params.vmpl2_perms;
+		data.vmpl1_perms = params.vmpl1_perms;
+		ret = __sev_issue_cmd(argp->sev_fd, SEV_CMD_SNP_LAUNCH_UPDATE, &data, error);
+		if (ret) {
+			/*
+			 * If the command failed then need to reclaim the page.
+			 */
+			snp_page_reclaim(pfn);
+			goto e_release;
+		}
+
+		gfn++;
+	}
+
+e_release:
+	/* Content of memory is updated, mark pages dirty */
+	for (i = 0; i < n; i++) {
+		set_page_dirty(pfn_to_page(pfns[i]));
+		mark_page_accessed(pfn_to_page(pfns[i]));
+
+		/*
+		 * If its an error, then update RMP entry to change page ownership
+		 * to the hypervisor.
+		 */
+		if (ret)
+			host_rmp_make_shared(pfn, level, true);
+
+		put_page(pfn_to_page(pfns[i]));
+	}
+
+	kvfree(pfns);
+
+	return ret;
+}
+
 static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
 {
 	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
@@ -2206,6 +2331,9 @@ static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	struct page **inpages;
 	int ret, i, level;
 	u64 gfn;
+
+	if (kvm_is_upm_enabled(kvm))
+		return snp_launch_update_upm(kvm, argp);
 
 	if (!sev_snp_guest(kvm))
 		return -ENOTTY;
