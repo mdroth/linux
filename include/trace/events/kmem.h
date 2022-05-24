@@ -324,6 +324,29 @@ TRACE_EVENT(mm_page_alloc_extfrag,
 		__entry->change_ownership)
 );
 
+TRACE_EVENT(shmem_psc,
+	TP_PROTO(unsigned int marker, unsigned int op, unsigned long start, unsigned long end),
+	TP_ARGS(marker, op, start, end),
+
+	TP_STRUCT__entry(
+		__field(	unsigned int,	marker		)
+		__field(	unsigned int,	op		)
+		__field(	unsigned long,	start		)
+		__field(	unsigned long,	end		)
+	),
+
+	TP_fast_assign(
+		__entry->marker		= marker;
+		__entry->op		= op;
+		__entry->start		= start;
+		__entry->end		= end;
+	),
+
+	TP_printk("shmem psc: marker %d op %d range: %#016lx -- %#016lx",
+		  __entry->marker, __entry->op, __entry->start, __entry->end)
+);
+
+
 /*
  * Required for uniquely and securely identifying mm in rss_stat tracepoint.
  */
