@@ -1591,9 +1591,11 @@ vm_paddr_t addr_gpa2raw(struct kvm_vm *vm, vm_paddr_t gpa)
 		return gpa;
 
 	region = userspace_mem_region_find(vm, gpa, gpa);
-	pg = gpa >> vm->page_shift;
-	if (sparsebit_is_set(region->encrypted_phy_pages, pg))
-		gpa_raw |= (1ULL << vm->memcrypt.enc_bit);
+	if (region) {
+		pg = gpa >> vm->page_shift;
+		if (sparsebit_is_set(region->encrypted_phy_pages, pg))
+			gpa_raw |= (1ULL << vm->memcrypt.enc_bit);
+	}
 
 	return gpa_raw;
 }
