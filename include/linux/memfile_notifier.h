@@ -34,9 +34,9 @@ struct memfile_backing_store {
 struct memfile_notifier;
 struct memfile_notifier_ops {
 	void (*populate)(struct memfile_notifier *notifier,
-			 pgoff_t start, pgoff_t end);
+			 pgoff_t start, pgoff_t end, unsigned long pfn_start);
 	void (*invalidate)(struct memfile_notifier *notifier,
-			   pgoff_t start, pgoff_t end);
+			   pgoff_t start, pgoff_t end, unsigned long pfn_start);
 };
 
 struct memfile_notifier {
@@ -56,9 +56,9 @@ static inline void memfile_node_init(struct memfile_node *node)
 extern void memfile_register_backing_store(struct memfile_backing_store *bs);
 extern int memfile_node_set_flags(struct file *file, unsigned long flags);
 extern void memfile_notifier_populate(struct memfile_node *node,
-				      pgoff_t start, pgoff_t end);
+				      pgoff_t start, pgoff_t end, unsigned long pfn_start);
 extern void memfile_notifier_invalidate(struct memfile_node *node,
-					pgoff_t start, pgoff_t end);
+					pgoff_t start, pgoff_t end, unsigned long pfn_start);
 /*APIs for notifier consumers */
 extern int memfile_register_notifier(struct file *file, unsigned long flags,
 				     struct memfile_notifier *notifier);

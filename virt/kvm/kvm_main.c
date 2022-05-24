@@ -859,7 +859,7 @@ static int kvm_init_mmu_notifier(struct kvm *kvm)
 
 #ifdef CONFIG_HAVE_KVM_PRIVATE_MEM
 static void kvm_private_mem_notifier_handler(struct memfile_notifier *notifier,
-					     pgoff_t start, pgoff_t end)
+					     pgoff_t start, pgoff_t end, bool invalidate, unsigned long pfn_start)
 {
 	int idx;
 	struct kvm_memory_slot *slot = container_of(notifier,
@@ -888,9 +888,21 @@ static void kvm_private_mem_notifier_handler(struct memfile_notifier *notifier,
 	srcu_read_unlock(&kvm->srcu, idx);
 }
 
+static void kvm_private_mem_notifier_populate(struct memfile_notifier *notifier,
+					      pgoff_t start, pgoff_t end, unsigned long pfn_start)
+{
+	kvm_private_mem_notifier_handler(notifier, start, end, false, pfn_start);
+}
+
+static void kvm_private_mem_notifier_invalidate(struct memfile_notifier *notifier,
+						pgoff_t start, pgoff_t end, unsigned long pfn_start)
+{
+	kvm_private_mem_notifier_handler(notifier, start, end, true, pfn_start);
+}
+
 static struct memfile_notifier_ops kvm_private_mem_notifier_ops = {
-	.populate = kvm_private_mem_notifier_handler,
-	.invalidate = kvm_private_mem_notifier_handler,
+	.populate = kvm_private_mem_notifier_populate,
+	.invalidate = kvm_private_mem_notifier_invalidate,
 };
 
 #define KVM_MEMFILE_FLAGS MEMFILE_F_USER_INACCESSIBLE | \

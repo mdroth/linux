@@ -905,11 +905,11 @@ static struct folio *shmem_get_partial_folio(struct inode *inode, pgoff_t index)
 	return page ? page_folio(page) : NULL;
 }
 
-static void notify_populate(struct inode *inode, pgoff_t start, pgoff_t end)
+static void notify_populate(struct inode *inode, pgoff_t start, pgoff_t end, unsigned long pfn_start)
 {
 	struct shmem_inode_info *info = SHMEM_I(inode);
 
-	memfile_notifier_populate(&info->memfile_node, start, end);
+	memfile_notifier_populate(&info->memfile_node, start, end, pfn_start);
 }
 
 static void notify_invalidate(struct inode *inode, struct folio *folio,
@@ -920,7 +920,7 @@ static void notify_invalidate(struct inode *inode, struct folio *folio,
 	start = max(start, folio->index);
 	end = min(end, folio->index + folio_nr_pages(folio));
 
-	memfile_notifier_invalidate(&info->memfile_node, start, end);
+	memfile_notifier_invalidate(&info->memfile_node, start, end, folio_pfn(folio));
 }
 
 /*
@@ -2769,6 +2769,7 @@ static long shmem_fallocate(struct file *file, int mode, loff_t offset,
 
 	for (index = start; index < end; ) {
 		struct page *page;
+		unsigned long index_start = index;
 
 		/*
 		 * Good, the fallocate(2) manpage permits EINTR: we may have
@@ -2831,6 +2832,7 @@ static long shmem_fallocate(struct file *file, int mode, loff_t offset,
 		 */
 		set_page_dirty(page);
 		unlock_page(page);
+		notify_populate(inode, index_start, index, page_to_pfn(page));
 		put_page(page);
 		cond_resched();
 	}
@@ -2838,7 +2840,6 @@ static long shmem_fallocate(struct file *file, int mode, loff_t offset,
 	if (!(mode & FALLOC_FL_KEEP_SIZE) && offset + len > inode->i_size)
 		i_size_write(inode, offset + len);
 	inode->i_ctime = current_time(inode);
-	notify_populate(inode, start, end);
 undone:
 	spin_lock(&inode->i_lock);
 	inode->i_private = NULL;

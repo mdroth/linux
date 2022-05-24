@@ -14,7 +14,7 @@ DEFINE_STATIC_SRCU(memfile_srcu);
 static __ro_after_init LIST_HEAD(backing_store_list);
 
 void memfile_notifier_populate(struct memfile_node *node,
-			       pgoff_t start, pgoff_t end)
+			       pgoff_t start, pgoff_t end, unsigned long pfn_start)
 {
 	struct memfile_notifier *notifier;
 	int id;
@@ -23,13 +23,13 @@ void memfile_notifier_populate(struct memfile_node *node,
 	list_for_each_entry_srcu(notifier, &node->notifiers, list,
 				 srcu_read_lock_held(&memfile_srcu)) {
 		if (notifier->ops->populate)
-			notifier->ops->populate(notifier, start, end);
+			notifier->ops->populate(notifier, start, end, pfn_start);
 	}
 	srcu_read_unlock(&memfile_srcu, id);
 }
 
 void memfile_notifier_invalidate(struct memfile_node *node,
-				 pgoff_t start, pgoff_t end)
+				 pgoff_t start, pgoff_t end, unsigned long pfn_start)
 {
 	struct memfile_notifier *notifier;
 	int id;
@@ -38,7 +38,7 @@ void memfile_notifier_invalidate(struct memfile_node *node,
 	list_for_each_entry_srcu(notifier, &node->notifiers, list,
 				 srcu_read_lock_held(&memfile_srcu)) {
 		if (notifier->ops->invalidate)
-			notifier->ops->invalidate(notifier, start, end);
+			notifier->ops->invalidate(notifier, start, end, pfn_start);
 	}
 	srcu_read_unlock(&memfile_srcu, id);
 }
