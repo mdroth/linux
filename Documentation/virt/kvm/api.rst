@@ -6780,6 +6780,40 @@ Please note that the kernel is allowed to use the kvm_run structure as the
 primary storage for certain register types. Therefore, the kernel may use the
 values in kvm_run even if the corresponding bit in kvm_dirty_regs is not set.
 
+::
+
+		/* KVM_EXIT_VMGEXIT */
+		struct {
+			__u64 ghcb_msr; /* GHCB MSR contents */
+			__u64 ret;      /* user -> kernel return value */
+		} memory;
+
+If exit reason is KVM_EXIT_VMGEXIT then it indicates that an SEV-SNP guest has
+issued a VMGEXIT instruction (as documented by the AMD Architecture
+Programmer's Manual (APM)) to the hypervisor that needs to be serviced by
+userspace. This is generally handled via the Guest-Hypervisor Communication
+Block (GHCB) specification. The value of 'ghcb_msr' will be the contents of
+the GHCB MSR register at the time of the VMGEXIT, which can either be the GPA
+of the GHCB page for page-based GHCB requests, or an encoding of an MSR-based
+GHCB request. The mechanism to distinguish between these two and determine the
+type of request is the same as what is documented in the GHCB specification.
+
+Not all VMGEXITs or GHCB requests will be forwarded to userspace. Currently
+this will only be the case for "SNP Page State Change" requests (PSCs), and
+only for the subset of these which involve actual shared <-> private
+transition. Userspace is expected to process these requests in accordance
+with the GHCB specification and issue KVM_SET_MEMORY_ATTRIBUTE ioctls to
+perform the shared/private transitions.
+
+GHCB page-based PSC requests require returning a 64-bit return value to the
+guest via the SW_EXITINFO2 field of the vCPU's VMCB structure, as documented
+in the GHCB. Userspace must set 'ret' to what the GHCB specification documents
+the SW_EXITINFO2 VMCB field should be set to after processing a PSC request.
+
+For MSR-based PSC requests, userspace must set the value of 'ghcb_msr' to be
+the same as what the GHCB specification documents the actual GHCB MSR register
+should be set to after processing a PSC request.
+
 
 6. Capabilities that can be enabled on vCPUs
 ============================================
