@@ -7053,7 +7053,7 @@ void kvm_arch_update_mem_attr(struct kvm *kvm, struct kvm_memory_slot *slot,
 
 	unsigned long lpage_start, lpage_end;
 	unsigned long gfn, pages, mask;
-	int level;
+	int level, ret;
 
 	WARN_ONCE(!(attr & (KVM_MEM_ATTR_PRIVATE | KVM_MEM_ATTR_SHARED)),
 			"Unsupported mem attribute.\n");
@@ -7077,7 +7077,7 @@ void kvm_arch_update_mem_attr(struct kvm *kvm, struct kvm_memory_slot *slot,
 						     lpage_start, start));
 
 		if (lpage_start == lpage_end)
-			return;
+			goto out;
 
 		for (gfn = lpage_start + pages; gfn < lpage_end; gfn += pages)
 			linfo_update_mixed(lpage_info_slot(gfn, slot, level),
@@ -7087,4 +7087,10 @@ void kvm_arch_update_mem_attr(struct kvm *kvm, struct kvm_memory_slot *slot,
 				   mem_attr_is_mixed(kvm, slot, level, attr,
 						     end, lpage_end + pages));
 	}
+
+out:
+	ret = static_call(kvm_x86_update_mem_attr)(slot, attr, start, end);
+       	if (ret)
+		pr_warn_ratelimited("Failed to update GFN range 0x%llx-0x%llx to %s. Ret: %d\n",
+				    start, end, (attr & KVM_MEM_ATTR_PRIVATE) ? "private" : "shared", ret);
 }
