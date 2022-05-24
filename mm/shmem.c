@@ -1987,7 +1987,9 @@ clear:
 		int i;
 
 		for (i = 0; i < compound_nr(page); i++) {
-			clear_highpage(page + i);
+			/* For private memory, page is cleared during initial allocation. */
+			if (!(info->memfile_node.flags & MEMFILE_F_USER_INACCESSIBLE))
+				clear_highpage(page + i);
 			flush_dcache_page(page + i);
 		}
 		SetPageUptodate(page);
@@ -2809,6 +2811,16 @@ static long shmem_fallocate(struct file *file, int mode, loff_t offset,
 		if (!PageUptodate(page))
 			shmem_falloc.nr_falloced += index - shmem_falloc.next;
 		shmem_falloc.next = index;
+
+		/*
+		 * For private memory, clear the page now rather than lazily,
+		 * since a memfile notifier event might lead to the page
+		 * getting removed from the direct map as part of transitioning
+		 * to a private page, which clear_highpage() might rely on.
+		 */
+		if (!PageUptodate(page) &&
+		    (info->memfile_node.flags & MEMFILE_F_USER_INACCESSIBLE))
+			clear_highpage(page);
 
 		/*
 		 * If !PageUptodate, leave it that way so that freeable pages
