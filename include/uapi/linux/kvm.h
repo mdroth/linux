@@ -280,6 +280,7 @@ struct kvm_xen_exit {
 #define KVM_EXIT_NOTIFY           37
 #define KVM_EXIT_LOONGARCH_IOCSR  38
 #define KVM_EXIT_MEMORY_FAULT     39
+#define KVM_EXIT_VMGEXIT          50
 
 /* For KVM_EXIT_INTERNAL_ERROR */
 /* Emulate instruction failed. */
@@ -540,6 +541,11 @@ struct kvm_run {
 			__u64 gpa;
 			__u64 size;
 		} memory_fault;
+		/* KVM_EXIT_VMGEXIT */
+		struct {
+			__u64 ghcb_msr; /* GHCB MSR contents */
+			__u64 ret; /* user -> kernel */
+		} vmgexit;
 		/* Fix the size of the union. */
 		char padding[256];
 	};
