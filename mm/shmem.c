@@ -923,6 +923,16 @@ static void notify_invalidate(struct inode *inode, struct folio *folio,
 	memfile_notifier_invalidate(&info->memfile_node, start, end, folio_pfn(folio));
 }
 
+static void notify_unregister(struct memfile_notifier *notifier, struct inode *inode,
+			      struct folio *folio, pgoff_t start, pgoff_t end)
+{
+	if (!notifier->ops->unregister_cb)
+		return;
+
+	/* TODO: this should go through a memfile_notifier_* helper like the others */
+	notifier->ops->unregister_cb(notifier, start, end, folio_pfn(folio));
+}
+
 /*
  * Remove range of pages and swap entries from page cache, and free them.
  * If !unfalloc, truncate or punch hole; if unfalloc, undo failed fallocate.
@@ -4006,10 +4016,57 @@ static void shmem_put_unlock_pfn(pfn_t pfn)
 	put_page(page);
 }
 
+static void shmem_unregister_notifier(struct memfile_notifier *notifier,
+				      struct inode *inode)
+{
+	struct address_space *mapping;
+	pgoff_t indices[PAGEVEC_SIZE];
+	struct shmem_inode_info *info;
+	struct folio_batch fbatch;
+	pgoff_t index;
+	pgoff_t start;
+	pgoff_t inode_pages;
+
+	info = SHMEM_I(inode);
+	if (!(info->memfile_node.flags & MEMFILE_F_USER_INACCESSIBLE))
+		return;
+
+	start = 0;
+	inode_pages = i_size_read(inode) / PAGE_SIZE;
+	mapping = inode->i_mapping;
+	folio_batch_init(&fbatch);
+	index = start;
+
+	/* TODO: does this need the same partial-folio handling as shmem_undo_range()? */
+	while (index < inode_pages && find_lock_entries(mapping, index, inode_pages - 1,
+							&fbatch, indices)) {
+		int i;
+
+		for (i = 0; i < folio_batch_count(&fbatch); i++) {
+			struct folio *folio;
+			long pgcount;
+
+			folio = fbatch.folios[i];
+			index = indices[i];
+
+			if (xa_is_value(folio))
+				continue;
+
+			pgcount = folio_nr_pages(folio);
+			notify_unregister(notifier, inode, folio, index, index + pgcount);
+			index += pgcount;
+
+			folio_unlock(folio);
+		}
+		folio_batch_init(&fbatch);
+	}
+}
+
 static struct memfile_backing_store shmem_backing_store = {
 	.lookup_memfile_node = shmem_lookup_memfile_node,
 	.get_lock_pfn = shmem_get_lock_pfn,
 	.put_unlock_pfn = shmem_put_unlock_pfn,
+	.unregister = shmem_unregister_notifier,
 };
 #endif /* CONFIG_MEMFILE_NOTIFIER */
 
