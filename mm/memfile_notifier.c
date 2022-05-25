@@ -126,9 +126,11 @@ int memfile_register_notifier(struct file *file, unsigned long flags,
 }
 EXPORT_SYMBOL_GPL(memfile_register_notifier);
 
-void memfile_unregister_notifier(struct memfile_notifier *notifier)
+void memfile_unregister_notifier(struct file *file, struct memfile_notifier *notifier)
 {
 	spin_lock(&notifier->bs->lock);
+	if (notifier->bs->unregister)
+		notifier->bs->unregister(notifier, file_inode(file));
 	list_del_rcu(&notifier->list);
 	spin_unlock(&notifier->bs->lock);
 

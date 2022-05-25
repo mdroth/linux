@@ -22,6 +22,8 @@ struct memfile_node {
 	unsigned long		flags;		/* MEMFILE_F_* flags */
 };
 
+struct memfile_notifier;
+
 struct memfile_backing_store {
 	struct list_head list;
 	spinlock_t lock;
@@ -29,14 +31,16 @@ struct memfile_backing_store {
 	int (*get_lock_pfn)(struct file *file, pgoff_t offset, pfn_t *pfn,
 			    int *order);
 	void (*put_unlock_pfn)(pfn_t pfn);
+	void (*unregister)(struct memfile_notifier *notifier, struct inode *inode);
 };
 
-struct memfile_notifier;
 struct memfile_notifier_ops {
 	void (*populate)(struct memfile_notifier *notifier,
 			 pgoff_t start, pgoff_t end, unsigned long pfn_start);
 	void (*invalidate)(struct memfile_notifier *notifier,
 			   pgoff_t start, pgoff_t end, unsigned long pfn_start);
+	void (*unregister_cb)(struct memfile_notifier *notifier, pgoff_t start,
+			      pgoff_t end, unsigned long pfn_start);
 };
 
 struct memfile_notifier {
@@ -62,7 +66,7 @@ extern void memfile_notifier_invalidate(struct memfile_node *node,
 /*APIs for notifier consumers */
 extern int memfile_register_notifier(struct file *file, unsigned long flags,
 				     struct memfile_notifier *notifier);
-extern void memfile_unregister_notifier(struct memfile_notifier *notifier);
+extern void memfile_unregister_notifier(struct file *file, struct memfile_notifier *notifier);
 
 #else /* !CONFIG_MEMFILE_NOTIFIER */
 static void memfile_register_backing_store(struct memfile_backing_store *bs)

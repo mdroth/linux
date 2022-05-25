@@ -918,7 +918,7 @@ static inline int kvm_private_mem_register(struct kvm_memory_slot *slot)
 
 static inline void kvm_private_mem_unregister(struct kvm_memory_slot *slot)
 {
-	memfile_unregister_notifier(&slot->notifier);
+	memfile_unregister_notifier(slot->private_file, &slot->notifier);
 }
 
 #else /* !CONFIG_HAVE_KVM_PRIVATE_MEM */
