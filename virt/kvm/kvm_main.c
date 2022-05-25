@@ -903,6 +903,7 @@ static void kvm_private_mem_notifier_invalidate(struct memfile_notifier *notifie
 static struct memfile_notifier_ops kvm_private_mem_notifier_ops = {
 	.populate = kvm_private_mem_notifier_populate,
 	.invalidate = kvm_private_mem_notifier_invalidate,
+	.unregister_cb = kvm_private_mem_notifier_invalidate,
 };
 
 #define KVM_MEMFILE_FLAGS MEMFILE_F_USER_INACCESSIBLE | \
@@ -980,16 +981,28 @@ static void kvm_destroy_dirty_bitmap(struct kvm_memory_slot *memslot)
 /* This does not remove the slot from struct kvm_memslots data structures */
 static void kvm_free_memslot(struct kvm *kvm, struct kvm_memory_slot *slot)
 {
-	if (slot->flags & KVM_MEM_PRIVATE) {
-		kvm_private_mem_unregister(slot);
-		fput(slot->private_file);
-	}
-
 	kvm_destroy_dirty_bitmap(slot);
 
 	kvm_arch_free_memslot(kvm, slot);
 
 	kfree(slot);
+}
+
+static void kvm_cleanup_private_memslots(struct kvm *kvm, struct kvm_memslots *slots)
+{
+	struct hlist_node *idnode;
+	struct kvm_memory_slot *memslot;
+	int bkt;
+
+	if (!slots->node_idx)
+		return;
+
+	hash_for_each_safe(slots->id_hash, bkt, idnode, memslot, id_node[1]) {
+		if (memslot->flags & KVM_MEM_PRIVATE) {
+			kvm_private_mem_unregister(memslot);
+			fput(memslot->private_file);
+		}
+	}
 }
 
 static void kvm_free_memslots(struct kvm *kvm, struct kvm_memslots *slots)
@@ -1328,6 +1341,10 @@ static void kvm_destroy_vm(struct kvm *kvm)
 #endif
 	kvm_arch_destroy_vm(kvm);
 	kvm_destroy_devices(kvm);
+	for (i = 0; i < KVM_ADDRESS_SPACE_NUM; i++) {
+		kvm_cleanup_private_memslots(kvm, &kvm->__memslots[i][0]);
+		kvm_cleanup_private_memslots(kvm, &kvm->__memslots[i][1]);
+	}
 	for (i = 0; i < KVM_ADDRESS_SPACE_NUM; i++) {
 		kvm_free_memslots(kvm, &kvm->__memslots[i][0]);
 		kvm_free_memslots(kvm, &kvm->__memslots[i][1]);
