@@ -4162,7 +4162,7 @@ out_unlock:
 	else
 		write_unlock(&vcpu->kvm->mmu_lock);
 
-	if (fault->is_private)
+	if (kvm_slot_is_private(fault->slot) && fault->is_private)
 		kvm_private_mem_put_pfn(fault->slot, fault->pfn);
 	else
 		kvm_release_pfn_clean(fault->pfn);
