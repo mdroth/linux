@@ -4094,9 +4094,16 @@ static bool is_page_fault_stale(struct kvm_vcpu *vcpu,
 			mmu_notifier_retry_hva(vcpu->kvm, mmu_seq, fault->hva);
 }
 
-static bool kvm_vcpu_is_private_gfn(struct kvm_vcpu *vcpu, gfn_t gfn)
+static bool kvm_vcpu_is_private_gfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 {
 	gpa_t priv_gfn_end = vcpu->priv_gfn + vcpu->priv_pages;
+	gfn_t gfn = fault->gfn;
+
+	if (!fault->slot)
+		return false;
+
+	if (static_call(kvm_x86_fault_is_private)(vcpu, fault))
+		return true;
 
 	if ((gfn >= vcpu->priv_gfn) && (gfn < priv_gfn_end))
 		return true;
@@ -4113,7 +4120,7 @@ static int direct_page_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 
 	fault->gfn = fault->addr >> PAGE_SHIFT;
 	fault->slot = kvm_vcpu_gfn_to_memslot(vcpu, fault->gfn);
-	fault->is_private = kvm_vcpu_is_private_gfn(vcpu, fault->gfn);
+	fault->is_private = kvm_vcpu_is_private_gfn(vcpu, fault);
 
 	if (page_fault_handle_page_track(vcpu, fault))
 		return RET_PF_EMULATE;

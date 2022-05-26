@@ -4631,3 +4631,43 @@ exit:
 	mutex_unlock(&kvm->slots_arch_lock);
 	return ret;
 }
+
+int sev_fault_is_private(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
+{
+	struct kvm_arch_memory_slot *aslot;
+	struct kvm_memory_slot *slot;
+	struct kvm *kvm = vcpu->kvm;
+	bool private = false;
+	gfn_t gfn, rel_gfn;
+
+	if (!sev_guest(kvm))
+		goto out;
+
+	if (!kvm->arch.upm_mode)
+		goto out;
+
+	gfn = fault->gfn;
+	slot = gfn_to_memslot(kvm, gfn);
+	if (!slot) {
+		pr_err("%s: memslot not found for gfn %llx\n",
+		       __func__, gfn);
+		goto out;
+	}
+
+	if (!kvm_slot_is_private(slot))
+		goto out;
+
+	mutex_lock(&kvm->slots_arch_lock);
+	aslot = &slot->arch;
+	rel_gfn = gfn - slot->base_gfn;
+	if (!aslot->shared_bitmap) {
+		pr_err("%s: memslot shared bitmap not found for base_gfn %llx, pages %lx\n",
+		       __func__, slot->base_gfn, slot->npages);
+		goto out_unlock;
+	}
+	private = !test_bit(rel_gfn, aslot->shared_bitmap);
+out_unlock:
+	mutex_unlock(&kvm->slots_arch_lock);
+out:
+	return private ? 1 : 0;
+}

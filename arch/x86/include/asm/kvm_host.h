@@ -1456,6 +1456,7 @@ struct kvm_x86_ops {
 			     struct kvm_memory_slot *slot);
 	bool (*update_gpa_range)(struct kvm_vcpu *vcpu, gfn_t gfn, unsigned long npages,
 				 unsigned long op);
+	int (*fault_is_private)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault);
 
 	bool (*has_wbinvd_exit)(void);
 
