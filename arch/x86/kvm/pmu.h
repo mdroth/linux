@@ -8,6 +8,9 @@
 #define pmu_to_vcpu(pmu)  (container_of((pmu), struct kvm_vcpu, arch.pmu))
 #define pmc_to_pmu(pmc)   (&(pmc)->vcpu->arch.pmu)
 
+#define MSR_IA32_MISC_ENABLE_PMU_RO_MASK (MSR_IA32_MISC_ENABLE_PEBS_UNAVAIL |	\
+					  MSR_IA32_MISC_ENABLE_BTS_UNAVAIL)
+
 /* retrieve the 4 bits for EN and PMI out of IA32_FIXED_CTR_CTRL */
 #define fixed_ctrl_field(ctrl_reg, idx) (((ctrl_reg) >> ((idx)*4)) & 0xf)
 
@@ -159,14 +162,21 @@ extern struct x86_pmu_capability kvm_pmu_cap;
 
 static inline void kvm_init_pmu_capability(void)
 {
+	bool is_intel = boot_cpu_data.x86_vendor == X86_VENDOR_INTEL;
+
 	perf_get_x86_pmu_capability(&kvm_pmu_cap);
 
-	/*
-	 * Only support guest architectural pmu on
-	 * a host with architectural pmu.
-	 */
-	if (!kvm_pmu_cap.version)
+	 /*
+	  * For Intel, only support guest architectural pmu
+	  * on a host with architectural pmu.
+	  */
+	if ((is_intel && !kvm_pmu_cap.version) || !kvm_pmu_cap.num_counters_gp)
+		enable_pmu = false;
+
+	if (!enable_pmu) {
 		memset(&kvm_pmu_cap, 0, sizeof(kvm_pmu_cap));
+		return;
+	}
 
 	kvm_pmu_cap.version = min(kvm_pmu_cap.version, 2);
 	kvm_pmu_cap.num_counters_fixed = min(kvm_pmu_cap.num_counters_fixed,
