@@ -284,7 +284,8 @@ const struct _kvm_stats_desc kvm_vcpu_stats_desc[] = {
 	STATS_DESC_COUNTER(VCPU, nested_run),
 	STATS_DESC_COUNTER(VCPU, directed_yield_attempted),
 	STATS_DESC_COUNTER(VCPU, directed_yield_successful),
-	STATS_DESC_ICOUNTER(VCPU, guest_mode)
+	STATS_DESC_ICOUNTER(VCPU, guest_mode),
+	STATS_DESC_COUNTER(VCPU, notify_window_exits),
 };
 
 const struct kvm_stats_header kvm_vcpu_stats_header = {
@@ -3547,12 +3548,12 @@ int kvm_set_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		break;
 	case MSR_IA32_MISC_ENABLE: {
 		u64 old_val = vcpu->arch.ia32_misc_enable_msr;
-		u64 pmu_mask = MSR_IA32_MISC_ENABLE_EMON |
-			MSR_IA32_MISC_ENABLE_PEBS_UNAVAIL;
+		u64 pmu_mask = MSR_IA32_MISC_ENABLE_PMU_RO_MASK |
+			MSR_IA32_MISC_ENABLE_EMON;
 
 		/* RO bits */
 		if (!msr_info->host_initiated &&
-		    ((old_val ^ data) & MSR_IA32_MISC_ENABLE_PEBS_UNAVAIL))
+		    ((old_val ^ data) & MSR_IA32_MISC_ENABLE_PMU_RO_MASK))
 			return 1;
 
 		/*
@@ -4401,6 +4402,9 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	}
 	case KVM_CAP_DISABLE_QUIRKS2:
 		r = KVM_X86_VALID_QUIRKS;
+		break;
+	case KVM_CAP_X86_NOTIFY_VMEXIT:
+		r = kvm_caps.has_notify_vmexit;
 		break;
 	default:
 		break;
@@ -6121,6 +6125,22 @@ split_irqchip_unlock:
 			r = 0;
 		} else if (!kvm->arch.max_vcpu_ids) {
 			kvm->arch.max_vcpu_ids = cap->args[0];
+			r = 0;
+		}
+		mutex_unlock(&kvm->lock);
+		break;
+	case KVM_CAP_X86_NOTIFY_VMEXIT:
+		r = -EINVAL;
+		if ((u32)cap->args[0] & ~KVM_X86_NOTIFY_VMEXIT_VALID_BITS)
+			break;
+		if (!kvm_caps.has_notify_vmexit)
+			break;
+		if (!((u32)cap->args[0] & KVM_X86_NOTIFY_VMEXIT_ENABLED))
+			break;
+		mutex_lock(&kvm->lock);
+		if (!kvm->created_vcpus) {
+			kvm->arch.notify_window = cap->args[0] >> 32;
+			kvm->arch.notify_vmexit_flags = (u32)cap->args[0];
 			r = 0;
 		}
 		mutex_unlock(&kvm->lock);
