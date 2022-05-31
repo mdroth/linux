@@ -313,7 +313,7 @@ void *snp_alloc_firmware_page(gfp_t gfp_mask)
 }
 EXPORT_SYMBOL_GPL(snp_alloc_firmware_page);
 
-static void __snp_free_firmware_pages(struct page *page, int order, bool locked)
+static void __snp_free_firmware_pages(struct page *page, int order, bool locked, bool snp_inited)
 {
 	unsigned long paddr, npages = 1ul << order;
 
@@ -321,7 +321,7 @@ static void __snp_free_firmware_pages(struct page *page, int order, bool locked)
 		return;
 
 	paddr = __pa((unsigned long)page_address(page));
-	if (snp_set_rmp_state(paddr, npages, false, locked, true))
+	if (snp_inited && snp_set_rmp_state(paddr, npages, false, locked, true))
 		return;
 
 	__free_pages(page, order);
@@ -332,7 +332,7 @@ void snp_free_firmware_page(void *addr)
 	if (!addr)
 		return;
 
-	__snp_free_firmware_pages(virt_to_page(addr), 0, false);
+	__snp_free_firmware_pages(virt_to_page(addr), 0, false, true);
 }
 EXPORT_SYMBOL(snp_free_firmware_page);
 
@@ -2040,7 +2040,7 @@ static void sev_firmware_shutdown(struct sev_device *sev)
 
 		__snp_free_firmware_pages(virt_to_page(sev_es_tmr),
 					  get_order(sev_es_tmr_size),
-					  false);
+					  false, sev->snp_inited);
 		sev_es_tmr = NULL;
 	}
 
