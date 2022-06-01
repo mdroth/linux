@@ -3411,7 +3411,7 @@ static int mmu_alloc_direct_roots(struct kvm_vcpu *vcpu)
 			root = mmu_alloc_root(vcpu, i << (30 - PAGE_SHIFT),
 					      i << 30, PT32_ROOT_LEVEL, true);
 			mmu->pae_root[i] = root | PT_PRESENT_MASK |
-					   shadow_me_mask;
+					   shadow_me_value;
 		}
 		mmu->root.hpa = __pa(mmu->pae_root);
 	} else {
@@ -6317,7 +6317,7 @@ int kvm_mmu_vendor_module_init(void)
 	if (percpu_counter_init(&kvm_total_used_mmu_pages, 0, GFP_KERNEL))
 		goto out;
 
-	ret = register_shrinker(&mmu_shrinker);
+	ret = register_shrinker(&mmu_shrinker, "x86-mmu");
 	if (ret)
 		goto out;
 
