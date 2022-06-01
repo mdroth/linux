@@ -165,6 +165,8 @@ static bool amd_iommu_disabled __initdata;
 static bool amd_iommu_force_enable __initdata;
 static int amd_iommu_target_ivhd_type;
 
+static bool amd_iommu_snp_sup;
+
 LIST_HEAD(amd_iommu_pci_seg_list);	/* list of all PCI segments */
 LIST_HEAD(amd_iommu_list);		/* list of all AMD IOMMUs in the
 					   system */
@@ -259,7 +261,6 @@ int amd_iommu_get_num_iommus(void)
 	return amd_iommus_present;
 }
 
-#ifdef CONFIG_IRQ_REMAP
 /*
  * Iterate through all the IOMMUs to verify if the specified
  * EFR bitmask of IOMMU feature are set.
@@ -284,7 +285,6 @@ static bool check_feature_on_all_iommus(u64 mask)
 	}
 	return ret;
 }
-#endif
 
 /*
  * For IVHD type 0x11/0x40, EFR is also available via IVHD.
@@ -367,7 +367,7 @@ static void iommu_set_cwwb_range(struct amd_iommu *iommu)
 	u64 start = iommu_virt_to_phys((void *)iommu->cmd_sem);
 	u64 entry = start & PM_ADDR_MASK;
 
-	if (!iommu_feature(iommu, FEATURE_SNP))
+	if (!amd_iommu_snp_sup)
 		return;
 
 	/* Note:
@@ -782,7 +782,7 @@ static void *__init iommu_alloc_4k_pages(struct amd_iommu *iommu,
 	void *buf = (void *)__get_free_pages(gfp, order);
 
 	if (buf &&
-	    iommu_feature(iommu, FEATURE_SNP) &&
+	    amd_iommu_snp_sup &&
 	    set_memory_4k((unsigned long)buf, (1 << order))) {
 		free_pages((unsigned long)buf, order);
 		buf = NULL;
@@ -1889,6 +1889,7 @@ static int __init init_iommu_all(struct acpi_table_header *table)
 	WARN_ON(p != end);
 
 	/* Phase 2 : Early feature support check */
+	amd_iommu_snp_sup = check_feature_on_all_iommus(FEATURE_SNP);
 
 	/* Phase 3 : Enabling IOMMU features */
 	for_each_iommu(iommu) {
@@ -2116,6 +2117,9 @@ static void print_iommu_info(void)
 
 			if (iommu->features & FEATURE_GAM_VAPIC)
 				pr_cont(" GA_vAPIC");
+
+			if (iommu->features & FEATURE_SNP)
+				pr_cont(" SNP");
 
 			pr_cont("\n");
 		}
