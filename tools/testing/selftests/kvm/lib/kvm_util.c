@@ -8,7 +8,6 @@
 #define _GNU_SOURCE /* for program_invocation_name */
 #include "test_util.h"
 #include "kvm_util.h"
-#include "kvm_util_internal.h"
 #include "processor.h"
 
 #include <assert.h>
@@ -76,115 +75,31 @@ int kvm_check_cap(long cap)
 	int kvm_fd;
 
 	kvm_fd = open_kvm_dev_path_or_exit();
-	ret = ioctl(kvm_fd, KVM_CHECK_EXTENSION, cap);
-	TEST_ASSERT(ret >= 0, "KVM_CHECK_EXTENSION IOCTL failed,\n"
-		"  rc: %i errno: %i", ret, errno);
+	ret = __kvm_ioctl(kvm_fd, KVM_CHECK_EXTENSION, cap);
+	TEST_ASSERT(ret >= 0, KVM_IOCTL_ERROR(KVM_CHECK_EXTENSION, ret));
 
 	close(kvm_fd);
 
 	return ret;
 }
 
-/* VM Check Capability
- *
- * Input Args:
- *   vm - Virtual Machine
- *   cap - Capability
- *
- * Output Args: None
- *
- * Return:
- *   On success, the Value corresponding to the capability (KVM_CAP_*)
- *   specified by the value of cap.  On failure a TEST_ASSERT failure
- *   is produced.
- *
- * Looks up and returns the value corresponding to the capability
- * (KVM_CAP_*) given by cap.
- */
-int vm_check_cap(struct kvm_vm *vm, long cap)
-{
-	int ret;
-
-	ret = ioctl(vm->fd, KVM_CHECK_EXTENSION, cap);
-	TEST_ASSERT(ret >= 0, "KVM_CHECK_EXTENSION VM IOCTL failed,\n"
-		"  rc: %i errno: %i", ret, errno);
-
-	return ret;
-}
-
-/* VM Enable Capability
- *
- * Input Args:
- *   vm - Virtual Machine
- *   cap - Capability
- *
- * Output Args: None
- *
- * Return: On success, 0. On failure a TEST_ASSERT failure is produced.
- *
- * Enables a capability (KVM_CAP_*) on the VM.
- */
-int vm_enable_cap(struct kvm_vm *vm, struct kvm_enable_cap *cap)
-{
-	int ret;
-
-	ret = ioctl(vm->fd, KVM_ENABLE_CAP, cap);
-	TEST_ASSERT(ret == 0, "KVM_ENABLE_CAP IOCTL failed,\n"
-		"  rc: %i errno: %i", ret, errno);
-
-	return ret;
-}
-
-/* VCPU Enable Capability
- *
- * Input Args:
- *   vm - Virtual Machine
- *   vcpu_id - VCPU
- *   cap - Capability
- *
- * Output Args: None
- *
- * Return: On success, 0. On failure a TEST_ASSERT failure is produced.
- *
- * Enables a capability (KVM_CAP_*) on the VCPU.
- */
-int vcpu_enable_cap(struct kvm_vm *vm, uint32_t vcpu_id,
-		    struct kvm_enable_cap *cap)
-{
-	struct vcpu *vcpu = vcpu_find(vm, vcpu_id);
-	int r;
-
-	TEST_ASSERT(vcpu, "cannot find vcpu %d", vcpu_id);
-
-	r = ioctl(vcpu->fd, KVM_ENABLE_CAP, cap);
-	TEST_ASSERT(!r, "KVM_ENABLE_CAP vCPU ioctl failed,\n"
-			"  rc: %i, errno: %i", r, errno);
-
-	return r;
-}
-
 void vm_enable_dirty_ring(struct kvm_vm *vm, uint32_t ring_size)
 {
-	struct kvm_enable_cap cap = { 0 };
-
-	cap.cap = KVM_CAP_DIRTY_LOG_RING;
-	cap.args[0] = ring_size;
-	vm_enable_cap(vm, &cap);
+	vm_enable_cap(vm, KVM_CAP_DIRTY_LOG_RING, ring_size);
 	vm->dirty_ring_size = ring_size;
 }
 
-static void vm_open(struct kvm_vm *vm, int perm)
+static void vm_open(struct kvm_vm *vm)
 {
-	vm->kvm_fd = _open_kvm_dev_path_or_exit(perm);
+	vm->kvm_fd = _open_kvm_dev_path_or_exit(O_RDWR);
 
 	if (!kvm_check_cap(KVM_CAP_IMMEDIATE_EXIT)) {
 		print_skip("immediate_exit not available");
 		exit(KSFT_SKIP);
 	}
 
-	vm->fd = ioctl(vm->kvm_fd, KVM_CREATE_VM, vm->type);
-	TEST_ASSERT(vm->fd >= 0, "KVM_CREATE_VM ioctl failed, "
-		"rc: %i errno: %i", vm->fd, errno);
+	vm->fd = __kvm_ioctl(vm->kvm_fd, KVM_CREATE_VM, vm->type);
+	TEST_ASSERT(vm->fd >= 0, KVM_IOCTL_ERROR(KVM_CREATE_VM, vm->fd));
 }
 
 const char *vm_guest_mode_string(uint32_t i)
@@ -234,31 +149,12 @@ const struct vm_guest_mode_params vm_guest_mode_params[] = {
 _Static_assert(sizeof(vm_guest_mode_params)/sizeof(struct vm_guest_mode_params) == NUM_VM_MODES,
 	       "Missing new mode params?");
 
-/*
- * VM Create
- *
- * Input Args:
- *   mode - VM Mode (e.g. VM_MODE_P52V48_4K)
- *   phy_pages - Physical memory pages
- *   perm - permission
- *
- * Output Args: None
- *
- * Return:
- *   Pointer to opaque structure that describes the created VM.
- *
- * Creates a VM with the mode specified by mode (e.g. VM_MODE_P52V48_4K).
- * When phy_pages is non-zero, a memory region of phy_pages physical pages
- * is created and mapped starting at guest physical address 0.  The file
- * descriptor to control the created VM is created with the permissions
- * given by perm (e.g. O_RDWR).
- */
-struct kvm_vm *vm_create(enum vm_guest_mode mode, uint64_t phy_pages, int perm)
+struct kvm_vm *__vm_create(enum vm_guest_mode mode, uint64_t phy_pages)
 {
 	struct kvm_vm *vm;
 
-	pr_debug("%s: mode='%s' pages='%ld' perm='%d'\n", __func__,
-		 vm_guest_mode_string(mode), phy_pages, perm);
+	pr_debug("%s: mode='%s' pages='%ld'\n", __func__,
+		 vm_guest_mode_string(mode), phy_pages);
 
 	vm = calloc(1, sizeof(*vm));
 	TEST_ASSERT(vm != NULL, "Insufficient Memory");
@@ -340,7 +236,7 @@ struct kvm_vm *vm_create(enum vm_guest_mode mode, uint64_t phy_pages, int perm)
 		vm->type = KVM_VM_TYPE_ARM_IPA_SIZE(vm->pa_bits);
 #endif
 
-	vm_open(vm, perm);
+	vm_open(vm);
 
 	/* Limit to VA-bit canonical virtual addresses. */
 	vm->vpages_valid = sparsebit_alloc();
@@ -362,11 +258,31 @@ struct kvm_vm *vm_create(enum vm_guest_mode mode, uint64_t phy_pages, int perm)
 	return vm;
 }
 
+/*
+ * VM Create
+ *
+ * Input Args:
+ *   phy_pages - Physical memory pages
+ *
+ * Output Args: None
+ *
+ * Return:
+ *   Pointer to opaque structure that describes the created VM.
+ *
+ * Creates a VM with the default physical/virtual address widths and page size.
+ * When phy_pages is non-zero, a memory region of phy_pages physical pages
+ * is created and mapped starting at guest physical address 0.
+ */
+struct kvm_vm *vm_create(uint64_t phy_pages)
+{
+	return __vm_create(VM_MODE_DEFAULT, phy_pages);
+}
+
 struct kvm_vm *vm_create_without_vcpus(enum vm_guest_mode mode, uint64_t pages)
 {
 	struct kvm_vm *vm;
 
-	vm = vm_create(mode, pages, O_RDWR);
+	vm = __vm_create(mode, pages);
 
 	kvm_vm_elf_load(vm, program_invocation_name);
 
@@ -458,7 +374,6 @@ struct kvm_vm *vm_create_default(uint32_t vcpuid, uint64_t extra_mem_pages,
  *
  * Input Args:
  *   vm - VM that has been released before
- *   perm - permission
  *
  * Output Args: None
  *
@@ -466,12 +381,12 @@ struct kvm_vm *vm_create_default(uint32_t vcpuid, uint64_t extra_mem_pages,
  * global state, such as the irqchip and the memory regions that are mapped
  * into the guest.
  */
-void kvm_vm_restart(struct kvm_vm *vmp, int perm)
+void kvm_vm_restart(struct kvm_vm *vmp)
 {
 	int ctr;
 	struct userspace_mem_region *region;
 
-	vm_open(vmp, perm);
+	vm_open(vmp);
 	if (vmp->has_irqchip)
 		vm_create_irqchip(vmp);
 
@@ -486,36 +401,6 @@ void kvm_vm_restart(struct kvm_vm *vmp, int perm)
 			    region->region.guest_phys_addr,
 			    region->region.memory_size);
 	}
-}
-
-void kvm_vm_get_dirty_log(struct kvm_vm *vm, int slot, void *log)
-{
-	struct kvm_dirty_log args = { .dirty_bitmap = log, .slot = slot };
-	int ret;
-
-	ret = ioctl(vm->fd, KVM_GET_DIRTY_LOG, &args);
-	TEST_ASSERT(ret == 0, "%s: KVM_GET_DIRTY_LOG failed: %s",
-		    __func__, strerror(-ret));
-}
-
-void kvm_vm_clear_dirty_log(struct kvm_vm *vm, int slot, void *log,
-			    uint64_t first_page, uint32_t num_pages)
-{
-	struct kvm_clear_dirty_log args = {
-		.dirty_bitmap = log, .slot = slot,
-		.first_page = first_page,
-		.num_pages = num_pages
-	};
-	int ret;
-
-	ret = ioctl(vm->fd, KVM_CLEAR_DIRTY_LOG, &args);
-	TEST_ASSERT(ret == 0, "%s: KVM_CLEAR_DIRTY_LOG failed: %s",
-		    __func__, strerror(-ret));
-}
-
-uint32_t kvm_vm_reset_dirty_ring(struct kvm_vm *vm)
-{
-	return ioctl(vm->fd, KVM_RESET_DIRTY_RINGS);
 }
 
 /*
@@ -589,23 +474,7 @@ kvm_userspace_memory_region_find(struct kvm_vm *vm, uint64_t start,
 	return &region->region;
 }
 
-/*
- * VCPU Find
- *
- * Input Args:
- *   vm - Virtual Machine
- *   vcpuid - VCPU ID
- *
- * Output Args: None
- *
- * Return:
- *   Pointer to VCPU structure
- *
- * Locates a vcpu structure that describes the VCPU specified by vcpuid and
- * returns a pointer to it.  Returns NULL if the VM doesn't contain a VCPU
- * for the specified vcpuid.
- */
-struct vcpu *vcpu_find(struct kvm_vm *vm, uint32_t vcpuid)
+static struct vcpu *vcpu_find(struct kvm_vm *vm, uint32_t vcpuid)
 {
 	struct vcpu *vcpu;
 
@@ -615,6 +484,14 @@ struct vcpu *vcpu_find(struct kvm_vm *vm, uint32_t vcpuid)
 	}
 
 	return NULL;
+}
+
+struct vcpu *vcpu_get(struct kvm_vm *vm, uint32_t vcpuid)
+{
+	struct vcpu *vcpu = vcpu_find(vm, vcpuid);
+
+	TEST_ASSERT(vcpu, "vCPU %d does not exist", vcpuid);
+	return vcpu;
 }
 
 /*
@@ -635,17 +512,15 @@ static void vm_vcpu_rm(struct kvm_vm *vm, struct vcpu *vcpu)
 
 	if (vcpu->dirty_gfns) {
 		ret = munmap(vcpu->dirty_gfns, vm->dirty_ring_size);
-		TEST_ASSERT(ret == 0, "munmap of VCPU dirty ring failed, "
-			    "rc: %i errno: %i", ret, errno);
+		TEST_ASSERT(!ret, __KVM_SYSCALL_ERROR("munmap()", ret));
 		vcpu->dirty_gfns = NULL;
 	}
 
 	ret = munmap(vcpu->state, vcpu_mmap_sz());
-	TEST_ASSERT(ret == 0, "munmap of VCPU fd failed, rc: %i "
-		"errno: %i", ret, errno);
+	TEST_ASSERT(!ret, __KVM_SYSCALL_ERROR("munmap()", ret));
+
 	ret = close(vcpu->fd);
-	TEST_ASSERT(ret == 0, "Close of VCPU fd failed, rc: %i "
-		"errno: %i", ret, errno);
+	TEST_ASSERT(!ret,  __KVM_SYSCALL_ERROR("close()", ret));
 
 	list_del(&vcpu->list);
 	free(vcpu);
@@ -660,12 +535,10 @@ void kvm_vm_release(struct kvm_vm *vmp)
 		vm_vcpu_rm(vmp, vcpu);
 
 	ret = close(vmp->fd);
-	TEST_ASSERT(ret == 0, "Close of vm fd failed,\n"
-		"  vmp->fd: %i rc: %i errno: %i", vmp->fd, ret, errno);
+	TEST_ASSERT(!ret,  __KVM_SYSCALL_ERROR("close()", ret));
 
 	ret = close(vmp->kvm_fd);
-	TEST_ASSERT(ret == 0, "Close of /dev/kvm fd failed,\n"
-		"  vmp->kvm_fd: %i rc: %i errno: %i", vmp->kvm_fd, ret, errno);
+	TEST_ASSERT(!ret,  __KVM_SYSCALL_ERROR("close()", ret));
 }
 
 static void __vm_mem_region_delete(struct kvm_vm *vm,
@@ -681,13 +554,11 @@ static void __vm_mem_region_delete(struct kvm_vm *vm,
 	}
 
 	region->region.memory_size = 0;
-	ret = ioctl(vm->fd, KVM_SET_USER_MEMORY_REGION, &region->region);
-	TEST_ASSERT(ret == 0, "KVM_SET_USER_MEMORY_REGION IOCTL failed, "
-		    "rc: %i errno: %i", ret, errno);
+	vm_ioctl(vm, KVM_SET_USER_MEMORY_REGION, &region->region);
 
 	sparsebit_free(&region->unused_phy_pages);
 	ret = munmap(region->mmap_start, region->mmap_size);
-	TEST_ASSERT(ret == 0, "munmap failed, rc: %i errno: %i", ret, errno);
+	TEST_ASSERT(!ret, __KVM_SYSCALL_ERROR("munmap()", ret));
 
 	free(region);
 }
@@ -727,14 +598,13 @@ int kvm_memfd_alloc(size_t size, bool hugepages)
 		memfd_flags |= MFD_HUGETLB;
 
 	fd = memfd_create("kvm_selftest", memfd_flags);
-	TEST_ASSERT(fd != -1, "memfd_create() failed, errno: %i (%s)",
-		    errno, strerror(errno));
+	TEST_ASSERT(fd != -1, __KVM_SYSCALL_ERROR("memfd_create()", fd));
 
 	r = ftruncate(fd, size);
-	TEST_ASSERT(!r, "ftruncate() failed, errno: %i (%s)", errno, strerror(errno));
+	TEST_ASSERT(!r, __KVM_SYSCALL_ERROR("ftruncate()", r));
 
 	r = fallocate(fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, 0, size);
-	TEST_ASSERT(!r, "fallocate() failed, errno: %i (%s)", errno, strerror(errno));
+	TEST_ASSERT(!r, __KVM_SYSCALL_ERROR("fallocate()", r));
 
 	return fd;
 }
@@ -1000,8 +870,7 @@ void vm_userspace_mem_region_add(struct kvm_vm *vm,
 				  vm_mem_backing_src_alias(src_type)->flag,
 				  region->fd, 0);
 	TEST_ASSERT(region->mmap_start != MAP_FAILED,
-		    "test_malloc failed, mmap_start: %p errno: %i",
-		    region->mmap_start, errno);
+		    __KVM_SYSCALL_ERROR("mmap()", (int)(unsigned long)MAP_FAILED));
 
 	TEST_ASSERT(!is_backing_src_hugetlb(src_type) ||
 		    region->mmap_start == align_ptr_up(region->mmap_start, backing_src_pagesz),
@@ -1029,7 +898,7 @@ void vm_userspace_mem_region_add(struct kvm_vm *vm,
 	region->region.guest_phys_addr = guest_paddr;
 	region->region.memory_size = npages * vm->page_size;
 	region->region.userspace_addr = (uintptr_t) region->host_mem;
-	ret = ioctl(vm->fd, KVM_SET_USER_MEMORY_REGION, &region->region);
+	ret = __vm_ioctl(vm, KVM_SET_USER_MEMORY_REGION, &region->region);
 	TEST_ASSERT(ret == 0, "KVM_SET_USER_MEMORY_REGION IOCTL failed,\n"
 		"  rc: %i errno: %i\n"
 		"  slot: %u flags: 0x%x\n"
@@ -1049,7 +918,7 @@ void vm_userspace_mem_region_add(struct kvm_vm *vm,
 					  vm_mem_backing_src_alias(src_type)->flag,
 					  region->fd, 0);
 		TEST_ASSERT(region->mmap_alias != MAP_FAILED,
-			    "mmap of alias failed, errno: %i", errno);
+			    __KVM_SYSCALL_ERROR("mmap()",  (int)(unsigned long)MAP_FAILED));
 
 		/* Align host alias address */
 		region->host_alias = align_ptr_up(region->mmap_alias, alignment);
@@ -1112,7 +981,7 @@ void vm_mem_region_set_flags(struct kvm_vm *vm, uint32_t slot, uint32_t flags)
 
 	region->region.flags = flags;
 
-	ret = ioctl(vm->fd, KVM_SET_USER_MEMORY_REGION, &region->region);
+	ret = __vm_ioctl(vm, KVM_SET_USER_MEMORY_REGION, &region->region);
 
 	TEST_ASSERT(ret == 0, "KVM_SET_USER_MEMORY_REGION IOCTL failed,\n"
 		"  rc: %i errno: %i slot: %u flags: 0x%x",
@@ -1142,7 +1011,7 @@ void vm_mem_region_move(struct kvm_vm *vm, uint32_t slot, uint64_t new_gpa)
 
 	region->region.guest_phys_addr = new_gpa;
 
-	ret = ioctl(vm->fd, KVM_SET_USER_MEMORY_REGION, &region->region);
+	ret = __vm_ioctl(vm, KVM_SET_USER_MEMORY_REGION, &region->region);
 
 	TEST_ASSERT(!ret, "KVM_SET_USER_MEMORY_REGION failed\n"
 		    "ret: %i errno: %i slot: %u new_gpa: 0x%lx",
@@ -1188,8 +1057,7 @@ static int vcpu_mmap_sz(void)
 
 	ret = ioctl(dev_fd, KVM_GET_VCPU_MMAP_SIZE, NULL);
 	TEST_ASSERT(ret >= sizeof(struct kvm_run),
-		"%s KVM_GET_VCPU_MMAP_SIZE ioctl failed, rc: %i errno: %i",
-		__func__, ret, errno);
+		    KVM_IOCTL_ERROR(KVM_GET_VCPU_MMAP_SIZE, ret));
 
 	close(dev_fd);
 
@@ -1226,18 +1094,19 @@ void vm_vcpu_add(struct kvm_vm *vm, uint32_t vcpuid)
 	/* Allocate and initialize new vcpu structure. */
 	vcpu = calloc(1, sizeof(*vcpu));
 	TEST_ASSERT(vcpu != NULL, "Insufficient Memory");
+
+	vcpu->vm = vm;
 	vcpu->id = vcpuid;
-	vcpu->fd = ioctl(vm->fd, KVM_CREATE_VCPU, vcpuid);
-	TEST_ASSERT(vcpu->fd >= 0, "KVM_CREATE_VCPU failed, rc: %i errno: %i",
-		vcpu->fd, errno);
+	vcpu->fd = __vm_ioctl(vm, KVM_CREATE_VCPU, (void *)(unsigned long)vcpuid);
+	TEST_ASSERT(vcpu->fd >= 0, KVM_IOCTL_ERROR(KVM_CREATE_VCPU, vcpu->fd));
 
 	TEST_ASSERT(vcpu_mmap_sz() >= sizeof(*vcpu->state), "vcpu mmap size "
 		"smaller than expected, vcpu_mmap_sz: %i expected_min: %zi",
 		vcpu_mmap_sz(), sizeof(*vcpu->state));
 	vcpu->state = (struct kvm_run *) mmap(NULL, vcpu_mmap_sz(),
 		PROT_READ | PROT_WRITE, MAP_SHARED, vcpu->fd, 0);
-	TEST_ASSERT(vcpu->state != MAP_FAILED, "mmap vcpu_state failed, "
-		"vcpu id: %u errno: %i", vcpuid, errno);
+	TEST_ASSERT(vcpu->state != MAP_FAILED,
+		    __KVM_SYSCALL_ERROR("mmap()", (int)(unsigned long)MAP_FAILED));
 
 	/* Add to linked-list of VCPUs. */
 	list_add(&vcpu->list, &vm->vcpus);
@@ -1570,11 +1439,7 @@ void *addr_gpa2alias(struct kvm_vm *vm, vm_paddr_t gpa)
  */
 void vm_create_irqchip(struct kvm_vm *vm)
 {
-	int ret;
-
-	ret = ioctl(vm->fd, KVM_CREATE_IRQCHIP, 0);
-	TEST_ASSERT(ret == 0, "KVM_CREATE_IRQCHIP IOCTL failed, "
-		"rc: %i errno: %i", ret, errno);
+	vm_ioctl(vm, KVM_CREATE_IRQCHIP, NULL);
 
 	vm->has_irqchip = true;
 }
@@ -1596,8 +1461,7 @@ void vm_create_irqchip(struct kvm_vm *vm)
  */
 struct kvm_run *vcpu_state(struct kvm_vm *vm, uint32_t vcpuid)
 {
-	struct vcpu *vcpu = vcpu_find(vm, vcpuid);
-	TEST_ASSERT(vcpu != NULL, "vcpu not found, vcpuid: %u", vcpuid);
+	struct vcpu *vcpu = vcpu_get(vm, vcpuid);
 
 	return vcpu->state;
 }
@@ -1619,18 +1483,16 @@ struct kvm_run *vcpu_state(struct kvm_vm *vm, uint32_t vcpuid)
 void vcpu_run(struct kvm_vm *vm, uint32_t vcpuid)
 {
 	int ret = _vcpu_run(vm, vcpuid);
-	TEST_ASSERT(ret == 0, "KVM_RUN IOCTL failed, "
-		"rc: %i errno: %i", ret, errno);
+
+	TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_RUN, ret));
 }
 
 int _vcpu_run(struct kvm_vm *vm, uint32_t vcpuid)
 {
-	struct vcpu *vcpu = vcpu_find(vm, vcpuid);
 	int rc;
 
-	TEST_ASSERT(vcpu != NULL, "vcpu not found, vcpuid: %u", vcpuid);
 	do {
-		rc = ioctl(vcpu->fd, KVM_RUN, NULL);
+		rc = __vcpu_run(vm, vcpuid);
 	} while (rc == -1 && errno == EINTR);
 
 	assert_on_unhandled_exception(vm, vcpuid);
@@ -1638,66 +1500,18 @@ int _vcpu_run(struct kvm_vm *vm, uint32_t vcpuid)
 	return rc;
 }
 
-int vcpu_get_fd(struct kvm_vm *vm, uint32_t vcpuid)
-{
-	struct vcpu *vcpu = vcpu_find(vm, vcpuid);
-
-	TEST_ASSERT(vcpu != NULL, "vcpu not found, vcpuid: %u", vcpuid);
-
-	return vcpu->fd;
-}
-
 void vcpu_run_complete_io(struct kvm_vm *vm, uint32_t vcpuid)
 {
-	struct vcpu *vcpu = vcpu_find(vm, vcpuid);
+	struct vcpu *vcpu = vcpu_get(vm, vcpuid);
 	int ret;
 
-	TEST_ASSERT(vcpu != NULL, "vcpu not found, vcpuid: %u", vcpuid);
-
 	vcpu->state->immediate_exit = 1;
-	ret = ioctl(vcpu->fd, KVM_RUN, NULL);
+	ret = __vcpu_run(vm, vcpuid);
 	vcpu->state->immediate_exit = 0;
 
 	TEST_ASSERT(ret == -1 && errno == EINTR,
 		    "KVM_RUN IOCTL didn't exit immediately, rc: %i, errno: %i",
 		    ret, errno);
-}
-
-void vcpu_set_guest_debug(struct kvm_vm *vm, uint32_t vcpuid,
-			  struct kvm_guest_debug *debug)
-{
-	struct vcpu *vcpu = vcpu_find(vm, vcpuid);
-	int ret = ioctl(vcpu->fd, KVM_SET_GUEST_DEBUG, debug);
-
-	TEST_ASSERT(ret == 0, "KVM_SET_GUEST_DEBUG failed: %d", ret);
-}
-
-/*
- * VM VCPU Set MP State
- *
- * Input Args:
- *   vm - Virtual Machine
- *   vcpuid - VCPU ID
- *   mp_state - mp_state to be set
- *
- * Output Args: None
- *
- * Return: None
- *
- * Sets the MP state of the VCPU given by vcpuid, to the state given
- * by mp_state.
- */
-void vcpu_set_mp_state(struct kvm_vm *vm, uint32_t vcpuid,
-		       struct kvm_mp_state *mp_state)
-{
-	struct vcpu *vcpu = vcpu_find(vm, vcpuid);
-	int ret;
-
-	TEST_ASSERT(vcpu != NULL, "vcpu not found, vcpuid: %u", vcpuid);
-
-	ret = ioctl(vcpu->fd, KVM_SET_MP_STATE, mp_state);
-	TEST_ASSERT(ret == 0, "KVM_SET_MP_STATE IOCTL failed, "
-		"rc: %i errno: %i", ret, errno);
 }
 
 /*
@@ -1721,7 +1535,7 @@ struct kvm_reg_list *vcpu_get_reg_list(struct kvm_vm *vm, uint32_t vcpuid)
 	struct kvm_reg_list reg_list_n = { .n = 0 }, *reg_list;
 	int ret;
 
-	ret = _vcpu_ioctl(vm, vcpuid, KVM_GET_REG_LIST, &reg_list_n);
+	ret = __vcpu_ioctl(vm, vcpuid, KVM_GET_REG_LIST, &reg_list_n);
 	TEST_ASSERT(ret == -1 && errno == E2BIG, "KVM_GET_REG_LIST n=0");
 	reg_list = calloc(1, sizeof(*reg_list) + reg_list_n.n * sizeof(__u64));
 	reg_list->n = reg_list_n.n;
@@ -1729,262 +1543,28 @@ struct kvm_reg_list *vcpu_get_reg_list(struct kvm_vm *vm, uint32_t vcpuid)
 	return reg_list;
 }
 
-/*
- * VM VCPU Regs Get
- *
- * Input Args:
- *   vm - Virtual Machine
- *   vcpuid - VCPU ID
- *
- * Output Args:
- *   regs - current state of VCPU regs
- *
- * Return: None
- *
- * Obtains the current register state for the VCPU specified by vcpuid
- * and stores it at the location given by regs.
- */
-void vcpu_regs_get(struct kvm_vm *vm, uint32_t vcpuid, struct kvm_regs *regs)
+int __vcpu_ioctl(struct kvm_vm *vm, uint32_t vcpuid,
+		 unsigned long cmd, void *arg)
 {
-	struct vcpu *vcpu = vcpu_find(vm, vcpuid);
-	int ret;
+	struct vcpu *vcpu = vcpu_get(vm, vcpuid);
 
-	TEST_ASSERT(vcpu != NULL, "vcpu not found, vcpuid: %u", vcpuid);
-
-	ret = ioctl(vcpu->fd, KVM_GET_REGS, regs);
-	TEST_ASSERT(ret == 0, "KVM_GET_REGS failed, rc: %i errno: %i",
-		ret, errno);
+	return ioctl(vcpu->fd, cmd, arg);
 }
 
-/*
- * VM VCPU Regs Set
- *
- * Input Args:
- *   vm - Virtual Machine
- *   vcpuid - VCPU ID
- *   regs - Values to set VCPU regs to
- *
- * Output Args: None
- *
- * Return: None
- *
- * Sets the regs of the VCPU specified by vcpuid to the values
- * given by regs.
- */
-void vcpu_regs_set(struct kvm_vm *vm, uint32_t vcpuid, struct kvm_regs *regs)
+void _vcpu_ioctl(struct kvm_vm *vm, uint32_t vcpuid, unsigned long cmd,
+		 const char *name, void *arg)
 {
-	struct vcpu *vcpu = vcpu_find(vm, vcpuid);
-	int ret;
+	int ret = __vcpu_ioctl(vm, vcpuid, cmd, arg);
 
-	TEST_ASSERT(vcpu != NULL, "vcpu not found, vcpuid: %u", vcpuid);
-
-	ret = ioctl(vcpu->fd, KVM_SET_REGS, regs);
-	TEST_ASSERT(ret == 0, "KVM_SET_REGS failed, rc: %i errno: %i",
-		ret, errno);
-}
-
-#ifdef __KVM_HAVE_VCPU_EVENTS
-void vcpu_events_get(struct kvm_vm *vm, uint32_t vcpuid,
-		     struct kvm_vcpu_events *events)
-{
-	struct vcpu *vcpu = vcpu_find(vm, vcpuid);
-	int ret;
-
-	TEST_ASSERT(vcpu != NULL, "vcpu not found, vcpuid: %u", vcpuid);
-
-	ret = ioctl(vcpu->fd, KVM_GET_VCPU_EVENTS, events);
-	TEST_ASSERT(ret == 0, "KVM_GET_VCPU_EVENTS, failed, rc: %i errno: %i",
-		ret, errno);
-}
-
-void vcpu_events_set(struct kvm_vm *vm, uint32_t vcpuid,
-		     struct kvm_vcpu_events *events)
-{
-	struct vcpu *vcpu = vcpu_find(vm, vcpuid);
-	int ret;
-
-	TEST_ASSERT(vcpu != NULL, "vcpu not found, vcpuid: %u", vcpuid);
-
-	ret = ioctl(vcpu->fd, KVM_SET_VCPU_EVENTS, events);
-	TEST_ASSERT(ret == 0, "KVM_SET_VCPU_EVENTS, failed, rc: %i errno: %i",
-		ret, errno);
-}
-#endif
-
-#ifdef __x86_64__
-void vcpu_nested_state_get(struct kvm_vm *vm, uint32_t vcpuid,
-			   struct kvm_nested_state *state)
-{
-	struct vcpu *vcpu = vcpu_find(vm, vcpuid);
-	int ret;
-
-	TEST_ASSERT(vcpu != NULL, "vcpu not found, vcpuid: %u", vcpuid);
-
-	ret = ioctl(vcpu->fd, KVM_GET_NESTED_STATE, state);
-	TEST_ASSERT(ret == 0,
-		"KVM_SET_NESTED_STATE failed, ret: %i errno: %i",
-		ret, errno);
-}
-
-int vcpu_nested_state_set(struct kvm_vm *vm, uint32_t vcpuid,
-			  struct kvm_nested_state *state, bool ignore_error)
-{
-	struct vcpu *vcpu = vcpu_find(vm, vcpuid);
-	int ret;
-
-	TEST_ASSERT(vcpu != NULL, "vcpu not found, vcpuid: %u", vcpuid);
-
-	ret = ioctl(vcpu->fd, KVM_SET_NESTED_STATE, state);
-	if (!ignore_error) {
-		TEST_ASSERT(ret == 0,
-			"KVM_SET_NESTED_STATE failed, ret: %i errno: %i",
-			ret, errno);
-	}
-
-	return ret;
-}
-#endif
-
-/*
- * VM VCPU System Regs Get
- *
- * Input Args:
- *   vm - Virtual Machine
- *   vcpuid - VCPU ID
- *
- * Output Args:
- *   sregs - current state of VCPU system regs
- *
- * Return: None
- *
- * Obtains the current system register state for the VCPU specified by
- * vcpuid and stores it at the location given by sregs.
- */
-void vcpu_sregs_get(struct kvm_vm *vm, uint32_t vcpuid, struct kvm_sregs *sregs)
-{
-	struct vcpu *vcpu = vcpu_find(vm, vcpuid);
-	int ret;
-
-	TEST_ASSERT(vcpu != NULL, "vcpu not found, vcpuid: %u", vcpuid);
-
-	ret = ioctl(vcpu->fd, KVM_GET_SREGS, sregs);
-	TEST_ASSERT(ret == 0, "KVM_GET_SREGS failed, rc: %i errno: %i",
-		ret, errno);
-}
-
-/*
- * VM VCPU System Regs Set
- *
- * Input Args:
- *   vm - Virtual Machine
- *   vcpuid - VCPU ID
- *   sregs - Values to set VCPU system regs to
- *
- * Output Args: None
- *
- * Return: None
- *
- * Sets the system regs of the VCPU specified by vcpuid to the values
- * given by sregs.
- */
-void vcpu_sregs_set(struct kvm_vm *vm, uint32_t vcpuid, struct kvm_sregs *sregs)
-{
-	int ret = _vcpu_sregs_set(vm, vcpuid, sregs);
-	TEST_ASSERT(ret == 0, "KVM_SET_SREGS IOCTL failed, "
-		"rc: %i errno: %i", ret, errno);
-}
-
-int _vcpu_sregs_set(struct kvm_vm *vm, uint32_t vcpuid, struct kvm_sregs *sregs)
-{
-	struct vcpu *vcpu = vcpu_find(vm, vcpuid);
-
-	TEST_ASSERT(vcpu != NULL, "vcpu not found, vcpuid: %u", vcpuid);
-
-	return ioctl(vcpu->fd, KVM_SET_SREGS, sregs);
-}
-
-void vcpu_fpu_get(struct kvm_vm *vm, uint32_t vcpuid, struct kvm_fpu *fpu)
-{
-	int ret;
-
-	ret = _vcpu_ioctl(vm, vcpuid, KVM_GET_FPU, fpu);
-	TEST_ASSERT(ret == 0, "KVM_GET_FPU failed, rc: %i errno: %i (%s)",
-		    ret, errno, strerror(errno));
-}
-
-void vcpu_fpu_set(struct kvm_vm *vm, uint32_t vcpuid, struct kvm_fpu *fpu)
-{
-	int ret;
-
-	ret = _vcpu_ioctl(vm, vcpuid, KVM_SET_FPU, fpu);
-	TEST_ASSERT(ret == 0, "KVM_SET_FPU failed, rc: %i errno: %i (%s)",
-		    ret, errno, strerror(errno));
-}
-
-void vcpu_get_reg(struct kvm_vm *vm, uint32_t vcpuid, struct kvm_one_reg *reg)
-{
-	int ret;
-
-	ret = _vcpu_ioctl(vm, vcpuid, KVM_GET_ONE_REG, reg);
-	TEST_ASSERT(ret == 0, "KVM_GET_ONE_REG failed, rc: %i errno: %i (%s)",
-		    ret, errno, strerror(errno));
-}
-
-void vcpu_set_reg(struct kvm_vm *vm, uint32_t vcpuid, struct kvm_one_reg *reg)
-{
-	int ret;
-
-	ret = _vcpu_ioctl(vm, vcpuid, KVM_SET_ONE_REG, reg);
-	TEST_ASSERT(ret == 0, "KVM_SET_ONE_REG failed, rc: %i errno: %i (%s)",
-		    ret, errno, strerror(errno));
-}
-
-/*
- * VCPU Ioctl
- *
- * Input Args:
- *   vm - Virtual Machine
- *   vcpuid - VCPU ID
- *   cmd - Ioctl number
- *   arg - Argument to pass to the ioctl
- *
- * Return: None
- *
- * Issues an arbitrary ioctl on a VCPU fd.
- */
-void vcpu_ioctl(struct kvm_vm *vm, uint32_t vcpuid,
-		unsigned long cmd, void *arg)
-{
-	int ret;
-
-	ret = _vcpu_ioctl(vm, vcpuid, cmd, arg);
-	TEST_ASSERT(ret == 0, "vcpu ioctl %lu failed, rc: %i errno: %i (%s)",
-		cmd, ret, errno, strerror(errno));
-}
-
-int _vcpu_ioctl(struct kvm_vm *vm, uint32_t vcpuid,
-		unsigned long cmd, void *arg)
-{
-	struct vcpu *vcpu = vcpu_find(vm, vcpuid);
-	int ret;
-
-	TEST_ASSERT(vcpu != NULL, "vcpu not found, vcpuid: %u", vcpuid);
-
-	ret = ioctl(vcpu->fd, cmd, arg);
-
-	return ret;
+	TEST_ASSERT(!ret, __KVM_IOCTL_ERROR(name, ret));
 }
 
 void *vcpu_map_dirty_ring(struct kvm_vm *vm, uint32_t vcpuid)
 {
-	struct vcpu *vcpu;
+	struct vcpu *vcpu = vcpu_get(vm, vcpuid);
 	uint32_t size = vm->dirty_ring_size;
 
 	TEST_ASSERT(size > 0, "Should enable dirty ring first");
-
-	vcpu = vcpu_find(vm, vcpuid);
-
-	TEST_ASSERT(vcpu, "Cannot find vcpu %u", vcpuid);
 
 	if (!vcpu->dirty_gfns) {
 		void *addr;
@@ -2011,63 +1591,23 @@ void *vcpu_map_dirty_ring(struct kvm_vm *vm, uint32_t vcpuid)
 	return vcpu->dirty_gfns;
 }
 
-/*
- * VM Ioctl
- *
- * Input Args:
- *   vm - Virtual Machine
- *   cmd - Ioctl number
- *   arg - Argument to pass to the ioctl
- *
- * Return: None
- *
- * Issues an arbitrary ioctl on a VM fd.
- */
-void vm_ioctl(struct kvm_vm *vm, unsigned long cmd, void *arg)
-{
-	int ret;
-
-	ret = _vm_ioctl(vm, cmd, arg);
-	TEST_ASSERT(ret == 0, "vm ioctl %lu failed, rc: %i errno: %i (%s)",
-		cmd, ret, errno, strerror(errno));
-}
-
-int _vm_ioctl(struct kvm_vm *vm, unsigned long cmd, void *arg)
+int __vm_ioctl(struct kvm_vm *vm, unsigned long cmd, void *arg)
 {
 	return ioctl(vm->fd, cmd, arg);
 }
 
-/*
- * KVM system ioctl
- *
- * Input Args:
- *   vm - Virtual Machine
- *   cmd - Ioctl number
- *   arg - Argument to pass to the ioctl
- *
- * Return: None
- *
- * Issues an arbitrary ioctl on a KVM fd.
- */
-void kvm_ioctl(struct kvm_vm *vm, unsigned long cmd, void *arg)
+void _vm_ioctl(struct kvm_vm *vm, unsigned long cmd, const char *name, void *arg)
 {
-	int ret;
+	int ret = __vm_ioctl(vm, cmd, arg);
 
-	ret = ioctl(vm->kvm_fd, cmd, arg);
-	TEST_ASSERT(ret == 0, "KVM ioctl %lu failed, rc: %i errno: %i (%s)",
-		cmd, ret, errno, strerror(errno));
-}
-
-int _kvm_ioctl(struct kvm_vm *vm, unsigned long cmd, void *arg)
-{
-	return ioctl(vm->kvm_fd, cmd, arg);
+	TEST_ASSERT(!ret, __KVM_IOCTL_ERROR(name, ret));
 }
 
 /*
  * Device Ioctl
  */
 
-int _kvm_device_check_attr(int dev_fd, uint32_t group, uint64_t attr)
+int __kvm_has_device_attr(int dev_fd, uint32_t group, uint64_t attr)
 {
 	struct kvm_device_attr attribute = {
 		.group = group,
@@ -2078,43 +1618,31 @@ int _kvm_device_check_attr(int dev_fd, uint32_t group, uint64_t attr)
 	return ioctl(dev_fd, KVM_HAS_DEVICE_ATTR, &attribute);
 }
 
-int kvm_device_check_attr(int dev_fd, uint32_t group, uint64_t attr)
+int __kvm_test_create_device(struct kvm_vm *vm, uint64_t type)
 {
-	int ret = _kvm_device_check_attr(dev_fd, group, attr);
+	struct kvm_create_device create_dev = {
+		.type = type,
+		.flags = KVM_CREATE_DEVICE_TEST,
+	};
 
-	TEST_ASSERT(!ret, "KVM_HAS_DEVICE_ATTR failed, rc: %i errno: %i", ret, errno);
-	return ret;
+	return __vm_ioctl(vm, KVM_CREATE_DEVICE, &create_dev);
 }
 
-int _kvm_create_device(struct kvm_vm *vm, uint64_t type, bool test, int *fd)
+int __kvm_create_device(struct kvm_vm *vm, uint64_t type)
 {
-	struct kvm_create_device create_dev;
-	int ret;
+	struct kvm_create_device create_dev = {
+		.type = type,
+		.fd = -1,
+		.flags = 0,
+	};
+	int err;
 
-	create_dev.type = type;
-	create_dev.fd = -1;
-	create_dev.flags = test ? KVM_CREATE_DEVICE_TEST : 0;
-	ret = ioctl(vm_get_fd(vm), KVM_CREATE_DEVICE, &create_dev);
-	*fd = create_dev.fd;
-	return ret;
+	err = __vm_ioctl(vm, KVM_CREATE_DEVICE, &create_dev);
+	TEST_ASSERT(err <= 0, "KVM_CREATE_DEVICE shouldn't return a positive value");
+	return err ? : create_dev.fd;
 }
 
-int kvm_create_device(struct kvm_vm *vm, uint64_t type, bool test)
-{
-	int fd, ret;
-
-	ret = _kvm_create_device(vm, type, test, &fd);
-
-	if (!test) {
-		TEST_ASSERT(!ret,
-			    "KVM_CREATE_DEVICE IOCTL failed, rc: %i errno: %i", ret, errno);
-		return fd;
-	}
-	return ret;
-}
-
-int _kvm_device_access(int dev_fd, uint32_t group, uint64_t attr,
-		      void *val, bool write)
+int __kvm_device_attr_get(int dev_fd, uint32_t group, uint64_t attr, void *val)
 {
 	struct kvm_device_attr kvmattr = {
 		.group = group,
@@ -2122,58 +1650,52 @@ int _kvm_device_access(int dev_fd, uint32_t group, uint64_t attr,
 		.flags = 0,
 		.addr = (uintptr_t)val,
 	};
-	int ret;
 
-	ret = ioctl(dev_fd, write ? KVM_SET_DEVICE_ATTR : KVM_GET_DEVICE_ATTR,
-		    &kvmattr);
-	return ret;
+	return __kvm_ioctl(dev_fd, KVM_GET_DEVICE_ATTR, &kvmattr);
 }
 
-int kvm_device_access(int dev_fd, uint32_t group, uint64_t attr,
-		      void *val, bool write)
+int __kvm_device_attr_set(int dev_fd, uint32_t group, uint64_t attr, void *val)
 {
-	int ret = _kvm_device_access(dev_fd, group, attr, val, write);
+	struct kvm_device_attr kvmattr = {
+		.group = group,
+		.attr = attr,
+		.flags = 0,
+		.addr = (uintptr_t)val,
+	};
 
-	TEST_ASSERT(!ret, "KVM_SET|GET_DEVICE_ATTR IOCTL failed, rc: %i errno: %i", ret, errno);
-	return ret;
+	return __kvm_ioctl(dev_fd, KVM_SET_DEVICE_ATTR, &kvmattr);
 }
 
-int _vcpu_has_device_attr(struct kvm_vm *vm, uint32_t vcpuid, uint32_t group,
+int __vcpu_device_attr_get(struct kvm_vm *vm, uint32_t vcpuid, uint32_t group,
+			   uint64_t attr, void *val)
+{
+	return __kvm_device_attr_get(vcpu_get(vm, vcpuid)->fd, group, attr, val);
+}
+
+void vcpu_device_attr_get(struct kvm_vm *vm, uint32_t vcpuid, uint32_t group,
+			  uint64_t attr, void *val)
+{
+	kvm_device_attr_get(vcpu_get(vm, vcpuid)->fd, group, attr, val);
+}
+
+int __vcpu_device_attr_set(struct kvm_vm *vm, uint32_t vcpuid, uint32_t group,
+			   uint64_t attr, void *val)
+{
+	return __kvm_device_attr_set(vcpu_get(vm, vcpuid)->fd, group, attr, val);
+}
+
+void vcpu_device_attr_set(struct kvm_vm *vm, uint32_t vcpuid, uint32_t group,
+			  uint64_t attr, void *val)
+{
+	kvm_device_attr_set(vcpu_get(vm, vcpuid)->fd, group, attr, val);
+}
+
+int __vcpu_has_device_attr(struct kvm_vm *vm, uint32_t vcpuid, uint32_t group,
 			  uint64_t attr)
 {
-	struct vcpu *vcpu = vcpu_find(vm, vcpuid);
+	struct vcpu *vcpu = vcpu_get(vm, vcpuid);
 
-	TEST_ASSERT(vcpu, "nonexistent vcpu id: %d", vcpuid);
-
-	return _kvm_device_check_attr(vcpu->fd, group, attr);
-}
-
-int vcpu_has_device_attr(struct kvm_vm *vm, uint32_t vcpuid, uint32_t group,
-				 uint64_t attr)
-{
-	int ret = _vcpu_has_device_attr(vm, vcpuid, group, attr);
-
-	TEST_ASSERT(!ret, "KVM_HAS_DEVICE_ATTR IOCTL failed, rc: %i errno: %i", ret, errno);
-	return ret;
-}
-
-int _vcpu_access_device_attr(struct kvm_vm *vm, uint32_t vcpuid, uint32_t group,
-			     uint64_t attr, void *val, bool write)
-{
-	struct vcpu *vcpu = vcpu_find(vm, vcpuid);
-
-	TEST_ASSERT(vcpu, "nonexistent vcpu id: %d", vcpuid);
-
-	return _kvm_device_access(vcpu->fd, group, attr, val, write);
-}
-
-int vcpu_access_device_attr(struct kvm_vm *vm, uint32_t vcpuid, uint32_t group,
-			    uint64_t attr, void *val, bool write)
-{
-	int ret = _vcpu_access_device_attr(vm, vcpuid, group, attr, val, write);
-
-	TEST_ASSERT(!ret, "KVM_SET|GET_DEVICE_ATTR IOCTL failed, rc: %i errno: %i", ret, errno);
-	return ret;
+	return __kvm_has_device_attr(vcpu->fd, group, attr);
 }
 
 /*
@@ -2187,14 +1709,14 @@ int _kvm_irq_line(struct kvm_vm *vm, uint32_t irq, int level)
 		.level  = level,
 	};
 
-	return _vm_ioctl(vm, KVM_IRQ_LINE, &irq_level);
+	return __vm_ioctl(vm, KVM_IRQ_LINE, &irq_level);
 }
 
 void kvm_irq_line(struct kvm_vm *vm, uint32_t irq, int level)
 {
 	int ret = _kvm_irq_line(vm, irq, level);
 
-	TEST_ASSERT(ret >= 0, "KVM_IRQ_LINE failed, rc: %i errno: %i", ret, errno);
+	TEST_ASSERT(ret >= 0, KVM_IOCTL_ERROR(KVM_IRQ_LINE, ret));
 }
 
 struct kvm_irq_routing *kvm_gsi_routing_create(void)
@@ -2233,7 +1755,7 @@ int _kvm_gsi_routing_write(struct kvm_vm *vm, struct kvm_irq_routing *routing)
 	int ret;
 
 	assert(routing);
-	ret = ioctl(vm_get_fd(vm), KVM_SET_GSI_ROUTING, routing);
+	ret = __vm_ioctl(vm, KVM_SET_GSI_ROUTING, routing);
 	free(routing);
 
 	return ret;
@@ -2244,8 +1766,7 @@ void kvm_gsi_routing_write(struct kvm_vm *vm, struct kvm_irq_routing *routing)
 	int ret;
 
 	ret = _kvm_gsi_routing_write(vm, routing);
-	TEST_ASSERT(ret == 0, "KVM_SET_GSI_ROUTING failed, rc: %i errno: %i",
-				ret, errno);
+	TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SET_GSI_ROUTING, ret));
 }
 
 /*
@@ -2500,6 +2021,11 @@ uint64_t vm_get_max_gfn(struct kvm_vm *vm)
 	return vm->max_gfn;
 }
 
+int vm_get_kvm_fd(struct kvm_vm *vm)
+{
+	return vm->kvm_fd;
+}
+
 int vm_get_fd(struct kvm_vm *vm)
 {
 	return vm->fd;
@@ -2543,16 +2069,4 @@ unsigned int vm_calc_num_guest_pages(enum vm_guest_mode mode, size_t size)
 	unsigned int n;
 	n = DIV_ROUND_UP(size, vm_guest_mode_params[mode].page_size);
 	return vm_adjust_num_guest_pages(mode, n);
-}
-
-int vm_get_stats_fd(struct kvm_vm *vm)
-{
-	return ioctl(vm->fd, KVM_GET_STATS_FD, NULL);
-}
-
-int vcpu_get_stats_fd(struct kvm_vm *vm, uint32_t vcpuid)
-{
-	struct vcpu *vcpu = vcpu_find(vm, vcpuid);
-
-	return ioctl(vcpu->fd, KVM_GET_STATS_FD, NULL);
 }
