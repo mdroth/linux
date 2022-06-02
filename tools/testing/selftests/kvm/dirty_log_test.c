@@ -217,16 +217,13 @@ static bool clear_log_supported(void)
 
 static void clear_log_create_vm_done(struct kvm_vm *vm)
 {
-	struct kvm_enable_cap cap = {};
 	u64 manual_caps;
 
 	manual_caps = kvm_check_cap(KVM_CAP_MANUAL_DIRTY_LOG_PROTECT2);
 	TEST_ASSERT(manual_caps, "MANUAL_CAPS is zero!");
 	manual_caps &= (KVM_DIRTY_LOG_MANUAL_PROTECT_ENABLE |
 			KVM_DIRTY_LOG_INITIALLY_SET);
-	cap.cap = KVM_CAP_MANUAL_DIRTY_LOG_PROTECT2;
-	cap.args[0] = manual_caps;
-	vm_enable_cap(vm, &cap);
+	vm_enable_cap(vm, KVM_CAP_MANUAL_DIRTY_LOG_PROTECT2, manual_caps);
 }
 
 static void dirty_log_collect_dirty_pages(struct kvm_vm *vm, int slot,
@@ -509,15 +506,13 @@ static void generate_random_array(uint64_t *guest_array, uint64_t size)
 
 static void *vcpu_worker(void *data)
 {
-	int ret, vcpu_fd;
+	int ret;
 	struct kvm_vm *vm = data;
 	uint64_t *guest_array;
 	uint64_t pages_count = 0;
 	struct kvm_signal_mask *sigmask = alloca(offsetof(struct kvm_signal_mask, sigset)
 						 + sizeof(sigset_t));
 	sigset_t *sigset = (sigset_t *) &sigmask->sigset;
-
-	vcpu_fd = vcpu_get_fd(vm, VCPU_ID);
 
 	/*
 	 * SIG_IPI is unblocked atomically while in KVM_RUN.  It causes the
@@ -539,7 +534,7 @@ static void *vcpu_worker(void *data)
 		generate_random_array(guest_array, TEST_PAGES_PER_LOOP);
 		pages_count += TEST_PAGES_PER_LOOP;
 		/* Let the guest dirty the random pages */
-		ret = ioctl(vcpu_fd, KVM_RUN, NULL);
+		ret = __vcpu_run(vm, VCPU_ID);
 		if (ret == -1 && errno == EINTR) {
 			int sig = -1;
 			sigwait(sigset, &sig);
@@ -679,7 +674,7 @@ static struct kvm_vm *create_vm(enum vm_guest_mode mode, uint32_t vcpuid,
 
 	pr_info("Testing guest mode: %s\n", vm_guest_mode_string(mode));
 
-	vm = vm_create(mode, DEFAULT_GUEST_PHY_PAGES + extra_pg_pages, O_RDWR);
+	vm = __vm_create(mode, DEFAULT_GUEST_PHY_PAGES + extra_pg_pages);
 	kvm_vm_elf_load(vm, program_invocation_name);
 #ifdef __x86_64__
 	vm_create_irqchip(vm);

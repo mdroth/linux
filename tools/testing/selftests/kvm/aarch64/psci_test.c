@@ -70,7 +70,7 @@ static void vcpu_power_off(struct kvm_vm *vm, uint32_t vcpuid)
 		.mp_state = KVM_MP_STATE_STOPPED,
 	};
 
-	vcpu_set_mp_state(vm, vcpuid, &mp_state);
+	vcpu_mp_state_set(vm, vcpuid, &mp_state);
 }
 
 static struct kvm_vm *setup_vm(void *guest_code)
@@ -78,7 +78,7 @@ static struct kvm_vm *setup_vm(void *guest_code)
 	struct kvm_vcpu_init init;
 	struct kvm_vm *vm;
 
-	vm = vm_create(VM_MODE_DEFAULT, DEFAULT_GUEST_PHY_PAGES, O_RDWR);
+	vm = vm_create(DEFAULT_GUEST_PHY_PAGES);
 	kvm_vm_elf_load(vm, program_invocation_name);
 	ucall_init(vm, NULL);
 
@@ -156,15 +156,6 @@ static void host_test_cpu_on(void)
 	kvm_vm_free(vm);
 }
 
-static void enable_system_suspend(struct kvm_vm *vm)
-{
-	struct kvm_enable_cap cap = {
-		.cap = KVM_CAP_ARM_SYSTEM_SUSPEND,
-	};
-
-	vm_enable_cap(vm, &cap);
-}
-
 static void guest_test_system_suspend(void)
 {
 	uint64_t ret;
@@ -183,7 +174,7 @@ static void host_test_system_suspend(void)
 	struct kvm_vm *vm;
 
 	vm = setup_vm(guest_test_system_suspend);
-	enable_system_suspend(vm);
+	vm_enable_cap(vm, KVM_CAP_ARM_SYSTEM_SUSPEND, 0);
 
 	vcpu_power_off(vm, VCPU_ID_TARGET);
 	run = vcpu_state(vm, VCPU_ID_SOURCE);
