@@ -5034,8 +5034,14 @@ retry_pud:
 			return 0;
 		}
 
-		if (flags & FAULT_FLAG_PAGE_SPLIT)
-			return handle_split_page_fault(&vmf);
+		if (flags & FAULT_FLAG_PAGE_SPLIT) {
+			int rcc;
+
+			pr_warn("going to split page at addr 0x%lx, flags: 0x%x\n", address, flags);
+			rcc = handle_split_page_fault(&vmf);
+			pr_warn("done split page at addr 0x%lx, rcc: %d\n", address, rcc);
+			return rcc;
+		}
 
 		if (pmd_trans_huge(vmf.orig_pmd) || pmd_devmap(vmf.orig_pmd)) {
 			if (pmd_protnone(vmf.orig_pmd) && vma_is_accessible(vma))

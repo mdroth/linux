@@ -2954,6 +2954,23 @@ static bool sev_es_sync_to_ghcb(struct vcpu_svm *svm)
 	ghcb_set_sw_exit_info_1(ghcb, svm->sev_es.ghcb_sw_exit_info_1);
 	ghcb_set_sw_exit_info_2(ghcb, svm->sev_es.ghcb_sw_exit_info_2);
 
+	/* Sync the scratch buffer area. */
+	if (svm->sev_es.ghcb_sa_sync) {
+		if (svm->sev_es.ghcb_sa_contained) {
+			memcpy(ghcb->shared_buffer + svm->sev_es.ghcb_sa_offset,
+			       svm->sev_es.ghcb_sa, svm->sev_es.ghcb_sa_len);
+		} else {
+			int ret;
+
+			ret = kvm_write_guest(svm->vcpu.kvm,
+					      svm->sev_es.ghcb_sa_gpa,
+					      svm->sev_es.ghcb_sa, svm->sev_es.ghcb_sa_len);
+			if (ret)
+				pr_warn_ratelimited("unmap_ghcb: kvm_write_guest failed while syncing scratch area, gpa: %llx, ret: %d\n", svm->sev_es.ghcb_sa_gpa, ret);
+		}
+		svm->sev_es.ghcb_sa_sync = false;
+	}
+
 	trace_kvm_vmgexit_exit(svm->vcpu.vcpu_id, ghcb);
 
 	svm_unmap_ghcb(svm, &map);
@@ -3184,18 +3201,6 @@ void sev_es_unmap_ghcb(struct vcpu_svm *svm)
 	if (!svm->sev_es.ghcb_in_use)
 		return;
 
-	 /* Sync the scratch buffer area. */
-	if (svm->sev_es.ghcb_sa_sync) {
-		int ret;
-
-		ret = kvm_write_guest(svm->vcpu.kvm,
-				svm->sev_es.ghcb_sa_gpa,
-				svm->sev_es.ghcb_sa, svm->sev_es.ghcb_sa_len);
-		if (ret)
-			pr_warn_ratelimited("unmap_ghcb: kvm_write_guest failed while syncing scratch area, gpa: %llx, ret: %d\n", svm->sev_es.ghcb_sa_gpa, ret);
-		svm->sev_es.ghcb_sa_sync = false;
-	}
-
 	sev_es_sync_to_ghcb(svm);
 
 	svm->sev_es.ghcb_in_use = false;
@@ -3261,6 +3266,8 @@ static int setup_vmgexit_scratch(struct vcpu_svm *svm, bool sync, u64 len)
 			       scratch_gpa_beg, scratch_gpa_end);
 			goto e_scratch;
 		}
+		svm->sev_es.ghcb_sa_contained = true;
+		svm->sev_es.ghcb_sa_offset = scratch_gpa_beg - ghcb_scratch_beg;
 	} else {
 		/*
 		 * The guest memory must be read into a kernel buffer, so
@@ -3271,6 +3278,7 @@ static int setup_vmgexit_scratch(struct vcpu_svm *svm, bool sync, u64 len)
 			       len, GHCB_SCRATCH_AREA_LIMIT);
 			goto e_scratch;
 		}
+		svm->sev_es.ghcb_sa_contained = false;
 	}
 
 	if (svm->sev_es.ghcb_sa_alloc_len < len) {
