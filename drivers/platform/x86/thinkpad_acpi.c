@@ -159,6 +159,7 @@ enum tpacpi_hkey_event_t {
 	TP_HKEY_EV_VOL_DOWN		= 0x1016, /* Volume down or unmute */
 	TP_HKEY_EV_VOL_MUTE		= 0x1017, /* Mixer output mute */
 	TP_HKEY_EV_PRIVACYGUARD_TOGGLE	= 0x130f, /* Toggle priv.guard on/off */
+	TP_HKEY_EV_AMT_TOGGLE		= 0x131a, /* Toggle AMT on/off */
 
 	/* Reasons for waking up from S3/S4 */
 	TP_HKEY_EV_WKUP_S3_UNDOCK	= 0x2304, /* undock requested, S3 */
@@ -3735,6 +3736,7 @@ static bool hotkey_notify_extended_hotkey(const u32 hkey)
 
 	switch (hkey) {
 	case TP_HKEY_EV_PRIVACYGUARD_TOGGLE:
+	case TP_HKEY_EV_AMT_TOGGLE:
 		tpacpi_driver_event(hkey);
 		return true;
 	}
@@ -10266,6 +10268,7 @@ static struct ibm_struct proxsensor_driver_data = {
 #define DYTC_CMD_FUNC_CAP     3 /* To get DYTC capabilities */
 #define DYTC_FC_MMC           27 /* MMC Mode supported */
 #define DYTC_FC_PSC           29 /* PSC Mode supported */
+#define DYTC_FC_AMT           31 /* AMT mode supported */
 
 #define DYTC_GET_FUNCTION_BIT 8  /* Bits  8-11 - function setting */
 #define DYTC_GET_MODE_BIT     12 /* Bits 12-15 - mode setting */
@@ -10278,6 +10281,10 @@ static struct ibm_struct proxsensor_driver_data = {
 #define DYTC_FUNCTION_CQL     1  /* Function = 1, lap mode */
 #define DYTC_FUNCTION_MMC     11 /* Function = 11, MMC mode */
 #define DYTC_FUNCTION_PSC     13 /* Function = 13, PSC mode */
+#define DYTC_FUNCTION_AMT     15 /* Function = 15, AMT mode */
+
+#define DYTC_MODE_AMT_ENABLE   0x1 /* Enable AMT (in balanced mode) */
+#define DYTC_MODE_AMT_DISABLE  0xF /* Disable AMT (in other modes) */
 
 #define DYTC_MODE_MMC_PERFORM  2  /* High power mode aka performance */
 #define DYTC_MODE_MMC_LOWPOWER 3  /* Low power mode */
@@ -10298,22 +10305,18 @@ static struct ibm_struct proxsensor_driver_data = {
 
 #define DYTC_DISABLE_CQL DYTC_SET_COMMAND(DYTC_FUNCTION_CQL, DYTC_MODE_MMC_BALANCE, 0)
 #define DYTC_ENABLE_CQL DYTC_SET_COMMAND(DYTC_FUNCTION_CQL, DYTC_MODE_MMC_BALANCE, 1)
+static int dytc_control_amt(bool enable);
+static bool dytc_amt_active;
 
-enum dytc_profile_funcmode {
-	DYTC_FUNCMODE_NONE = 0,
-	DYTC_FUNCMODE_MMC,
-	DYTC_FUNCMODE_PSC,
-};
-
-static enum dytc_profile_funcmode dytc_profile_available;
 static enum platform_profile_option dytc_current_profile;
 static atomic_t dytc_ignore_event = ATOMIC_INIT(0);
 static DEFINE_MUTEX(dytc_mutex);
+static int dytc_capabilities;
 static bool dytc_mmc_get_available;
 
 static int convert_dytc_to_profile(int dytcmode, enum platform_profile_option *profile)
 {
-	if (dytc_profile_available == DYTC_FUNCMODE_MMC) {
+	if (dytc_capabilities & BIT(DYTC_FC_MMC)) {
 		switch (dytcmode) {
 		case DYTC_MODE_MMC_LOWPOWER:
 			*profile = PLATFORM_PROFILE_LOW_POWER;
@@ -10330,7 +10333,7 @@ static int convert_dytc_to_profile(int dytcmode, enum platform_profile_option *p
 		}
 		return 0;
 	}
-	if (dytc_profile_available == DYTC_FUNCMODE_PSC) {
+	if (dytc_capabilities & BIT(DYTC_FC_PSC)) {
 		switch (dytcmode) {
 		case DYTC_MODE_PSC_LOWPOWER:
 			*profile = PLATFORM_PROFILE_LOW_POWER;
@@ -10352,21 +10355,21 @@ static int convert_profile_to_dytc(enum platform_profile_option profile, int *pe
 {
 	switch (profile) {
 	case PLATFORM_PROFILE_LOW_POWER:
-		if (dytc_profile_available == DYTC_FUNCMODE_MMC)
+		if (dytc_capabilities & BIT(DYTC_FC_MMC))
 			*perfmode = DYTC_MODE_MMC_LOWPOWER;
-		else if (dytc_profile_available == DYTC_FUNCMODE_PSC)
+		else if (dytc_capabilities & BIT(DYTC_FC_PSC))
 			*perfmode = DYTC_MODE_PSC_LOWPOWER;
 		break;
 	case PLATFORM_PROFILE_BALANCED:
-		if (dytc_profile_available == DYTC_FUNCMODE_MMC)
+		if (dytc_capabilities & BIT(DYTC_FC_MMC))
 			*perfmode = DYTC_MODE_MMC_BALANCE;
-		else if (dytc_profile_available == DYTC_FUNCMODE_PSC)
+		else if (dytc_capabilities & BIT(DYTC_FC_PSC))
 			*perfmode = DYTC_MODE_PSC_BALANCE;
 		break;
 	case PLATFORM_PROFILE_PERFORMANCE:
-		if (dytc_profile_available == DYTC_FUNCMODE_MMC)
+		if (dytc_capabilities & BIT(DYTC_FC_MMC))
 			*perfmode = DYTC_MODE_MMC_PERFORM;
-		else if (dytc_profile_available == DYTC_FUNCMODE_PSC)
+		else if (dytc_capabilities & BIT(DYTC_FC_PSC))
 			*perfmode = DYTC_MODE_PSC_PERFORM;
 		break;
 	default: /* Unknown profile */
@@ -10383,6 +10386,30 @@ static int dytc_profile_get(struct platform_profile_handler *pprof,
 			    enum platform_profile_option *profile)
 {
 	*profile = dytc_current_profile;
+	return 0;
+}
+
+static int dytc_control_amt(bool enable)
+{
+	int dummy;
+	int err;
+	int cmd;
+
+	if (!(dytc_capabilities & BIT(DYTC_FC_AMT))) {
+		pr_warn("Attempting to toggle AMT on a system that doesn't advertise support\n");
+		return -ENODEV;
+	}
+
+	if (enable)
+		cmd = DYTC_SET_COMMAND(DYTC_FUNCTION_AMT, DYTC_MODE_AMT_ENABLE, enable);
+	else
+		cmd = DYTC_SET_COMMAND(DYTC_FUNCTION_AMT, DYTC_MODE_AMT_DISABLE, enable);
+
+	pr_debug("%sabling AMT (cmd 0x%x)", enable ? "en":"dis", cmd);
+	err = dytc_command(cmd, &dummy);
+	if (err)
+		return err;
+	dytc_amt_active = enable;
 	return 0;
 }
 
@@ -10445,7 +10472,7 @@ static int dytc_profile_set(struct platform_profile_handler *pprof,
 	if (err)
 		goto unlock;
 
-	if (dytc_profile_available == DYTC_FUNCMODE_MMC) {
+	if (dytc_capabilities & BIT(DYTC_FC_MMC)) {
 		if (profile == PLATFORM_PROFILE_BALANCED) {
 			/*
 			 * To get back to balanced mode we need to issue a reset command.
@@ -10464,10 +10491,13 @@ static int dytc_profile_set(struct platform_profile_handler *pprof,
 				goto unlock;
 		}
 	}
-	if (dytc_profile_available == DYTC_FUNCMODE_PSC) {
+	if (dytc_capabilities & BIT(DYTC_FC_PSC)) {
 		err = dytc_command(DYTC_SET_COMMAND(DYTC_FUNCTION_PSC, perfmode, 1), &output);
 		if (err)
 			goto unlock;
+		/* system supports AMT, activate it when on balanced */
+		if (dytc_capabilities & BIT(DYTC_FC_AMT))
+			dytc_control_amt(profile == PLATFORM_PROFILE_BALANCED);
 	}
 	/* Success - update current profile */
 	dytc_current_profile = profile;
@@ -10483,12 +10513,12 @@ static void dytc_profile_refresh(void)
 	int perfmode;
 
 	mutex_lock(&dytc_mutex);
-	if (dytc_profile_available == DYTC_FUNCMODE_MMC) {
+	if (dytc_capabilities & BIT(DYTC_FC_MMC)) {
 		if (dytc_mmc_get_available)
 			err = dytc_command(DYTC_CMD_MMC_GET, &output);
 		else
 			err = dytc_cql_command(DYTC_CMD_GET, &output);
-	} else if (dytc_profile_available == DYTC_FUNCMODE_PSC)
+	} else if (dytc_capabilities & BIT(DYTC_FC_PSC))
 		err = dytc_command(DYTC_CMD_GET, &output);
 
 	mutex_unlock(&dytc_mutex);
@@ -10517,7 +10547,6 @@ static int tpacpi_dytc_profile_init(struct ibm_init_struct *iibm)
 	set_bit(PLATFORM_PROFILE_BALANCED, dytc_profile.choices);
 	set_bit(PLATFORM_PROFILE_PERFORMANCE, dytc_profile.choices);
 
-	dytc_profile_available = DYTC_FUNCMODE_NONE;
 	err = dytc_command(DYTC_CMD_QUERY, &output);
 	if (err)
 		return err;
@@ -10530,13 +10559,12 @@ static int tpacpi_dytc_profile_init(struct ibm_init_struct *iibm)
 		return -ENODEV;
 
 	/* Check what capabilities are supported */
-	err = dytc_command(DYTC_CMD_FUNC_CAP, &output);
+	err = dytc_command(DYTC_CMD_FUNC_CAP, &dytc_capabilities);
 	if (err)
 		return err;
 
-	if (output & BIT(DYTC_FC_MMC)) { /* MMC MODE */
-		dytc_profile_available = DYTC_FUNCMODE_MMC;
-
+	if (dytc_capabilities & BIT(DYTC_FC_MMC)) { /* MMC MODE */
+		pr_debug("MMC is supported\n");
 		/*
 		 * Check if MMC_GET functionality available
 		 * Version > 6 and return success from MMC_GET command
@@ -10547,8 +10575,8 @@ static int tpacpi_dytc_profile_init(struct ibm_init_struct *iibm)
 			if (!err && ((output & DYTC_ERR_MASK) == DYTC_ERR_SUCCESS))
 				dytc_mmc_get_available = true;
 		}
-	} else if (output & BIT(DYTC_FC_PSC)) { /* PSC MODE */
-		dytc_profile_available = DYTC_FUNCMODE_PSC;
+	} else if (dytc_capabilities & BIT(DYTC_FC_PSC)) { /* PSC MODE */
+		pr_debug("PSC is supported\n");
 	} else {
 		dbg_printk(TPACPI_DBG_INIT, "No DYTC support available\n");
 		return -ENODEV;
@@ -10569,12 +10597,16 @@ static int tpacpi_dytc_profile_init(struct ibm_init_struct *iibm)
 	/* Ensure initial values are correct */
 	dytc_profile_refresh();
 
+	/* Set AMT correctly now we know current profile */
+	if ((dytc_capabilities & BIT(DYTC_FC_PSC)) &&
+	    (dytc_capabilities & BIT(DYTC_FC_AMT)))
+	    dytc_control_amt(dytc_current_profile == PLATFORM_PROFILE_BALANCED);
+
 	return 0;
 }
 
 static void dytc_profile_exit(void)
 {
-	dytc_profile_available = DYTC_FUNCMODE_NONE;
 	platform_profile_remove();
 }
 
@@ -11013,6 +11045,15 @@ static void tpacpi_driver_event(const unsigned int hkey_event)
 		if (changed)
 			drm_privacy_screen_call_notifier_chain(lcdshadow_dev);
 	}
+	if (hkey_event == TP_HKEY_EV_AMT_TOGGLE) {
+		/* If we're enabling AMT we need to force balanced mode */
+		if (!dytc_amt_active)
+			/* This will also set AMT mode enabled */
+			dytc_profile_set(NULL, PLATFORM_PROFILE_BALANCED);
+		else
+			dytc_control_amt(!dytc_amt_active);
+	}
+
 }
 
 static void hotkey_driver_event(const unsigned int scancode)
