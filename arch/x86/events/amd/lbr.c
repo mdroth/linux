@@ -39,6 +39,7 @@
 
 #define LBR_ENTRY_MISPREDICT	BIT_ULL(63)
 #define LBR_ENTRY_VALID		BIT_ULL(63)
+#define LBR_ENTRY_SPEC		BIT_ULL(62)
 
 static __always_inline void amd_pmu_lbr_set_from(unsigned int idx, u64 val)
 {
@@ -83,6 +84,11 @@ static __always_inline bool amd_pmu_lbr_is_mispredict(u64 entry)
 static __always_inline bool amd_pmu_lbr_is_valid(u64 entry)
 {
 	return entry & LBR_ENTRY_VALID;
+}
+
+static __always_inline bool amd_pmu_lbr_is_spec(u64 entry)
+{
+	return entry & LBR_ENTRY_SPEC;
 }
 
 static void amd_pmu_lbr_filter(void)
@@ -134,6 +140,7 @@ void amd_pmu_lbr_read(void)
 {
 	struct cpu_hw_events *cpuc = this_cpu_ptr(&cpu_hw_events);
 	struct perf_branch_entry *br = cpuc->lbr_entries;
+	bool valid, spec;
 	int out = 0, i;
 	u64 from, to;
 
@@ -143,9 +150,14 @@ void amd_pmu_lbr_read(void)
 	for (i = 0; i < x86_pmu.lbr_nr; i++) {
 		from = amd_pmu_lbr_get_from(i);
 		to = amd_pmu_lbr_get_to(i);
+		valid = amd_pmu_lbr_is_valid(to);
+		spec = amd_pmu_lbr_is_spec(to);
 
-		/* Check if a branch has been logged */
-		if (!amd_pmu_lbr_is_valid(to))
+		/*
+		 * Check if a branch has been logged; if valid = 0, spec = 0
+		 * then no branch was recorded
+		 */
+		if (!valid && !spec)
 			continue;
 
 		perf_clear_branch_entry_bitfields(br + out);
@@ -154,6 +166,19 @@ void amd_pmu_lbr_read(void)
 		br[out].to	= amd_pmu_lbr_branch_ip(to);
 		br[out].mispred	= amd_pmu_lbr_is_mispredict(from);
 		br[out].predicted = !br[out].mispred;
+
+		/*
+		 * When valid = 1, spec = 0, the recorded branch was taken on
+		 * the correct path but not during speculative code execution
+		 *
+		 * When valid = 1, spec = 1, the recorded branch was taken on
+		 * the correct path during speculative code execution
+		 *
+		 * When valid = 0, spec = 1, the recorded branch was taken on
+		 * the wrong path during speculative code execution
+		 */
+		br[out].valid   = valid;
+		br[out].spec    = spec;
 		out++;
 	}
 
