@@ -1076,6 +1076,8 @@ static inline void perf_clear_branch_entry_bitfields(struct perf_branch_entry *b
 	br->abort = 0;
 	br->cycles = 0;
 	br->type = 0;
+	br->valid = 0;
+	br->spec = 0;
 	br->reserved = 0;
 }
 
