@@ -196,45 +196,39 @@ static bool intel_pmu_is_valid_lbr_msr(struct kvm_vcpu *vcpu, u32 index)
 	return ret;
 }
 
-static bool intel_is_valid_msr(struct kvm_vcpu *vcpu, u32 msr, bool host_initiated)
+static bool intel_is_valid_msr(struct kvm_vcpu *vcpu, u32 msr)
 {
 	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
-	u64 perf_capabilities = vcpu->arch.perf_capabilities;
+	u64 perf_capabilities;
+	int ret;
 
 	switch (msr) {
 	case MSR_CORE_PERF_FIXED_CTR_CTRL:
 	case MSR_CORE_PERF_GLOBAL_STATUS:
 	case MSR_CORE_PERF_GLOBAL_CTRL:
 	case MSR_CORE_PERF_GLOBAL_OVF_CTRL:
-		if (host_initiated)
-			return true;
-		return pmu->version > 1;
+		ret = pmu->version > 1;
 		break;
 	case MSR_IA32_PEBS_ENABLE:
-		if (host_initiated)
-			return true;
-		return perf_capabilities & PERF_CAP_PEBS_FORMAT;
+		ret = vcpu_get_perf_capabilities(vcpu) & PERF_CAP_PEBS_FORMAT;
 		break;
 	case MSR_IA32_DS_AREA:
-		if (host_initiated)
-			return true;
-		return guest_cpuid_has(vcpu, X86_FEATURE_DS);
+		ret = guest_cpuid_has(vcpu, X86_FEATURE_DS);
 		break;
 	case MSR_PEBS_DATA_CFG:
-		if (host_initiated)
-			return true;
-		return (perf_capabilities & PERF_CAP_PEBS_BASELINE) &&
+		perf_capabilities = vcpu_get_perf_capabilities(vcpu);
+		ret = (perf_capabilities & PERF_CAP_PEBS_BASELINE) &&
 			((perf_capabilities & PERF_CAP_PEBS_FORMAT) > 3);
 		break;
 	default:
-		if (host_initiated)
-			return true;
-		return get_gp_pmc(pmu, msr, MSR_IA32_PERFCTR0) ||
+		ret = get_gp_pmc(pmu, msr, MSR_IA32_PERFCTR0) ||
 			get_gp_pmc(pmu, msr, MSR_P6_EVNTSEL0) ||
 			get_fixed_pmc(pmu, msr) || get_fw_gp_pmc(pmu, msr) ||
 			intel_pmu_is_valid_lbr_msr(vcpu, msr);
 		break;
 	}
+
+	return ret;
 }
 
 static struct kvm_pmc *intel_msr_idx_to_pmc(struct kvm_vcpu *vcpu, u32 msr)
@@ -522,6 +516,7 @@ static void intel_pmu_refresh(struct kvm_vcpu *vcpu)
 	struct kvm_cpuid_entry2 *entry;
 	union cpuid10_eax eax;
 	union cpuid10_edx edx;
+	u64 perf_capabilities;
 	u64 counter_mask;
 	int i;
 
@@ -536,8 +531,6 @@ static void intel_pmu_refresh(struct kvm_vcpu *vcpu)
 	pmu->pebs_enable_mask = ~0ull;
 	pmu->pebs_data_cfg_mask = ~0ull;
 
-	vcpu->arch.ia32_misc_enable_msr |= MSR_IA32_MISC_ENABLE_PMU_RO_MASK;
-
 	entry = kvm_find_cpuid_entry(vcpu, 0xa, 0);
 	if (!entry || !vcpu->kvm->arch.enable_pmu)
 		return;
@@ -547,8 +540,6 @@ static void intel_pmu_refresh(struct kvm_vcpu *vcpu)
 	pmu->version = eax.split.version_id;
 	if (!pmu->version)
 		return;
-
-	vcpu->arch.ia32_misc_enable_msr |= MSR_IA32_MISC_ENABLE_EMON;
 
 	pmu->nr_arch_gp_counters = min_t(int, eax.split.num_counters,
 					 kvm_pmu_cap.num_counters_gp);
@@ -600,7 +591,7 @@ static void intel_pmu_refresh(struct kvm_vcpu *vcpu)
 		INTEL_PMC_MAX_GENERIC, pmu->nr_arch_fixed_counters);
 
 	nested_vmx_pmu_refresh(vcpu,
-			       intel_is_valid_msr(vcpu, MSR_CORE_PERF_GLOBAL_CTRL, false));
+			       intel_is_valid_msr(vcpu, MSR_CORE_PERF_GLOBAL_CTRL));
 
 	if (cpuid_model_is_consistent(vcpu))
 		x86_perf_get_lbr(&lbr_desc->records);
@@ -610,9 +601,9 @@ static void intel_pmu_refresh(struct kvm_vcpu *vcpu)
 	if (lbr_desc->records.nr)
 		bitmap_set(pmu->all_valid_pmc_idx, INTEL_PMC_IDX_FIXED_VLBR, 1);
 
-	if (vcpu->arch.perf_capabilities & PERF_CAP_PEBS_FORMAT) {
-		vcpu->arch.ia32_misc_enable_msr &= ~MSR_IA32_MISC_ENABLE_PEBS_UNAVAIL;
-		if (vcpu->arch.perf_capabilities & PERF_CAP_PEBS_BASELINE) {
+	perf_capabilities = vcpu_get_perf_capabilities(vcpu);
+	if (perf_capabilities & PERF_CAP_PEBS_FORMAT) {
+		if (perf_capabilities & PERF_CAP_PEBS_BASELINE) {
 			pmu->pebs_enable_mask = counter_mask;
 			pmu->reserved_bits &= ~ICL_EVENTSEL_ADAPTIVE;
 			for (i = 0; i < pmu->nr_arch_fixed_counters; i++) {
@@ -624,8 +615,6 @@ static void intel_pmu_refresh(struct kvm_vcpu *vcpu)
 			pmu->pebs_enable_mask =
 				~((1ull << pmu->nr_arch_gp_counters) - 1);
 		}
-	} else {
-		vcpu->arch.perf_capabilities &= ~PERF_CAP_PEBS_MASK;
 	}
 }
 
