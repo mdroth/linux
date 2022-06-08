@@ -227,12 +227,14 @@ OPTIONS
 	i.e., -F "" is not allowed.
 
 	The brstack output includes branch related information with raw addresses using the
-	/v/v/v/v/cycles syntax in the following order:
+	/v/v/v/v/v/v/cycles syntax in the following order:
 	FROM: branch source instruction
 	TO  : branch target instruction
         M/P/-: M=branch target mispredicted or branch direction was mispredicted, P=target predicted or direction predicted, -=not supported
 	X/- : X=branch inside a transactional region, -=not in transaction region or not supported
 	A/- : A=TSX abort entry, -=not aborted region or not supported
+	V/- : V=branch is valid, -=branch in invalid or not supported
+	S/- : S=branch is speculated, -=branch is non-speculated or not supported
 	cycles
 
 	The brstacksym is identical to brstack, except that the FROM and TO addresses are printed in a symbolic form if possible.

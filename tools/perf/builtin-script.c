@@ -861,10 +861,12 @@ mispred_str(struct branch_entry *br)
 
 static int print_bstack_flags(FILE *fp, struct branch_entry *br)
 {
-	return fprintf(fp, "/%c/%c/%c/%d/%s ",
+	return fprintf(fp, "/%c/%c/%c/%c/%c/%d/%s ",
 		       mispred_str(br),
 		       br->flags.in_tx ? 'X' : '-',
 		       br->flags.abort ? 'A' : '-',
+		       br->flags.valid ? 'V' : '-',
+		       br->flags.spec ? 'S' : '-',
 		       br->flags.cycles,
 		       br->flags.type ? branch_type_name(br->flags.type) : "-");
 }
@@ -1132,11 +1134,14 @@ static int ip__fprintf_jump(uint64_t ip, struct branch_entry *en,
 	if (PRINT_FIELD(BRSTACKINSNLEN))
 		printed += fprintf(fp, "ilen: %d\t", ilen);
 
-	printed += fprintf(fp, "#%s%s%s%s",
+	printed += fprintf(fp, "#%s%s%s%s%s%s",
 			      en->flags.predicted ? " PRED" : "",
 			      en->flags.mispred ? " MISPRED" : "",
 			      en->flags.in_tx ? " INTX" : "",
-			      en->flags.abort ? " ABORT" : "");
+			      en->flags.abort ? " ABORT" : "",
+			      en->flags.valid ? " VALID" : "",
+			      en->flags.spec ? "SPEC" : "");
+
 	if (en->flags.cycles) {
 		*total_cycles += en->flags.cycles;
 		printed += fprintf(fp, " %d cycles [%d]", en->flags.cycles, *total_cycles);

@@ -499,6 +499,10 @@ static PyObject *python_process_brstack(struct perf_sample *sample,
 		    PyBool_FromLong(entries[i].flags.abort));
 		pydict_set_item_string_decref(pyelem, "cycles",
 		    PyLong_FromUnsignedLongLong(entries[i].flags.cycles));
+		pydict_set_item_string_decref(pyelem, "valid",
+		    PyBool_FromLong(entries[i].flags.valid));
+		pydict_set_item_string_decref(pyelem, "spec",
+		    PyBool_FromLong(entries[i].flags.spec));
 
 		thread__find_map_fb(thread, sample->cpumode,
 				    entries[i].from, &al);
@@ -612,6 +616,22 @@ static PyObject *python_process_brstacksym(struct perf_sample *sample,
 					      _PyUnicode_FromString("A"));
 		} else {
 			pydict_set_item_string_decref(pyelem, "abort",
+					      _PyUnicode_FromString("-"));
+		}
+
+		if (entries[i].flags.valid) {
+			pydict_set_item_string_decref(pyelem, "valid",
+					      _PyUnicode_FromString("V"));
+		} else {
+			pydict_set_item_string_decref(pyelem, "valid",
+					      _PyUnicode_FromString("-"));
+		}
+
+		if (entries[i].flags.abort) {
+			pydict_set_item_string_decref(pyelem, "spec",
+					      _PyUnicode_FromString("S"));
+		} else {
+			pydict_set_item_string_decref(pyelem, "spec",
 					      _PyUnicode_FromString("-"));
 		}
 

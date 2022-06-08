@@ -1798,6 +1798,70 @@ struct sort_entry sort_in_tx = {
 };
 
 static int64_t
+sort__valid_cmp(struct hist_entry *left, struct hist_entry *right)
+{
+	if (!left->branch_info || !right->branch_info)
+		return cmp_null(left->branch_info, right->branch_info);
+
+	return left->branch_info->flags.valid !=
+	       right->branch_info->flags.valid;
+}
+
+static int hist_entry__valid_snprintf(struct hist_entry *he, char *bf,
+				      size_t size, unsigned int width)
+{
+	static const char *out = "N/A";
+
+	if (he->branch_info) {
+		if (he->branch_info->flags.valid)
+			out = "Y";
+		else
+			out = ".";
+	}
+
+	return repsep_snprintf(bf, size, "%-*.*s", width, width, out);
+}
+
+struct sort_entry sort_valid = {
+	.se_header	= "Branch Valid",
+	.se_cmp		= sort__valid_cmp,
+	.se_snprintf	= hist_entry__valid_snprintf,
+	.se_width_idx	= HISTC_VALID,
+};
+
+static int64_t
+sort__spec_cmp(struct hist_entry *left, struct hist_entry *right)
+{
+	if (!left->branch_info || !right->branch_info)
+		return cmp_null(left->branch_info, right->branch_info);
+
+	return left->branch_info->flags.spec !=
+	       right->branch_info->flags.spec;
+}
+
+static int hist_entry__spec_snprintf(struct hist_entry *he, char *bf,
+				      size_t size, unsigned int width)
+{
+	static const char *out = "N/A";
+
+	if (he->branch_info) {
+		if (he->branch_info->flags.spec)
+			out = "Y";
+		else
+			out = ".";
+	}
+
+	return repsep_snprintf(bf, size, "%-*.*s", width, width, out);
+}
+
+struct sort_entry sort_spec = {
+	.se_header	= "Branch Speculated",
+	.se_cmp		= sort__spec_cmp,
+	.se_snprintf	= hist_entry__spec_snprintf,
+	.se_width_idx	= HISTC_SPEC,
+};
+
+static int64_t
 sort__transaction_cmp(struct hist_entry *left, struct hist_entry *right)
 {
 	return left->transaction - right->transaction;
@@ -2011,6 +2075,8 @@ static struct sort_dimension bstack_sort_dimensions[] = {
 	DIM(SORT_MISPREDICT, "mispredict", sort_mispredict),
 	DIM(SORT_IN_TX, "in_tx", sort_in_tx),
 	DIM(SORT_ABORT, "abort", sort_abort),
+	DIM(SORT_VALID, "valid", sort_valid),
+	DIM(SORT_SPEC, "spec", sort_spec),
 	DIM(SORT_CYCLES, "cycles", sort_cycles),
 	DIM(SORT_SRCLINE_FROM, "srcline_from", sort_srcline_from),
 	DIM(SORT_SRCLINE_TO, "srcline_to", sort_srcline_to),

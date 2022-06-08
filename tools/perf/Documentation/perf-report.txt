@@ -130,6 +130,8 @@ OPTIONS
 	- mispredict: "N" for predicted branch, "Y" for mispredicted branch
 	- in_tx: branch in TSX transaction
 	- abort: TSX transaction abort.
+	- valid: branch is valid
+	- spec: branch is speculated branch
 	- cycles: Cycles in basic block
 
 	And default sort keys are changed to comm, dso_from, symbol_from, dso_to
