@@ -1258,6 +1258,9 @@ struct kvm_arch {
 	 * the global KVM_MAX_VCPU_IDS may lead to significant memory waste.
 	 */
 	u32 max_vcpu_ids;
+
+	/* Use/enforce unmapped private memory. */
+	bool upm_mode;
 };
 
 struct kvm_vm_stat {

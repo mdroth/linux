@@ -1188,6 +1188,7 @@ struct kvm_ppc_resize_hpt {
 #define KVM_CAP_VM_TSC_CONTROL 214
 /* #define KVM_CAP_VM_TSC_CONTROL 214 */
 #define KVM_CAP_SYSTEM_EVENT_DATA 215
+#define KVM_CAP_UNMAPPED_PRIVATE_MEM 220
 
 #ifdef KVM_CAP_IRQ_ROUTING
 
