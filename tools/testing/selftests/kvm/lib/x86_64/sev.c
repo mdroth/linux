@@ -20,6 +20,7 @@ struct sev_vm {
 	int fd;
 	int enc_bit;
 	uint32_t sev_policy;
+	bool upm;
 };
 
 /* Common SEV helpers/accessors. */
@@ -116,6 +117,13 @@ static void sev_encrypt(struct sev_vm *sev)
 		if (pg_cnt <= 0)
 			pg_cnt = 1;
 
+		if (sev->upm) {
+			pr_info("calling convert_private for gpa 0x%lx pgcnt 0x%lx\n",
+				gpa_start + pg * vm_get_page_size(vm), pg_cnt);
+			vm_mem_convert_private(vm, gpa_start + pg * vm_get_page_size(vm),
+					       pg_cnt, true);
+		}
+
 		sev_encrypt_phy_range(sev,
 				      gpa_start + pg * vm_get_page_size(vm),
 				      pg_cnt * vm_get_page_size(vm));
@@ -170,10 +178,14 @@ void sev_vm_free(struct sev_vm *sev)
 	free(sev);
 }
 
-struct sev_vm *sev_vm_create(uint32_t policy, uint64_t npages)
+/* TODO: this should come from kernel headers eventually. */
+#define KVM_CAP_UNMAPPED_PRIVATE_MEMORY 220
+
+static struct sev_vm *_sev_vm_create(uint32_t policy, uint64_t npages, bool upm)
 {
 	struct sev_vm *sev;
 	struct kvm_vm *vm;
+	uint32_t region_flags = 0;
 
 	/* Need to handle memslots after init, and after setting memcrypt. */
 	vm = vm_create(VM_MODE_DEFAULT, 0, O_RDWR);
@@ -181,6 +193,7 @@ struct sev_vm *sev_vm_create(uint32_t policy, uint64_t npages)
 	if (!sev)
 		return NULL;
 	sev->sev_policy = policy;
+	sev->upm = upm;
 
 	if (sev->sev_policy & SEV_POLICY_ES)
 		kvm_sev_ioctl(sev, KVM_SEV_ES_INIT, NULL);
@@ -188,7 +201,31 @@ struct sev_vm *sev_vm_create(uint32_t policy, uint64_t npages)
 		kvm_sev_ioctl(sev, KVM_SEV_INIT, NULL);
 
 	vm_set_memory_encryption(vm, true, true, sev->enc_bit);
-	vm_userspace_mem_region_add(vm, VM_MEM_SRC_ANONYMOUS, 0, 0, npages, 0);
+
+	if (upm) {
+		struct kvm_enable_cap cap;
+		int ret;
+
+		/*
+		 * Negotiate UPM mode with KVM. This needs to be done
+		 * before sev_register_user_region() since it is currently
+		 * used to enable UPM mode for SEV, where encrypted region
+		 * registration is basically a no-op since all the pinning and
+		 * memory management is handled by the memfd backend.
+		 */
+		pr_info("Enabling KVM_CAP_UNMAPPED_PRIVATE_MEMORY\n");
+		ret = ioctl(vm_get_fd(vm), KVM_CHECK_EXTENSION, KVM_CAP_UNMAPPED_PRIVATE_MEMORY);
+		TEST_ASSERT(ret == 1, "Failed to enable KVM_CAP_UNMAPPED_PRIVATE_MEMORY");
+		cap.cap = KVM_CAP_UNMAPPED_PRIVATE_MEMORY;
+		cap.flags = 0;
+		ret = ioctl(vm_get_fd(vm), KVM_ENABLE_CAP, &cap);
+		TEST_ASSERT(ret == 0,
+			    "Failed to enable KVM_CAP_UNMAPPED_PRIVATE_MEMORY\n");
+
+		region_flags |= KVM_MEM_PRIVATE;
+	}
+
+	vm_userspace_mem_region_add(vm, VM_MEM_SRC_ANONYMOUS, 0, 0, npages, region_flags);
 	sev_register_user_region(sev, addr_gpa2hva(vm, 0),
 				 npages * vm_get_page_size(vm));
 
@@ -197,6 +234,16 @@ struct sev_vm *sev_vm_create(uint32_t policy, uint64_t npages)
 		sev->sev_policy, npages * vm_get_page_size(vm) / 1024);
 
 	return sev;
+}
+
+struct sev_vm *sev_vm_create(uint32_t policy, uint64_t npages)
+{
+	return _sev_vm_create(policy, npages, false);
+}
+
+struct sev_vm *sev_vm_create_upm(uint32_t policy, uint64_t npages)
+{
+	return _sev_vm_create(policy, npages, true);
 }
 
 void sev_vm_launch(struct sev_vm *sev)

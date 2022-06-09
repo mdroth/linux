@@ -36,6 +36,7 @@ struct kvm_vm *sev_get_vm(struct sev_vm *sev);
 uint8_t sev_get_enc_bit(struct sev_vm *sev);
 
 struct sev_vm *sev_vm_create(uint32_t policy, uint64_t npages);
+struct sev_vm *sev_vm_create_upm(uint32_t policy, uint64_t npages);
 void sev_vm_free(struct sev_vm *sev);
 void sev_vm_launch(struct sev_vm *sev);
 void sev_vm_launch_measure(struct sev_vm *sev, uint8_t *measurement);
