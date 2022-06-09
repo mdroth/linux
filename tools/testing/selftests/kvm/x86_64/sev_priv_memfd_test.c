@@ -53,6 +53,12 @@ enum mem_op {
 
 #define VM_STAGE_PROCESSED(x)	pr_info("Processed stage %s\n", #x)
 
+struct startup_map_gpa_range {
+	uint64_t gpa;
+	uint64_t npages;
+	bool private;
+};
+
 // global used for storing the current mem allocation size
 // for the running test
 static size_t test_mem_size;
@@ -74,14 +80,20 @@ static void *g_ghcb_gva;
 typedef void (*guest_code_fn)(struct ucall *, uint8_t,
 	struct guest_pgt_info *, uint64_t, uint64_t, void *);
 
+typedef void (*guest_upm_code_fn)(struct ucall *, uint8_t,
+	struct guest_pgt_info *, uint64_t, uint64_t,
+	struct startup_map_gpa_range *ranges);
+
 struct test_run_helper {
 	char *test_desc;
 	vm_stage_handler_fn vmst_handler;
 	guest_code_fn guest_fn;
+	guest_upm_code_fn guest_upm_fn;
 	void *shared_mem;
 	int priv_memfd;
 	bool disallow_boot_shared_access;
 	bool toggle_shared_mem_state;
+	bool upm_mode;
 };
 
 enum page_size {
@@ -1259,16 +1271,22 @@ static void setup_and_execute_test(uint32_t test_id,
 	uint32_t vm_page_size, num_test_pages;
 	vm_vaddr_t ghcb_vaddr = 0;
 	uint8_t enc_bit;
+	bool upm_mode = priv_memfd_testsuite[test_id].upm_mode;
 
-	sev = sev_vm_create(policy, TOTAL_PAGES);
+	pr_info("Creating guest, UPM mode: %d\n", upm_mode);
+	sev = upm_mode ? sev_vm_create_upm(policy, TOTAL_PAGES)
+		       : sev_vm_create(policy, TOTAL_PAGES);
 	TEST_ASSERT(sev, "Failed to create SEV VM");
 	vm = sev_get_vm(sev);
 
 	vm_set_pgt_alloc_tracking(vm);
 
 	/* Set up VCPU and initial guest kernel. */
-	vm_vcpu_add_default(vm, VCPU_ID,
-		priv_memfd_testsuite[test_id].guest_fn);
+	if (upm_mode)
+		vm_vcpu_add_default(vm, VCPU_ID, priv_memfd_testsuite[test_id].guest_upm_fn);
+	else
+		vm_vcpu_add_default(vm, VCPU_ID, priv_memfd_testsuite[test_id].guest_fn);
+
 	kvm_vm_elf_load(vm, program_invocation_name);
 
 	// use 2 pages by default
@@ -1375,11 +1393,36 @@ static void setup_and_execute_test(uint32_t test_id,
 		vcpu_init_descriptor_tables(vm, VCPU_ID);
 	}
 
+	/*
+	 * TODO: 6 is the max for vcpu_args_set(). Ranges would be 7. For now,
+	 * sacrifice UPM support for SEV-ES by re-purposing the GHCB addr. In
+	 * future maybe allocate a page for some metadata structure.
+	 */
+	vm_vaddr_t ghcb_or_ranges_vaddr = ghcb_vaddr;
+
+	if (upm_mode) {
+		struct startup_map_gpa_range *ranges;
+		vm_vaddr_t ranges_vaddr;
+
+		ranges_vaddr = vm_vaddr_alloc(vm, vm_page_size, vm_page_size);
+		ranges = addr_gva2hva(vm, ranges_vaddr);
+
+		ranges[0].gpa = addr_gva2gpa(vm, uc_vaddr);
+		ranges[0].npages = 1;
+		ranges[0].private = false;
+		ranges[1].gpa = addr_gva2gpa(vm, pgt_info_vaddr);
+		ranges[1].npages = 1;
+		ranges[1].private = false;
+		ranges[2].npages = 0;
+
+		ghcb_or_ranges_vaddr = ranges_vaddr;
+	}
+
 	/* Set up guest params. */
 	enc_bit = sev_get_enc_bit(sev);
 	vcpu_args_set(vm, VCPU_ID, 6, uc_vaddr, enc_bit, pgt_info_vaddr,
 		test_mem_size, ghcb_vaddr ? addr_gva2gpa(vm, ghcb_vaddr) : 0,
-		ghcb_vaddr);
+		ghcb_or_ranges_vaddr);
 	struct ucall *uc = (struct ucall *)addr_gva2hva(vm, uc_vaddr);
 
 	priv_memfd_testsuite[test_id].shared_mem = shared_mem;
@@ -1492,8 +1535,9 @@ int main(int argc, char *argv[])
 			if (should_skip_test(current_page_matrix,
 				use_2mb_pages, use_1gb_pages))
 				break;
-			pr_info("=== Starting test %s... ===\n",
-					priv_memfd_testsuite[i].test_desc);
+			pr_info("=== Starting test %s %s... ===\n",
+					priv_memfd_testsuite[i].test_desc,
+					priv_memfd_testsuite[i].upm_mode ? "(UPM)" : "");
 			pr_info("using page sizes shared: %s private: %s\n",
 					page_size_to_str(
 						current_page_matrix.shared),
