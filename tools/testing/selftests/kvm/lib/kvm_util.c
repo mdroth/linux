@@ -1079,6 +1079,111 @@ void vm_userspace_mem_region_add(struct kvm_vm *vm,
 	}
 }
 
+static void sync_to_memfd(struct kvm_vm *vm, int fd, uint64_t fd_offset,
+			  uint64_t gpa_start, uint64_t npages)
+{
+	uint64_t gpa = gpa_start;
+
+	while (gpa < gpa_start + npages * vm_get_page_size(vm)) {
+		ssize_t count;
+		uint8_t *buf = addr_gpa2hva(vm, gpa);
+
+		count = pwrite(fd, buf, npages * vm_get_page_size(vm), fd_offset);
+		TEST_ASSERT(count >= 0, "prwrite failed at offset 0x%lx, GPA 0x%lx\n",
+			    fd_offset, gpa);
+
+		pr_info("%s: gpa: 0x%lx, fd_offset: 0x%lx, count: 0x%lx, npages: 0x%lx\n",
+			__func__, gpa, fd_offset, count, npages);
+		fd_offset += count;
+		gpa += count;
+	}
+}
+
+void vm_mem_convert_private(struct kvm_vm *vm, uint64_t gpa_start, uint64_t npages,
+			    bool preserve)
+{
+	uint64_t gpa = gpa_start;
+	uint64_t nconverted = 0;
+
+	while (gpa < gpa_start + npages * vm_get_page_size(vm)) {
+		struct userspace_mem_region *region;
+		uint64_t pgcnt, offset_within_region;
+		int ret;
+
+		region = userspace_mem_region_find(vm, gpa, gpa);
+
+		TEST_ASSERT(region, "Region not found for GPA 0x%lx", gpa);
+		TEST_ASSERT(region->region.flags & KVM_MEM_PRIVATE,
+			    "Region for GPA %lx missing KVM_MEM_PRIVATE flag", gpa);
+		TEST_ASSERT(region->region_ext.private_fd,
+			    "Region for GPA %lx does not have a private memfd", gpa);
+
+		offset_within_region = gpa - (uint64_t)region->region.guest_phys_addr;
+		pgcnt = min((uint64_t)region->region.memory_size - offset_within_region,
+			    npages - nconverted);
+		if (!pgcnt)
+			break;
+
+		pr_info("convert_private: gpa 0x%lx pgcnt 0x%lx preserve %d region %p flags %x guest_phys_addr 0x%llx\n",
+			gpa, pgcnt, preserve, region, region->region.flags,
+			region->region.guest_phys_addr);
+
+		if (preserve)
+			sync_to_memfd(vm, region->region_ext.private_fd,
+				      region->region_ext.private_offset + offset_within_region,
+				      gpa, pgcnt);
+
+		ret = fallocate(region->region_ext.private_fd, 0,
+				region->region_ext.private_offset + offset_within_region,
+				pgcnt * vm_get_page_size(vm));
+		TEST_ASSERT(ret == 0, "fallocate() failed while converting to private memory: %d",
+			    ret);
+
+		nconverted += pgcnt;
+		gpa = gpa_start + nconverted;
+	}
+}
+
+void vm_mem_convert_shared(struct kvm_vm *vm, uint64_t gpa_start, uint64_t npages)
+{
+	uint64_t gpa = gpa_start;
+	uint64_t nconverted = 0;
+
+	while (gpa < gpa_start + npages * vm_get_page_size(vm)) {
+		struct userspace_mem_region *region;
+		uint64_t pgcnt, offset_within_region;
+		int ret;
+
+		region = userspace_mem_region_find(vm, gpa, gpa);
+
+		TEST_ASSERT(region, "Region not found for GPA 0x%lx", gpa);
+		TEST_ASSERT(region->region.flags & KVM_MEM_PRIVATE,
+			    "Region for GPA %lx missing KVM_MEM_PRIVATE flag", gpa);
+		TEST_ASSERT(region->region_ext.private_fd,
+			    "Region for GPA %lx does not have a private memfd", gpa);
+
+		offset_within_region = gpa - (uint64_t)region->region.guest_phys_addr;
+		pgcnt = min((uint64_t)region->region.memory_size - offset_within_region,
+			    npages - nconverted);
+		if (!pgcnt)
+			break;
+
+		pr_info("convert_shared: gpa 0x%lx pgcnt 0x%lx region %p flags %x guest_phys_addr 0x%llx\n",
+			gpa, pgcnt, region, region->region.flags,
+			region->region.guest_phys_addr);
+
+		ret = fallocate(region->region_ext.private_fd,
+				FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
+				region->region_ext.private_offset + offset_within_region,
+				pgcnt * vm_get_page_size(vm));
+		TEST_ASSERT(ret == 0, "fallocate() failed while converting to shared memory: %d",
+			    ret);
+
+		nconverted += pgcnt;
+		gpa = gpa_start + nconverted;
+	}
+}
+
 /*
  * Memslot to region
  *

@@ -492,4 +492,7 @@ const struct sparsebit *vm_get_encrypted_phy_pages(struct kvm_vm *vm, int slot,
 						   vm_paddr_t *gpa_start,
 						   uint64_t *size);
 
+void vm_mem_convert_private(struct kvm_vm *vm, uint64_t gpa_start, uint64_t npages, bool preserve);
+void vm_mem_convert_shared(struct kvm_vm *vm, uint64_t gpa_start, uint64_t npages);
+
 #endif /* SELFTEST_KVM_UTIL_BASE_H */
