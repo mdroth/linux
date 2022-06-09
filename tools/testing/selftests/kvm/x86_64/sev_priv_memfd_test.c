@@ -1111,8 +1111,16 @@ static void handle_vm_exit_hypercall(struct kvm_run *run,
 	mem_end = test_mem_end(gpa, test_mem_size);
 
 	if ((gpa < TEST_MEM_GPA) ||
-		((gpa + (npages << MIN_PAGE_SHIFT)) > mem_end))
-		TEST_FAIL("Unhandled gpa 0x%lx npages %ld\n", gpa, npages);
+		((gpa + (npages << MIN_PAGE_SHIFT)) > mem_end)) {
+		/*
+		 * TODO: treat this as an error if UPM mode isn't enabled.
+		 * For now, assume it's out of TEST_MEM* range because it's
+		 * from the range set up for the guest OS.
+		 */
+		//TEST_FAIL("Unhandled gpa 0x%lx npages %ld\n", gpa, npages);
+		pr_info("Unhandled gpa 0x%lx npages %ld, ignoring...\n", gpa, npages);
+		goto out;
+	}
 
 	if (attrs & KVM_MAP_GPA_RANGE_ENCRYPTED) {
 		fallocate_mode = 0;
@@ -1135,6 +1143,7 @@ static void handle_vm_exit_hypercall(struct kvm_run *run,
 		ret = mprotect(shared_mem, test_mem_size, mprotect_mode);
 		TEST_ASSERT(ret != -1, "mprotect failed in hc handling");
 	}
+out:
 	run->hypercall.ret = 0;
 }
 
