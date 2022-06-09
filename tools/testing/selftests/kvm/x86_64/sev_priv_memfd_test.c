@@ -225,6 +225,7 @@ static void guest_verify_sev_vm_boot(struct ucall *uc, bool sev_es)
  *      populated in step 3 and marks the end of the guest execution.
  */
 #define PMPAT_ID				0
+#define PMPAT_UPM_ID				8
 #define PMPAT_DESC				"PrivateMemoryPrivateAccessTest"
 
 /* Guest code execution stages for private mem access test */
@@ -288,6 +289,34 @@ static void pmpat_guest_code(struct ucall *uc, uint8_t enc_bit_shift,
 			TEST_MEM_DATA_PAT2, mem_size));
 
 	GUEST_SHARED_DONE(uc);
+}
+
+/*
+ * TODO: Consider making this a common wrapper for any tests that need the same
+ * sort of setup for initially-shared pages.
+ */
+static void pmpat_upm_guest_code(struct ucall *uc, uint8_t enc_bit_shift,
+	struct guest_pgt_info *gpgt_info, uint64_t mem_size, uint64_t ghcb_gpa,
+	struct startup_map_gpa_range *ranges)
+{
+	int ret, i;
+
+	/*
+	 * Pre-map shared ranges before initial access, otherwise host will try
+	 * to fault in private pages since that's the default for the encryption
+	 * bitmap.
+	 */
+	for (i = 0; ranges[i].npages; i++) {
+		uint64_t range_flags = KVM_MAP_GPA_RANGE_PAGE_SZ_4K;
+
+		range_flags |= (ranges[i].private) ? KVM_MAP_GPA_RANGE_ENCRYPTED
+						   : KVM_MAP_GPA_RANGE_DECRYPTED;
+		ret = guest_hypercall(KVM_HC_MAP_GPA_RANGE, ranges[i].gpa,
+				      ranges[i].npages, range_flags, 0);
+		GUEST_SHARED_ASSERT_1(uc, ret == 0, ret);
+	}
+
+	return pmpat_guest_code(uc, enc_bit_shift, gpgt_info, mem_size, ghcb_gpa, NULL);
 }
 
 /* Test to verify guest shared accesses on private memory with following steps:
@@ -1087,6 +1116,12 @@ static struct test_run_helper priv_memfd_testsuite[] = {
 		.guest_fn = psawdat_guest_code,
 		.toggle_shared_mem_state = true,
 		.disallow_boot_shared_access = true,
+	},
+	[PMPAT_UPM_ID] = {
+		.test_desc = PMPAT_DESC,
+		.vmst_handler = pmpat_handle_vm_stage,
+		.guest_upm_fn = pmpat_upm_guest_code,
+		.upm_mode = true,
 	},
 };
 
