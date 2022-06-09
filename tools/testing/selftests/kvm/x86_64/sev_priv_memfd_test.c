@@ -1147,8 +1147,26 @@ out:
 	run->hypercall.ret = 0;
 }
 
-static void handle_vm_exit_memory_error(struct kvm_run *run,
-	uint32_t test_id)
+static void handle_vm_exit_memory_error_upm(struct kvm_vm *vm, struct kvm_run *run, uint32_t test_id)
+{
+	uint64_t gpa, size, flags;
+
+	gpa = run->memory.gpa;
+	size = run->memory.size;
+	flags = run->memory.flags;
+
+	pr_info("Converting OS memory, gpa 0x%lx size 0x%lx to %s\n",
+		gpa, size, (flags & KVM_MEMORY_EXIT_FLAG_PRIVATE) ? "private" : "shared");
+
+	TEST_ASSERT(!(size % vm_get_page_size(vm)), "Converted ranges must be page-aligned");
+
+	if (flags & KVM_MEMORY_EXIT_FLAG_PRIVATE)
+		vm_mem_convert_private(vm, gpa, size >> vm_get_page_shift(vm), false);
+	else
+		vm_mem_convert_shared(vm, gpa, size >> vm_get_page_shift(vm));
+}
+
+static void handle_vm_exit_memory_error(struct kvm_vm *vm, struct kvm_run *run, uint32_t test_id)
 {
 	uint64_t gpa, size, flags, mem_end;
 	int ret;
@@ -1165,8 +1183,9 @@ static void handle_vm_exit_memory_error(struct kvm_run *run,
 	flags = run->memory.flags;
 	mem_end = test_mem_end(gpa, test_mem_size);
 
-	if ((gpa < TEST_MEM_GPA) || ((gpa + size) > mem_end))
-		TEST_FAIL("Unhandled gpa 0x%lx size 0x%lx\n", gpa, size);
+	if ((gpa < TEST_MEM_GPA) || ((gpa + size) > mem_end)) {
+		return handle_vm_exit_memory_error_upm(vm, run, test_id);
+	}
 
 	if (flags & KVM_MEMORY_EXIT_FLAG_PRIVATE) {
 		fallocate_mode = 0;
@@ -1224,7 +1243,7 @@ static void vcpu_work(struct kvm_vm *vm, struct ucall *uc, uint32_t test_id)
 		}
 
 		if (run->exit_reason == KVM_EXIT_MEMORY_FAULT) {
-			handle_vm_exit_memory_error(run, test_id);
+			handle_vm_exit_memory_error(vm, run, test_id);
 			continue;
 		}
 
