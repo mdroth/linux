@@ -4414,6 +4414,11 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_EXIT_HYPERCALL:
 		r = KVM_EXIT_HYPERCALL_VALID_MASK;
 		break;
+#ifdef CONFIG_KVM_GENERIC_PRIVATE_MEM
+	case KVM_CAP_UNMAPPED_PRIVATE_MEM:
+		r = 1;
+		break;
+#endif
 	case KVM_CAP_SET_GUEST_DEBUG2:
 		return KVM_GUESTDBG_VALID_MASK;
 #ifdef CONFIG_KVM_XEN
@@ -6375,6 +6380,10 @@ split_irqchip_unlock:
 			r = 0;
 		}
 		mutex_unlock(&kvm->lock);
+		break;
+	case KVM_CAP_UNMAPPED_PRIVATE_MEM:
+		kvm->arch.upm_mode = true;
+		r = 0;
 		break;
 	default:
 		r = -EINVAL;
@@ -12379,6 +12388,7 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 	kvm->arch.default_tsc_khz = max_tsc_khz ? : tsc_khz;
 	kvm->arch.guest_can_read_msr_platform_info = true;
 	kvm->arch.enable_pmu = enable_pmu;
+	kvm->arch.upm_mode = false;
 
 #if IS_ENABLED(CONFIG_HYPERV)
 	spin_lock_init(&kvm->arch.hv_root_tdp_lock);
