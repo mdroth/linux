@@ -18,6 +18,9 @@
 #include <unistd.h>
 #include <linux/kernel.h>
 
+/* TODO: linux/memfd.h conflicts with sys/mman.h so define it locally for now */
+#define MFD_INACCESSIBLE	0x0008U
+
 #define KVM_UTIL_MIN_PFN	2
 
 static int vcpu_mmap_sz(void);
@@ -1036,6 +1039,19 @@ void vm_userspace_mem_region_add(struct kvm_vm *vm,
 	region->region.guest_phys_addr = guest_paddr;
 	region->region.memory_size = npages * vm->page_size;
 	region->region.userspace_addr = (uintptr_t) region->host_mem;
+
+	if (region->region.flags & KVM_MEM_PRIVATE) {
+		/*
+		 * TODO: should use a memfd or something for corresponding
+		 * shared mapping as well so it can be FALLOC_FL_PUNCH_HOLE'ed.
+		 * MADV_DONTNEED might be another more straightforward
+		 * alternative.
+		 */
+		region->region_ext.private_fd = memfd_create("vm_private_mem", MFD_INACCESSIBLE);
+		TEST_ASSERT(region->region_ext.private_fd >= 0, "Failed to create private memfd");
+		region->region_ext.private_offset = 0;
+	}
+
 	ret = ioctl(vm->fd, KVM_SET_USER_MEMORY_REGION, &region->region);
 	TEST_ASSERT(ret == 0, "KVM_SET_USER_MEMORY_REGION IOCTL failed,\n"
 		"  rc: %i errno: %i\n"

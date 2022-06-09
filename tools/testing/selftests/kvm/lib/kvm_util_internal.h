@@ -14,7 +14,10 @@
 #include "sparsebit.h"
 
 struct userspace_mem_region {
-	struct kvm_userspace_memory_region region;
+	union {
+		struct kvm_userspace_memory_region region;
+		struct kvm_userspace_memory_region_ext region_ext;
+	};
 	struct sparsebit *unused_phy_pages;
 	struct sparsebit *encrypted_phy_pages;
 	int fd;
