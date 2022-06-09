@@ -612,7 +612,12 @@ static struct page **sev_pin_memory(struct kvm *kvm, unsigned long uaddr,
 	if (!pages)
 		return ERR_PTR(-ENOMEM);
 
-	if (kvm_is_upm_enabled(kvm)) {
+	/*
+	 * TODO: HACK. SNP still relies on implicit conversions of non-UPM-backed
+	 * to workaround some edge cases remaining in QEMU. But doing so means
+	 * initial pages still all need to be pinned.
+	 */
+	if (kvm_is_upm_enabled(kvm) && !sev_snp_guest(kvm)) {
 		/* Get the PFN from memfile */
 		if (sev_get_memfile_pfn(kvm, uaddr, ulen, npages, pages)) {
 			pr_err("%s: ERROR: unable to find slot for uaddr %lx", __func__, uaddr);
@@ -2486,7 +2491,7 @@ int sev_mem_enc_register_region(struct kvm *kvm,
 		return -ENOTTY;
 
 	/* With UPM do not pin the pages */
-	if (kvm_is_upm_enabled(kvm))
+	if (kvm_is_upm_enabled(kvm) && !sev_snp_guest(kvm))
 		return ret;
 
 	/* If kvm is mirroring encryption context it isn't responsible for it */
