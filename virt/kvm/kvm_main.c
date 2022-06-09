@@ -876,8 +876,13 @@ static void kvm_private_mem_notifier_handler(struct memfile_notifier *notifier,
 	gfn_range.start = slot->base_gfn + gfn_range.start;
 	gfn_range.end = slot->base_gfn + min((unsigned long)gfn_range.end, slot->npages);
 
-	if (WARN_ON_ONCE(gfn_range.start >= gfn_range.end))
+	trace_kvm_upm_psc(0, invalidate ? 1 : 0, gfn_range.start, gfn_range.end, pfn_start);
+
+	/* TODO: this always triggers. why? */
+	if (gfn_range.start >= gfn_range.end) {
+		pr_warn_once("start range %llx is higher than end range %llx\n", gfn_range.start, gfn_range.end);
 		return;
+	}
 
 	idx = srcu_read_lock(&kvm->srcu);
 	KVM_MMU_LOCK(kvm);
@@ -888,6 +893,8 @@ static void kvm_private_mem_notifier_handler(struct memfile_notifier *notifier,
 	/* TODO: make this arch-agnostic */
 	static_call_cond(kvm_x86_rmp_update)(kvm, &gfn_range, invalidate, pfn_start);
 	srcu_read_unlock(&kvm->srcu, idx);
+
+	trace_kvm_upm_psc(1, invalidate ? 1 : 0, gfn_range.start, gfn_range.end, pfn_start);
 }
 
 static void kvm_private_mem_notifier_populate(struct memfile_notifier *notifier,
