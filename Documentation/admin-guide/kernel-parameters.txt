@@ -5446,6 +5446,7 @@
 			eibrs		  - enhanced IBRS
 			eibrs,retpoline   - enhanced IBRS + Retpolines
 			eibrs,lfence      - enhanced IBRS + LFENCE
+			autoibrs          - AMD Automatic IBRS
 
 			Not specifying this option is equivalent to
 			spectre_v2=auto.
