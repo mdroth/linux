@@ -425,10 +425,10 @@ void kvm_pmu_deliver_pmi(struct kvm_vcpu *vcpu)
 	}
 }
 
-bool kvm_pmu_is_valid_msr(struct kvm_vcpu *vcpu, u32 msr, bool host_initiated)
+bool kvm_pmu_is_valid_msr(struct kvm_vcpu *vcpu, u32 msr)
 {
 	return static_call(kvm_x86_pmu_msr_idx_to_pmc)(vcpu, msr) ||
-		static_call(kvm_x86_pmu_is_valid_msr)(vcpu, msr, host_initiated);
+		static_call(kvm_x86_pmu_is_valid_msr)(vcpu, msr);
 }
 
 static void kvm_pmu_mark_pmc_in_use(struct kvm_vcpu *vcpu, u32 msr)
@@ -442,19 +442,11 @@ static void kvm_pmu_mark_pmc_in_use(struct kvm_vcpu *vcpu, u32 msr)
 
 int kvm_pmu_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 {
-	if (msr_info->host_initiated && !vcpu->kvm->arch.enable_pmu) {
-		msr_info->data = 0;
-		return 0;
-	}
-
 	return static_call(kvm_x86_pmu_get_msr)(vcpu, msr_info);
 }
 
 int kvm_pmu_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 {
-	if (msr_info->host_initiated && !vcpu->kvm->arch.enable_pmu)
-		return !!msr_info->data;
-
 	kvm_pmu_mark_pmc_in_use(vcpu, msr_info->index);
 	return static_call(kvm_x86_pmu_set_msr)(vcpu, msr_info);
 }
