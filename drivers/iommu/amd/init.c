@@ -260,18 +260,29 @@ int amd_iommu_get_num_iommus(void)
 }
 
 #ifdef CONFIG_IRQ_REMAP
+/*
+ * Iterate through all the IOMMUs to verify if the specified
+ * EFR bitmask of IOMMU feature are set.
+ * Warn and return false if found inconsistency.
+ */
 static bool check_feature_on_all_iommus(u64 mask)
 {
 	bool ret = false;
 	struct amd_iommu *iommu;
 
 	for_each_iommu(iommu) {
-		ret = iommu_feature(iommu, mask);
-		if (!ret)
-			return false;
-	}
+		bool tmp = iommu_feature(iommu, mask);
 
-	return true;
+		if ((ret != tmp) &&
+		    !list_is_first(&iommu->list, &amd_iommu_list)) {
+			pr_err(FW_BUG "Found inconsistent EFR mask (%#llx) on iommu%d (%04x:%02x:%02x.%01x).\n",
+			       mask, iommu->index, iommu->pci_seg->id, PCI_BUS_NUM(iommu->devid),
+			       PCI_SLOT(iommu->devid), PCI_FUNC(iommu->devid));
+			return false;
+		}
+		ret = tmp;
+	}
+	return ret;
 }
 #endif
 
