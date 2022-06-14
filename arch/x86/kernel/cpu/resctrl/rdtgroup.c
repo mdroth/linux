@@ -254,6 +254,10 @@ static const struct kernfs_ops kf_mondata_ops = {
 	.seq_show		= rdtgroup_mondata_show,
 };
 
+static const struct kernfs_ops kf_mondata_config_ops = {
+	.atomic_write_len       = PAGE_SIZE,
+};
+
 static bool is_cpu_list(struct kernfs_open_file *of)
 {
 	struct rftype *rft = of->kn->priv;
@@ -2517,6 +2521,25 @@ void rmdir_mondata_subdir_allrdtgrp(struct rdt_resource *r, unsigned int dom_id)
 	}
 }
 
+static int mon_config_addfile(struct kernfs_node *parent_kn, const char *name,
+			      void *priv)
+{
+	struct kernfs_node *kn;
+	int ret = 0;
+
+	kn = __kernfs_create_file(parent_kn, name, 0644,
+			GLOBAL_ROOT_UID, GLOBAL_ROOT_GID, 0,
+			&kf_mondata_config_ops, priv, NULL, NULL);
+	if (IS_ERR(kn))
+		return PTR_ERR(kn);
+
+	ret = rdtgroup_kn_set_ugid(kn);
+	if (ret)
+		kernfs_remove(kn);
+
+	return ret;
+}
+
 static int mkdir_mondata_subdir(struct kernfs_node *parent_kn,
 				struct rdt_domain *d,
 				struct rdt_resource *r, struct rdtgroup *prgrp)
@@ -2550,6 +2573,15 @@ static int mkdir_mondata_subdir(struct kernfs_node *parent_kn,
 		ret = mon_addfile(kn, mevt->name, priv.priv);
 		if (ret)
 			goto out_destroy;
+
+		/* Create the sysfs event configuration files */
+		if (r->mon_configurable &&
+		    (mevt->evtid == QOS_L3_MBM_TOTAL_EVENT_ID ||
+		     mevt->evtid == QOS_L3_MBM_LOCAL_EVENT_ID)) {
+			ret = mon_config_addfile(kn, mevt->config, priv.priv);
+			if (ret)
+				goto out_destroy;
+		}
 
 		if (is_mbm_event(mevt->evtid))
 			mon_event_read(&rr, r, d, prgrp, mevt->evtid, true);

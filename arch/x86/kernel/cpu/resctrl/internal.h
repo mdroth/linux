@@ -72,11 +72,13 @@ DECLARE_STATIC_KEY_FALSE(rdt_mon_enable_key);
  * struct mon_evt - Entry in the event list of a resource
  * @evtid:		event id
  * @name:		name of the event
+ * @config:	current configuration
  * @list:		entry in &rdt_resource->evt_list
  */
 struct mon_evt {
 	u32			evtid;
 	char			*name;
+	char			*config;
 	struct list_head	list;
 };
 
@@ -95,6 +97,7 @@ union mon_data_bits {
 		unsigned int rid	: 10;
 		unsigned int evtid	: 8;
 		unsigned int domid	: 14;
+		unsigned int mon_config : 32;
 	} u;
 };
 

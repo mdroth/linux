@@ -656,11 +656,13 @@ static struct mon_evt llc_occupancy_event = {
 static struct mon_evt mbm_total_event = {
 	.name		= "mbm_total_bytes",
 	.evtid		= QOS_L3_MBM_TOTAL_EVENT_ID,
+	.config 	= "mbm_total_config",
 };
 
 static struct mon_evt mbm_local_event = {
 	.name		= "mbm_local_bytes",
 	.evtid		= QOS_L3_MBM_LOCAL_EVENT_ID,
+	.config 	= "mbm_local_config",
 };
 
 /*
