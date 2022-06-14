@@ -296,6 +296,7 @@
 #define X86_FEATURE_MBA			(11*32+ 8) /* Memory Bandwidth Allocation */
 #define X86_FEATURE_PER_THREAD_MBA	(11*32+ 9) /* "" Per-thread Memory Bandwidth Allocation */
 #define X86_FEATURE_SMBA		(11*32+10) /* SLOW Memory Bandwidth Allocation */
+#define X86_FEATURE_BMEC		(11*32+11) /* AMD Bandwidth Monitoring Event Configuration (BMEC) */
 
 #define X86_FEATURE_FENCE_SWAPGS_USER	(11*32+16) /* "" LFENCE in user entry SWAPGS path */
 #define X86_FEATURE_FENCE_SWAPGS_KERNEL	(11*32+17) /* "" LFENCE in kernel entry SWAPGS path */
