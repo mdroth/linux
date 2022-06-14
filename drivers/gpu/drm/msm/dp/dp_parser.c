@@ -102,14 +102,12 @@ static int dp_parser_ctrl_res(struct dp_parser *parser)
 static int dp_parser_misc(struct dp_parser *parser)
 {
 	struct device_node *of_node = parser->pdev->dev.of_node;
-	int len = 0;
-	const char *data_lane_property = "data-lanes";
+	int len;
 
-	len = of_property_count_elems_of_size(of_node,
-			 data_lane_property, sizeof(u32));
+	len = drm_of_get_data_lanes_count(of_node, 1, DP_MAX_NUM_DP_LANES);
 	if (len < 0) {
-		DRM_WARN("Invalid property %s, default max DP lanes = %d\n",
-				data_lane_property, DP_MAX_NUM_DP_LANES);
+		DRM_WARN("Invalid property \"data-lanes\", default max DP lanes = %d\n",
+			 DP_MAX_NUM_DP_LANES);
 		len = DP_MAX_NUM_DP_LANES;
 	}
 
@@ -260,12 +258,10 @@ static int dp_parser_clock(struct dp_parser *parser)
 		}
 	}
 
-	DRM_DEBUG_DP("clock parsing successful\n");
-
 	return 0;
 }
 
-static int dp_parser_find_next_bridge(struct dp_parser *parser)
+int dp_parser_find_next_bridge(struct dp_parser *parser)
 {
 	struct device *dev = &parser->pdev->dev;
 	struct drm_bridge *bridge;
@@ -279,7 +275,7 @@ static int dp_parser_find_next_bridge(struct dp_parser *parser)
 	return 0;
 }
 
-static int dp_parser_parse(struct dp_parser *parser, int connector_type)
+static int dp_parser_parse(struct dp_parser *parser)
 {
 	int rc = 0;
 
@@ -299,25 +295,6 @@ static int dp_parser_parse(struct dp_parser *parser, int connector_type)
 	rc = dp_parser_clock(parser);
 	if (rc)
 		return rc;
-
-	/*
-	 * External bridges are mandatory for eDP interfaces: one has to
-	 * provide at least an eDP panel (which gets wrapped into panel-bridge).
-	 *
-	 * For DisplayPort interfaces external bridges are optional, so
-	 * silently ignore an error if one is not present (-ENODEV).
-	 */
-	rc = dp_parser_find_next_bridge(parser);
-	if (rc == -ENODEV) {
-		if (connector_type == DRM_MODE_CONNECTOR_eDP) {
-			DRM_ERROR("eDP: next bridge is not present\n");
-			return rc;
-		}
-	} else if (rc) {
-		if (rc != -EPROBE_DEFER)
-			DRM_ERROR("DP: error parsing next bridge: %d\n", rc);
-		return rc;
-	}
 
 	/* Map the corresponding regulator information according to
 	 * version. Currently, since we only have one supported platform,

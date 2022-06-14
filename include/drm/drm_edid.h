@@ -122,7 +122,7 @@ struct detailed_data_monitor_range {
 			u8 supported_scalings;
 			u8 preferred_refresh;
 		} __attribute__((packed)) cvt;
-	} formula;
+	} __attribute__((packed)) formula;
 } __attribute__((packed));
 
 struct detailed_data_wpindex {
@@ -155,7 +155,7 @@ struct detailed_non_pixel {
 		struct detailed_data_wpindex color;
 		struct std_timing timings[6];
 		struct cvt_timing cvt[4];
-	} data;
+	} __attribute__((packed)) data;
 } __attribute__((packed));
 
 #define EDID_DETAIL_EST_TIMINGS 0xf7
@@ -173,7 +173,7 @@ struct detailed_timing {
 	union {
 		struct detailed_pixel_timing pixel_data;
 		struct detailed_non_pixel other_data;
-	} data;
+	} __attribute__((packed)) data;
 } __attribute__((packed));
 
 #define DRM_EDID_INPUT_SERRATION_VSYNC (1 << 0)
@@ -594,6 +594,15 @@ drm_display_mode_from_cea_vic(struct drm_device *dev,
 			      u8 video_code);
 
 /* Interface based on struct drm_edid */
+const struct drm_edid *drm_edid_alloc(const void *edid, size_t size);
+const struct drm_edid *drm_edid_dup(const struct drm_edid *drm_edid);
+void drm_edid_free(const struct drm_edid *drm_edid);
+const struct drm_edid *drm_edid_read(struct drm_connector *connector);
+const struct drm_edid *drm_edid_read_ddc(struct drm_connector *connector,
+					 struct i2c_adapter *adapter);
+const struct drm_edid *drm_edid_read_custom(struct drm_connector *connector,
+					    int (*read_block)(void *context, u8 *buf, unsigned int block, size_t len),
+					    void *context);
 const u8 *drm_find_edid_extension(const struct drm_edid *drm_edid,
 				  int ext_id, int *ext_index);
 
