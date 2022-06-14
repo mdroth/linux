@@ -264,6 +264,29 @@ When monitoring is enabled all MON groups will also contain:
 	the sum for all tasks in the CTRL_MON group and all tasks in
 	MON groups. Please see example section for more details on usage.
 
+"mbm_total_config":
+"mbm_local_config":
+        This contains the current event configuration for the events
+        mbm_total_bytes and mbm_local_bytes, respectively, when the
+        Bandwidth Monitoring Event Configuration (BMEC) feature is supported.
+        These files are organized by L3 domains under the subdirectories
+        "mon_L3_00" and "mon_L3_01". When BMEC is supported, the events
+        mbm_local_bytes and mbm_total_bytes are configurable.
+
+        Following are the types of events supported.
+        Bits    Description
+        6       Dirty Victims from the QOS domain to all types of memory
+        5       Reads to slow memory in the non-local NUMA domain
+        4       Reads to slow memory in the local NUMA domain
+        3       Non-temporal writes to non-local NUMA domain
+        2       Non-temporal writes to local NUMA domain
+        1       Reads to memory in the non-local NUMA domain
+        0       Reads to memory in the local NUMA domain
+
+        By default, the mbm_total_bytes configuration is set to 0x7f to count
+        all the event types and the mbm_local_bytes configuration is set to
+        0x15 to count all the local memory events.
+
 Resource allocation rules
 -------------------------
 
@@ -464,6 +487,14 @@ Memory bandwidth domain is L3 cache.
 
 	MB:<cache_id0>=bw_MBps0;<cache_id1>=bw_MBps1;...
 
+Slow Memory bandwidth Allocation (when supported)
+------------------------------------------
+
+Slow Memory b/w domain is L3 cache.
+::
+
+	SB:<cache_id0>=bandwidth0;<cache_id1>=bandwidth1;...
+
 Reading/writing the schemata file
 ---------------------------------
 Reading the schemata file will show the state of all resources
@@ -478,6 +509,44 @@ which you wish to change.  E.g.
   # cat schemata
   L3DATA:0=fffff;1=fffff;2=3c0;3=fffff
   L3CODE:0=fffff;1=fffff;2=fffff;3=fffff
+
+Reading/writing the schemata file (on AMD systems)
+---------------------------------------------------------------
+Reading the schemata file will show the state of all resources
+on all domains. When writing the memory bandwidth allocation you
+only need to specify those values in an absolute number expressed
+in 1/8 GB/s increments. To allocate bandwidth limit of 2GB, you
+need to specify the value 16 (16 * 1/8 = 2).  E.g.
+::
+
+  # cat schemata
+    MB:0=2048;1=2048;2=2048;3=2048
+    L3:0=ffff;1=ffff;2=ffff;3=ffff
+
+  # echo "MB:1=16" > schemata
+  # cat schemata
+    MB:0=2048;1=  16;2=2048;3=2048
+    L3:0=ffff;1=ffff;2=ffff;3=ffff
+
+Reading/writing the schemata file (on AMD systems) with slow memory
+---------------------------------------------------------------
+Reading the schemata file will show the state of all resources
+on all domains. When writing the memory bandwidth allocation you
+only need to specify those values in an absolute number expressed
+in 1/8 GB/s increments. To allocate bandwidth limit of 8GB, you
+need to specify the value 64 (64 * 1/8 = 8).  E.g.
+::
+
+  # cat schemata
+    SB:0=2048;1=2048;2=2048;3=2048
+    MB:0=2048;1=2048;2=2048;3=2048
+    L3:0=ffff;1=ffff;2=ffff;3=ffff
+
+  # echo "SB:1=64" > schemata
+  # cat schemata
+    SB:0=2048;1=  64;2=2048;3=2048
+    MB:0=2048;1=2048;2=2048;3=2048
+    L3:0=ffff;1=ffff;2=ffff;3=ffff
 
 Cache Pseudo-Locking
 ====================
@@ -1209,6 +1278,54 @@ View the llc occupancy snapshot::
 
   # cat /sys/fs/resctrl/p1/mon_data/mon_L3_00/llc_occupancy
   11234000
+
+Example 5 (Configure and Monitor specific event types)
+-------------------------------------------------
+
+A single socket system which has real time tasks running on cores 0-4
+and non real time tasks on other CPUs. We want to monitor the memory
+bandwidth allocation for specific events.
+::
+
+  # mount -t resctrl resctrl /sys/fs/resctrl
+  # cd /sys/fs/resctrl
+  # mkdir p1
+
+Move the CPUs 0-4 over to p1::
+
+  # echo 0xf > p1/cpus
+
+View the current mbm_local_bytes::
+
+  # cat /sys/fs/resctrl/p1/mon_data/mon_L3_00/mbm_local_bytes
+  112501
+
+Change the mbm_local_bytes to count mon-temporal writes to both local
+and non-local NUMA domain. Refer to event supported bitmap under
+mbm_local_config::
+
+  # echo 0xc > /sys/fs/resctrl/p1/mon_data/mon_L3_00/mbm_local_config
+
+View the updated mbm_local_bytes::
+
+  # cat /sys/fs/resctrl/p1/mon_data/mon_L3_00/mbm_local_bytes
+  12601
+
+Similar experiment on mbm_total_bytes. First view the current mbm_total_bytes::
+
+  # cat /sys/fs/resctrl/p1/mon_data/mon_L3_00/mbm_total_bytes
+  1532501
+
+Change the mbm_total_bytes to count only reads to slow memory on both local
+and non-local NUMA domain. Refer to event supported bitmap under
+mbm_total_config::
+
+  # echo 0x30 > /sys/fs/resctrl/p1/mon_data/mon_L3_00/mbm_total_config
+
+View the updated mbm_total_bytes::
+
+  # cat /sys/fs/resctrl/p1/mon_data/mon_L3_00/mbm_total_bytes
+  104562
 
 Intel RDT Errata
 ================
