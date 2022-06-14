@@ -195,21 +195,21 @@
 #define X86_FEATURE_CPUID_FAULT		( 7*32+ 1) /* Intel CPUID faulting */
 #define X86_FEATURE_CPB			( 7*32+ 2) /* AMD Core Performance Boost */
 #define X86_FEATURE_EPB			( 7*32+ 3) /* IA32_ENERGY_PERF_BIAS support */
-#define X86_FEATURE_CAT_L3		( 7*32+ 4) /* Cache Allocation Technology L3 */
-#define X86_FEATURE_CAT_L2		( 7*32+ 5) /* Cache Allocation Technology L2 */
-#define X86_FEATURE_CDP_L3		( 7*32+ 6) /* Code and Data Prioritization L3 */
-#define X86_FEATURE_INVPCID_SINGLE	( 7*32+ 7) /* Effectively INVPCID && CR4.PCIDE=1 */
-#define X86_FEATURE_HW_PSTATE		( 7*32+ 8) /* AMD HW-PState */
-#define X86_FEATURE_PROC_FEEDBACK	( 7*32+ 9) /* AMD ProcFeedbackInterface */
-/* FREE!                                ( 7*32+10) */
+#define X86_FEATURE_INVPCID_SINGLE	( 7*32+ 4) /* Effectively INVPCID && CR4.PCIDE=1 */
+#define X86_FEATURE_HW_PSTATE		( 7*32+ 5) /* AMD HW-PState */
+#define X86_FEATURE_PROC_FEEDBACK	( 7*32+ 6) /* AMD ProcFeedbackInterface */
+/* FREE!				( 7*32+ 7) */
+/* FREE!				( 7*32+ 8) */
+/* FREE!				( 7*32+ 9) */
+/* FREE!				( 7*32+10) */
 #define X86_FEATURE_PTI			( 7*32+11) /* Kernel Page Table Isolation enabled */
 #define X86_FEATURE_RETPOLINE		( 7*32+12) /* "" Generic Retpoline mitigation for Spectre variant 2 */
 #define X86_FEATURE_RETPOLINE_LFENCE	( 7*32+13) /* "" Use LFENCE for Spectre variant 2 */
 #define X86_FEATURE_INTEL_PPIN		( 7*32+14) /* Intel Processor Inventory Number */
-#define X86_FEATURE_CDP_L2		( 7*32+15) /* Code and Data Prioritization L2 */
+/* FREE!                                ( 7*32+15) */
 #define X86_FEATURE_MSR_SPEC_CTRL	( 7*32+16) /* "" MSR SPEC_CTRL is implemented */
 #define X86_FEATURE_SSBD		( 7*32+17) /* Speculative Store Bypass Disable */
-#define X86_FEATURE_MBA			( 7*32+18) /* Memory Bandwidth Allocation */
+/* FREE!                                ( 7*32+18) */
 #define X86_FEATURE_RSB_CTXSW		( 7*32+19) /* "" Fill RSB on context switches */
 /* FREE!                                ( 7*32+20) */
 #define X86_FEATURE_USE_IBPB		( 7*32+21) /* "" Indirect Branch Prediction Barrier enabled */
@@ -285,16 +285,22 @@
  *
  * Reuse free bits when adding new feature flags!
  */
-#define X86_FEATURE_CQM_LLC		(11*32+ 0) /* LLC QoS if 1 */
-#define X86_FEATURE_CQM_OCCUP_LLC	(11*32+ 1) /* LLC occupancy monitoring */
-#define X86_FEATURE_CQM_MBM_TOTAL	(11*32+ 2) /* LLC Total MBM monitoring */
-#define X86_FEATURE_CQM_MBM_LOCAL	(11*32+ 3) /* LLC Local MBM monitoring */
-#define X86_FEATURE_FENCE_SWAPGS_USER	(11*32+ 4) /* "" LFENCE in user entry SWAPGS path */
-#define X86_FEATURE_FENCE_SWAPGS_KERNEL	(11*32+ 5) /* "" LFENCE in kernel entry SWAPGS path */
-#define X86_FEATURE_SPLIT_LOCK_DETECT	(11*32+ 6) /* #AC for split lock */
-#define X86_FEATURE_PER_THREAD_MBA	(11*32+ 7) /* "" Per-thread Memory Bandwidth Allocation */
-#define X86_FEATURE_SGX1		(11*32+ 8) /* "" Basic SGX */
-#define X86_FEATURE_SGX2		(11*32+ 9) /* "" SGX Enclave Dynamic Memory Management (EDMM) */
+#define X86_FEATURE_CAT_L3		(11*32+ 0) /* Cache Allocation Technology L3 */
+#define X86_FEATURE_CAT_L2		(11*32+ 1) /* Cache Allocation Technology L2 */
+#define X86_FEATURE_CDP_L3		(11*32+ 2) /* Code and Data Prioritization L3 */
+#define X86_FEATURE_CDP_L2		(11*32+ 3) /* Code and Data Prioritization L2 */
+#define X86_FEATURE_CQM_LLC		(11*32+ 4) /* LLC QoS if 1 */
+#define X86_FEATURE_CQM_OCCUP_LLC	(11*32+ 5) /* LLC occupancy monitoring */
+#define X86_FEATURE_CQM_MBM_TOTAL	(11*32+ 6) /* LLC Total MBM monitoring */
+#define X86_FEATURE_CQM_MBM_LOCAL	(11*32+ 7) /* LLC Local MBM monitoring */
+#define X86_FEATURE_MBA			(11*32+ 8) /* Memory Bandwidth Allocation */
+#define X86_FEATURE_PER_THREAD_MBA	(11*32+ 9) /* "" Per-thread Memory Bandwidth Allocation */
+
+#define X86_FEATURE_FENCE_SWAPGS_USER	(11*32+16) /* "" LFENCE in user entry SWAPGS path */
+#define X86_FEATURE_FENCE_SWAPGS_KERNEL	(11*32+17) /* "" LFENCE in kernel entry SWAPGS path */
+#define X86_FEATURE_SPLIT_LOCK_DETECT	(11*32+18) /* #AC for split lock */
+#define X86_FEATURE_SGX1		(11*32+19) /* "" Basic SGX */
+#define X86_FEATURE_SGX2		(11*32+20) /* "" SGX Enclave Dynamic Memory Management (EDMM) */
 
 /* Intel-defined CPU features, CPUID level 0x00000007:1 (EAX), word 12 */
 #define X86_FEATURE_AVX_VNNI		(12*32+ 4) /* AVX VNNI instructions */
