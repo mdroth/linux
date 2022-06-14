@@ -63,6 +63,11 @@ module_param(shared_mem, bool, 0444);
 MODULE_PARM_DESC(shared_mem,
 		 "enable amd-pstate on processors with shared memory solution (false = disabled (default), true = enabled)");
 
+static bool amd_pstate_enabled = false;
+module_param(amd_pstate_enabled, bool, 0444);
+MODULE_PARM_DESC(amd_pstate_enabled,
+		 "enable amd-pstate driver (false = disabled (default), true = enabled)");
+
 static struct cpufreq_driver amd_pstate_driver;
 
 /**
@@ -644,6 +649,9 @@ static struct cpufreq_driver amd_pstate_driver = {
 static int __init amd_pstate_init(void)
 {
 	int ret;
+
+	if (!amd_pstate_enabled)
+		return -ENODEV;
 
 	if (boot_cpu_data.x86_vendor != X86_VENDOR_AMD)
 		return -ENODEV;
