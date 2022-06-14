@@ -1360,6 +1360,11 @@ union perf_mem_data_src {
  *     abort: aborting a hardware transaction
  *    cycles: cycles from last branch (or 0 if not supported)
  *      type: branch type
+ *     valid: valid branch (or 0 if not supported)
+ *      spec: speculated branch (or 0 if not supported)
+ *
+ * support for valid, spec is optional. In case it is not
+ * supported valid = spec = 0.
  */
 struct perf_branch_entry {
 	__u64	from;
@@ -1370,7 +1375,9 @@ struct perf_branch_entry {
 		abort:1,    /* transaction abort */
 		cycles:16,  /* cycle count to last branch */
 		type:4,     /* branch type */
-		reserved:40;
+		valid:1,    /* valid */
+		spec:1,     /* speculated */
+		reserved:38;
 };
 
 union perf_sample_weight {
