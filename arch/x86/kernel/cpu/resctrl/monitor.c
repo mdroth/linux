@@ -682,6 +682,16 @@ static void l3_mon_evt_init(struct rdt_resource *r)
 		list_add_tail(&mbm_local_event.list, &r->evt_list);
 }
 
+
+void __rdt_get_mon_l3_config_amd(struct rdt_resource *r)
+{
+	/*
+	 * Check if CPU supports the Bandwidth Monitoring Event Configuration
+	 */
+	if (boot_cpu_has(X86_FEATURE_BMEC))
+		r->mon_configurable = true;
+}
+
 int rdt_get_mon_l3_config(struct rdt_resource *r)
 {
 	unsigned int mbm_offset = boot_cpu_data.x86_cache_mbm_width_offset;
@@ -713,6 +723,10 @@ int rdt_get_mon_l3_config(struct rdt_resource *r)
 	ret = dom_data_init(r);
 	if (ret)
 		return ret;
+
+	if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD)
+		__rdt_get_mon_l3_config_amd(r);
+
 
 	l3_mon_evt_init(r);
 

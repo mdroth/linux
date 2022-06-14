@@ -154,6 +154,7 @@ struct rdt_resource {
 	bool			mon_enabled;
 	bool			alloc_capable;
 	bool			mon_capable;
+	bool			mon_configurable;
 	int			num_rmid;
 	int			cache_level;
 	struct resctrl_cache	cache;
