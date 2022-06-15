@@ -26,10 +26,7 @@ int open_path_or_exit(const char *path, int flags)
 	int fd;
 
 	fd = open(path, flags);
-	if (fd < 0) {
-		print_skip("%s not available (errno: %d)", path, errno);
-		exit(KSFT_SKIP);
-	}
+	__TEST_REQUIRE(fd >= 0, "%s not available (errno: %d)", path, errno);
 
 	return fd;
 }
@@ -69,18 +66,18 @@ int open_kvm_dev_path_or_exit(void)
  * Looks up and returns the value corresponding to the capability
  * (KVM_CAP_*) given by cap.
  */
-int kvm_check_cap(long cap)
+unsigned int kvm_check_cap(long cap)
 {
 	int ret;
 	int kvm_fd;
 
 	kvm_fd = open_kvm_dev_path_or_exit();
-	ret = __kvm_ioctl(kvm_fd, KVM_CHECK_EXTENSION, cap);
+	ret = __kvm_ioctl(kvm_fd, KVM_CHECK_EXTENSION, (void *)cap);
 	TEST_ASSERT(ret >= 0, KVM_IOCTL_ERROR(KVM_CHECK_EXTENSION, ret));
 
 	close(kvm_fd);
 
-	return ret;
+	return (unsigned int)ret;
 }
 
 void vm_enable_dirty_ring(struct kvm_vm *vm, uint32_t ring_size)
@@ -93,12 +90,9 @@ static void vm_open(struct kvm_vm *vm)
 {
 	vm->kvm_fd = _open_kvm_dev_path_or_exit(O_RDWR);
 
-	if (!kvm_check_cap(KVM_CAP_IMMEDIATE_EXIT)) {
-		print_skip("immediate_exit not available");
-		exit(KSFT_SKIP);
-	}
+	TEST_REQUIRE(kvm_has_cap(KVM_CAP_IMMEDIATE_EXIT));
 
-	vm->fd = __kvm_ioctl(vm->kvm_fd, KVM_CREATE_VM, vm->type);
+	vm->fd = __kvm_ioctl(vm->kvm_fd, KVM_CREATE_VM, (void *)vm->type);
 	TEST_ASSERT(vm->fd >= 0, KVM_IOCTL_ERROR(KVM_CREATE_VM, vm->fd));
 }
 
@@ -149,12 +143,12 @@ const struct vm_guest_mode_params vm_guest_mode_params[] = {
 _Static_assert(sizeof(vm_guest_mode_params)/sizeof(struct vm_guest_mode_params) == NUM_VM_MODES,
 	       "Missing new mode params?");
 
-struct kvm_vm *__vm_create(enum vm_guest_mode mode, uint64_t phy_pages)
+struct kvm_vm *____vm_create(enum vm_guest_mode mode, uint64_t nr_pages)
 {
 	struct kvm_vm *vm;
 
 	pr_debug("%s: mode='%s' pages='%ld'\n", __func__,
-		 vm_guest_mode_string(mode), phy_pages);
+		 vm_guest_mode_string(mode), nr_pages);
 
 	vm = calloc(1, sizeof(*vm));
 	TEST_ASSERT(vm != NULL, "Insufficient Memory");
@@ -251,38 +245,56 @@ struct kvm_vm *__vm_create(enum vm_guest_mode mode, uint64_t phy_pages)
 
 	/* Allocate and setup memory for guest. */
 	vm->vpages_mapped = sparsebit_alloc();
-	if (phy_pages != 0)
+	if (nr_pages != 0)
 		vm_userspace_mem_region_add(vm, VM_MEM_SRC_ANONYMOUS,
-					    0, 0, phy_pages, 0);
+					    0, 0, nr_pages, 0);
 
 	return vm;
 }
 
-/*
- * VM Create
- *
- * Input Args:
- *   phy_pages - Physical memory pages
- *
- * Output Args: None
- *
- * Return:
- *   Pointer to opaque structure that describes the created VM.
- *
- * Creates a VM with the default physical/virtual address widths and page size.
- * When phy_pages is non-zero, a memory region of phy_pages physical pages
- * is created and mapped starting at guest physical address 0.
- */
-struct kvm_vm *vm_create(uint64_t phy_pages)
+static uint64_t vm_nr_pages_required(enum vm_guest_mode mode,
+				     uint32_t nr_runnable_vcpus,
+				     uint64_t extra_mem_pages)
 {
-	return __vm_create(VM_MODE_DEFAULT, phy_pages);
+	uint64_t nr_pages;
+
+	TEST_ASSERT(nr_runnable_vcpus,
+		    "Use vm_create_barebones() for VMs that _never_ have vCPUs\n");
+
+	TEST_ASSERT(nr_runnable_vcpus <= kvm_check_cap(KVM_CAP_MAX_VCPUS),
+		    "nr_vcpus = %d too large for host, max-vcpus = %d",
+		    nr_runnable_vcpus, kvm_check_cap(KVM_CAP_MAX_VCPUS));
+
+	/*
+	 * Arbitrarily allocate 512 pages (2mb when page size is 4kb) for the
+	 * test code and other per-VM assets that will be loaded into memslot0.
+	 */
+	nr_pages = 512;
+
+	/* Account for the per-vCPU stacks on behalf of the test. */
+	nr_pages += nr_runnable_vcpus * DEFAULT_STACK_PGS;
+
+	/*
+	 * Account for the number of pages needed for the page tables.  The
+	 * maximum page table size for a memory region will be when the
+	 * smallest page size is used. Considering each page contains x page
+	 * table descriptors, the total extra size for page tables (for extra
+	 * N pages) will be: N/x+N/x^2+N/x^3+... which is definitely smaller
+	 * than N/x*2.
+	 */
+	nr_pages += (nr_pages + extra_mem_pages) / PTES_PER_MIN_PAGE * 2;
+
+	return vm_adjust_num_guest_pages(mode, nr_pages);
 }
 
-struct kvm_vm *vm_create_without_vcpus(enum vm_guest_mode mode, uint64_t pages)
+struct kvm_vm *__vm_create(enum vm_guest_mode mode, uint32_t nr_runnable_vcpus,
+			   uint64_t nr_extra_pages)
 {
+	uint64_t nr_pages = vm_nr_pages_required(mode, nr_runnable_vcpus,
+						 nr_extra_pages);
 	struct kvm_vm *vm;
 
-	vm = __vm_create(mode, pages);
+	vm = ____vm_create(mode, nr_pages);
 
 	kvm_vm_elf_load(vm, program_invocation_name);
 
@@ -298,9 +310,7 @@ struct kvm_vm *vm_create_without_vcpus(enum vm_guest_mode mode, uint64_t pages)
  * Input Args:
  *   mode - VM Mode (e.g. VM_MODE_P52V48_4K)
  *   nr_vcpus - VCPU count
- *   slot0_mem_pages - Slot0 physical memory size
  *   extra_mem_pages - Non-slot0 physical memory total size
- *   num_percpu_pages - Per-cpu physical memory pages
  *   guest_code - Guest entry point
  *   vcpuids - VCPU IDs
  *
@@ -309,64 +319,39 @@ struct kvm_vm *vm_create_without_vcpus(enum vm_guest_mode mode, uint64_t pages)
  * Return:
  *   Pointer to opaque structure that describes the created VM.
  *
- * Creates a VM with the mode specified by mode (e.g. VM_MODE_P52V48_4K),
- * with customized slot0 memory size, at least 512 pages currently.
+ * Creates a VM with the mode specified by mode (e.g. VM_MODE_P52V48_4K).
  * extra_mem_pages is only used to calculate the maximum page table size,
  * no real memory allocation for non-slot0 memory in this function.
  */
-struct kvm_vm *vm_create_with_vcpus(enum vm_guest_mode mode, uint32_t nr_vcpus,
-				    uint64_t slot0_mem_pages, uint64_t extra_mem_pages,
-				    uint32_t num_percpu_pages, void *guest_code,
-				    uint32_t vcpuids[])
+struct kvm_vm *__vm_create_with_vcpus(enum vm_guest_mode mode, uint32_t nr_vcpus,
+				      uint64_t extra_mem_pages,
+				      void *guest_code, struct kvm_vcpu *vcpus[])
 {
-	uint64_t vcpu_pages, extra_pg_pages, pages;
 	struct kvm_vm *vm;
 	int i;
 
-	/* Force slot0 memory size not small than DEFAULT_GUEST_PHY_PAGES */
-	if (slot0_mem_pages < DEFAULT_GUEST_PHY_PAGES)
-		slot0_mem_pages = DEFAULT_GUEST_PHY_PAGES;
+	TEST_ASSERT(!nr_vcpus || vcpus, "Must provide vCPU array");
 
-	/* The maximum page table size for a memory region will be when the
-	 * smallest pages are used. Considering each page contains x page
-	 * table descriptors, the total extra size for page tables (for extra
-	 * N pages) will be: N/x+N/x^2+N/x^3+... which is definitely smaller
-	 * than N/x*2.
-	 */
-	vcpu_pages = (DEFAULT_STACK_PGS + num_percpu_pages) * nr_vcpus;
-	extra_pg_pages = (slot0_mem_pages + extra_mem_pages + vcpu_pages) / PTES_PER_MIN_PAGE * 2;
-	pages = slot0_mem_pages + vcpu_pages + extra_pg_pages;
+	vm = __vm_create(mode, nr_vcpus, extra_mem_pages);
 
-	TEST_ASSERT(nr_vcpus <= kvm_check_cap(KVM_CAP_MAX_VCPUS),
-		    "nr_vcpus = %d too large for host, max-vcpus = %d",
-		    nr_vcpus, kvm_check_cap(KVM_CAP_MAX_VCPUS));
-
-	pages = vm_adjust_num_guest_pages(mode, pages);
-
-	vm = vm_create_without_vcpus(mode, pages);
-
-	for (i = 0; i < nr_vcpus; ++i) {
-		uint32_t vcpuid = vcpuids ? vcpuids[i] : i;
-
-		vm_vcpu_add_default(vm, vcpuid, guest_code);
-	}
+	for (i = 0; i < nr_vcpus; ++i)
+		vcpus[i] = vm_vcpu_add(vm, i, guest_code);
 
 	return vm;
 }
 
-struct kvm_vm *vm_create_default_with_vcpus(uint32_t nr_vcpus, uint64_t extra_mem_pages,
-					    uint32_t num_percpu_pages, void *guest_code,
-					    uint32_t vcpuids[])
+struct kvm_vm *__vm_create_with_one_vcpu(struct kvm_vcpu **vcpu,
+					 uint64_t extra_mem_pages,
+					 void *guest_code)
 {
-	return vm_create_with_vcpus(VM_MODE_DEFAULT, nr_vcpus, DEFAULT_GUEST_PHY_PAGES,
-				    extra_mem_pages, num_percpu_pages, guest_code, vcpuids);
-}
+	struct kvm_vcpu *vcpus[1];
+	struct kvm_vm *vm;
 
-struct kvm_vm *vm_create_default(uint32_t vcpuid, uint64_t extra_mem_pages,
-				 void *guest_code)
-{
-	return vm_create_default_with_vcpus(1, extra_mem_pages, 0, guest_code,
-					    (uint32_t []){ vcpuid });
+	vm = __vm_create_with_vcpus(VM_MODE_DEFAULT, 1, extra_mem_pages,
+				    guest_code, vcpus);
+
+	*vcpu = vcpus[0];
+	return vm;
 }
 
 /*
@@ -401,6 +386,13 @@ void kvm_vm_restart(struct kvm_vm *vmp)
 			    region->region.guest_phys_addr,
 			    region->region.memory_size);
 	}
+}
+
+struct kvm_vcpu *vm_recreate_with_one_vcpu(struct kvm_vm *vm)
+{
+	kvm_vm_restart(vm);
+
+	return __vm_vcpu_add(vm, 0);
 }
 
 /*
@@ -474,26 +466,6 @@ kvm_userspace_memory_region_find(struct kvm_vm *vm, uint64_t start,
 	return &region->region;
 }
 
-static struct vcpu *vcpu_find(struct kvm_vm *vm, uint32_t vcpuid)
-{
-	struct vcpu *vcpu;
-
-	list_for_each_entry(vcpu, &vm->vcpus, list) {
-		if (vcpu->id == vcpuid)
-			return vcpu;
-	}
-
-	return NULL;
-}
-
-struct vcpu *vcpu_get(struct kvm_vm *vm, uint32_t vcpuid)
-{
-	struct vcpu *vcpu = vcpu_find(vm, vcpuid);
-
-	TEST_ASSERT(vcpu, "vCPU %d does not exist", vcpuid);
-	return vcpu;
-}
-
 /*
  * VM VCPU Remove
  *
@@ -506,7 +478,7 @@ struct vcpu *vcpu_get(struct kvm_vm *vm, uint32_t vcpuid)
  *
  * Removes a vCPU from a VM and frees its resources.
  */
-static void vm_vcpu_rm(struct kvm_vm *vm, struct vcpu *vcpu)
+static void vm_vcpu_rm(struct kvm_vm *vm, struct kvm_vcpu *vcpu)
 {
 	int ret;
 
@@ -516,7 +488,7 @@ static void vm_vcpu_rm(struct kvm_vm *vm, struct vcpu *vcpu)
 		vcpu->dirty_gfns = NULL;
 	}
 
-	ret = munmap(vcpu->state, vcpu_mmap_sz());
+	ret = munmap(vcpu->run, vcpu_mmap_sz());
 	TEST_ASSERT(!ret, __KVM_SYSCALL_ERROR("munmap()", ret));
 
 	ret = close(vcpu->fd);
@@ -528,7 +500,7 @@ static void vm_vcpu_rm(struct kvm_vm *vm, struct vcpu *vcpu)
 
 void kvm_vm_release(struct kvm_vm *vmp)
 {
-	struct vcpu *vcpu, *tmp;
+	struct kvm_vcpu *vcpu, *tmp;
 	int ret;
 
 	list_for_each_entry_safe(vcpu, tmp, &vmp->vcpus, list)
@@ -1036,19 +1008,7 @@ void vm_mem_region_delete(struct kvm_vm *vm, uint32_t slot)
 	__vm_mem_region_delete(vm, memslot2region(vm, slot), true);
 }
 
-/*
- * VCPU mmap Size
- *
- * Input Args: None
- *
- * Output Args: None
- *
- * Return:
- *   Size of VCPU state
- *
- * Returns the size of the structure pointed to by the return value
- * of vcpu_state().
- */
+/* Returns the size of a vCPU's kvm_run structure. */
 static int vcpu_mmap_sz(void)
 {
 	int dev_fd, ret;
@@ -1064,52 +1024,50 @@ static int vcpu_mmap_sz(void)
 	return ret;
 }
 
-/*
- * VM VCPU Add
- *
- * Input Args:
- *   vm - Virtual Machine
- *   vcpuid - VCPU ID
- *
- * Output Args: None
- *
- * Return: None
- *
- * Adds a virtual CPU to the VM specified by vm with the ID given by vcpuid.
- * No additional VCPU setup is done.
- */
-void vm_vcpu_add(struct kvm_vm *vm, uint32_t vcpuid)
+static bool vcpu_exists(struct kvm_vm *vm, uint32_t vcpu_id)
 {
-	struct vcpu *vcpu;
+	struct kvm_vcpu *vcpu;
+
+	list_for_each_entry(vcpu, &vm->vcpus, list) {
+		if (vcpu->id == vcpu_id)
+			return true;
+	}
+
+	return false;
+}
+
+/*
+ * Adds a virtual CPU to the VM specified by vm with the ID given by vcpu_id.
+ * No additional vCPU setup is done.  Returns the vCPU.
+ */
+struct kvm_vcpu *__vm_vcpu_add(struct kvm_vm *vm, uint32_t vcpu_id)
+{
+	struct kvm_vcpu *vcpu;
 
 	/* Confirm a vcpu with the specified id doesn't already exist. */
-	vcpu = vcpu_find(vm, vcpuid);
-	if (vcpu != NULL)
-		TEST_FAIL("vcpu with the specified id "
-			"already exists,\n"
-			"  requested vcpuid: %u\n"
-			"  existing vcpuid: %u state: %p",
-			vcpuid, vcpu->id, vcpu->state);
+	TEST_ASSERT(!vcpu_exists(vm, vcpu_id), "vCPU%d already exists\n", vcpu_id);
 
 	/* Allocate and initialize new vcpu structure. */
 	vcpu = calloc(1, sizeof(*vcpu));
 	TEST_ASSERT(vcpu != NULL, "Insufficient Memory");
 
 	vcpu->vm = vm;
-	vcpu->id = vcpuid;
-	vcpu->fd = __vm_ioctl(vm, KVM_CREATE_VCPU, (void *)(unsigned long)vcpuid);
+	vcpu->id = vcpu_id;
+	vcpu->fd = __vm_ioctl(vm, KVM_CREATE_VCPU, (void *)(unsigned long)vcpu_id);
 	TEST_ASSERT(vcpu->fd >= 0, KVM_IOCTL_ERROR(KVM_CREATE_VCPU, vcpu->fd));
 
-	TEST_ASSERT(vcpu_mmap_sz() >= sizeof(*vcpu->state), "vcpu mmap size "
+	TEST_ASSERT(vcpu_mmap_sz() >= sizeof(*vcpu->run), "vcpu mmap size "
 		"smaller than expected, vcpu_mmap_sz: %i expected_min: %zi",
-		vcpu_mmap_sz(), sizeof(*vcpu->state));
-	vcpu->state = (struct kvm_run *) mmap(NULL, vcpu_mmap_sz(),
+		vcpu_mmap_sz(), sizeof(*vcpu->run));
+	vcpu->run = (struct kvm_run *) mmap(NULL, vcpu_mmap_sz(),
 		PROT_READ | PROT_WRITE, MAP_SHARED, vcpu->fd, 0);
-	TEST_ASSERT(vcpu->state != MAP_FAILED,
+	TEST_ASSERT(vcpu->run != MAP_FAILED,
 		    __KVM_SYSCALL_ERROR("mmap()", (int)(unsigned long)MAP_FAILED));
 
 	/* Add to linked-list of VCPUs. */
 	list_add(&vcpu->list, &vm->vcpus);
+
+	return vcpu;
 }
 
 /*
@@ -1205,8 +1163,6 @@ va_found:
  *   vm - Virtual Machine
  *   sz - Size in bytes
  *   vaddr_min - Minimum starting virtual address
- *   data_memslot - Memory region slot for data pages
- *   pgd_memslot - Memory region slot for new virtual translation tables
  *
  * Output Args: None
  *
@@ -1292,7 +1248,6 @@ vm_vaddr_t vm_vaddr_alloc_page(struct kvm_vm *vm)
  *   vaddr - Virtuall address to map
  *   paddr - VM Physical Address
  *   npages - The number of pages to map
- *   pgd_memslot - Memory region slot for new virtual translation tables
  *
  * Output Args: None
  *
@@ -1403,11 +1358,10 @@ vm_paddr_t addr_hva2gpa(struct kvm_vm *vm, void *hva)
  *   (without failing the test) if the guest memory is not shared (so
  *   no alias exists).
  *
- * When vm_create() and related functions are called with a shared memory
- * src_type, we also create a writable, shared alias mapping of the
- * underlying guest memory. This allows the host to manipulate guest memory
- * without mapping that memory in the guest's address space. And, for
- * userfaultfd-based demand paging, we can do so without triggering userfaults.
+ * Create a writable, shared virtual=>physical alias for the specific GPA.
+ * The primary use case is to allow the host selftest to manipulate guest
+ * memory without mapping said memory in the guest's address space. And, for
+ * userfaultfd-based demand paging, to do so without triggering userfaults.
  */
 void *addr_gpa2alias(struct kvm_vm *vm, vm_paddr_t gpa)
 {
@@ -1425,18 +1379,7 @@ void *addr_gpa2alias(struct kvm_vm *vm, vm_paddr_t gpa)
 	return (void *) ((uintptr_t) region->host_alias + offset);
 }
 
-/*
- * VM Create IRQ Chip
- *
- * Input Args:
- *   vm - Virtual Machine
- *
- * Output Args: None
- *
- * Return: None
- *
- * Creates an interrupt controller chip for the VM specified by vm.
- */
+/* Create an interrupt controller chip for the specified VM. */
 void vm_create_irqchip(struct kvm_vm *vm)
 {
 	vm_ioctl(vm, KVM_CREATE_IRQCHIP, NULL);
@@ -1444,70 +1387,37 @@ void vm_create_irqchip(struct kvm_vm *vm)
 	vm->has_irqchip = true;
 }
 
-/*
- * VM VCPU State
- *
- * Input Args:
- *   vm - Virtual Machine
- *   vcpuid - VCPU ID
- *
- * Output Args: None
- *
- * Return:
- *   Pointer to structure that describes the state of the VCPU.
- *
- * Locates and returns a pointer to a structure that describes the
- * state of the VCPU with the given vcpuid.
- */
-struct kvm_run *vcpu_state(struct kvm_vm *vm, uint32_t vcpuid)
-{
-	struct vcpu *vcpu = vcpu_get(vm, vcpuid);
-
-	return vcpu->state;
-}
-
-/*
- * VM VCPU Run
- *
- * Input Args:
- *   vm - Virtual Machine
- *   vcpuid - VCPU ID
- *
- * Output Args: None
- *
- * Return: None
- *
- * Switch to executing the code for the VCPU given by vcpuid, within the VM
- * given by vm.
- */
-void vcpu_run(struct kvm_vm *vm, uint32_t vcpuid)
-{
-	int ret = _vcpu_run(vm, vcpuid);
-
-	TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_RUN, ret));
-}
-
-int _vcpu_run(struct kvm_vm *vm, uint32_t vcpuid)
+int _vcpu_run(struct kvm_vcpu *vcpu)
 {
 	int rc;
 
 	do {
-		rc = __vcpu_run(vm, vcpuid);
+		rc = __vcpu_run(vcpu);
 	} while (rc == -1 && errno == EINTR);
 
-	assert_on_unhandled_exception(vm, vcpuid);
+	assert_on_unhandled_exception(vcpu);
 
 	return rc;
 }
 
-void vcpu_run_complete_io(struct kvm_vm *vm, uint32_t vcpuid)
+/*
+ * Invoke KVM_RUN on a vCPU until KVM returns something other than -EINTR.
+ * Assert if the KVM returns an error (other than -EINTR).
+ */
+void vcpu_run(struct kvm_vcpu *vcpu)
 {
-	struct vcpu *vcpu = vcpu_get(vm, vcpuid);
+	int ret = _vcpu_run(vcpu);
+
+	TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_RUN, ret));
+}
+
+void vcpu_run_complete_io(struct kvm_vcpu *vcpu)
+{
 	int ret;
 
-	vcpu->state->immediate_exit = 1;
-	ret = __vcpu_run(vm, vcpuid);
-	vcpu->state->immediate_exit = 0;
+	vcpu->run->immediate_exit = 1;
+	ret = __vcpu_run(vcpu);
+	vcpu->run->immediate_exit = 0;
 
 	TEST_ASSERT(ret == -1 && errno == EINTR,
 		    "KVM_RUN IOCTL didn't exit immediately, rc: %i, errno: %i",
@@ -1515,73 +1425,44 @@ void vcpu_run_complete_io(struct kvm_vm *vm, uint32_t vcpuid)
 }
 
 /*
- * VM VCPU Get Reg List
- *
- * Input Args:
- *   vm - Virtual Machine
- *   vcpuid - VCPU ID
- *
- * Output Args:
- *   None
- *
- * Return:
- *   A pointer to an allocated struct kvm_reg_list
- *
  * Get the list of guest registers which are supported for
- * KVM_GET_ONE_REG/KVM_SET_ONE_REG calls
+ * KVM_GET_ONE_REG/KVM_SET_ONE_REG ioctls.  Returns a kvm_reg_list pointer,
+ * it is the caller's responsibility to free the list.
  */
-struct kvm_reg_list *vcpu_get_reg_list(struct kvm_vm *vm, uint32_t vcpuid)
+struct kvm_reg_list *vcpu_get_reg_list(struct kvm_vcpu *vcpu)
 {
 	struct kvm_reg_list reg_list_n = { .n = 0 }, *reg_list;
 	int ret;
 
-	ret = __vcpu_ioctl(vm, vcpuid, KVM_GET_REG_LIST, &reg_list_n);
+	ret = __vcpu_ioctl(vcpu, KVM_GET_REG_LIST, &reg_list_n);
 	TEST_ASSERT(ret == -1 && errno == E2BIG, "KVM_GET_REG_LIST n=0");
+
 	reg_list = calloc(1, sizeof(*reg_list) + reg_list_n.n * sizeof(__u64));
 	reg_list->n = reg_list_n.n;
-	vcpu_ioctl(vm, vcpuid, KVM_GET_REG_LIST, reg_list);
+	vcpu_ioctl(vcpu, KVM_GET_REG_LIST, reg_list);
 	return reg_list;
 }
 
-int __vcpu_ioctl(struct kvm_vm *vm, uint32_t vcpuid,
-		 unsigned long cmd, void *arg)
+void *vcpu_map_dirty_ring(struct kvm_vcpu *vcpu)
 {
-	struct vcpu *vcpu = vcpu_get(vm, vcpuid);
-
-	return ioctl(vcpu->fd, cmd, arg);
-}
-
-void _vcpu_ioctl(struct kvm_vm *vm, uint32_t vcpuid, unsigned long cmd,
-		 const char *name, void *arg)
-{
-	int ret = __vcpu_ioctl(vm, vcpuid, cmd, arg);
-
-	TEST_ASSERT(!ret, __KVM_IOCTL_ERROR(name, ret));
-}
-
-void *vcpu_map_dirty_ring(struct kvm_vm *vm, uint32_t vcpuid)
-{
-	struct vcpu *vcpu = vcpu_get(vm, vcpuid);
-	uint32_t size = vm->dirty_ring_size;
+	uint32_t page_size = vcpu->vm->page_size;
+	uint32_t size = vcpu->vm->dirty_ring_size;
 
 	TEST_ASSERT(size > 0, "Should enable dirty ring first");
 
 	if (!vcpu->dirty_gfns) {
 		void *addr;
 
-		addr = mmap(NULL, size, PROT_READ,
-			    MAP_PRIVATE, vcpu->fd,
-			    vm->page_size * KVM_DIRTY_LOG_PAGE_OFFSET);
+		addr = mmap(NULL, size, PROT_READ, MAP_PRIVATE, vcpu->fd,
+			    page_size * KVM_DIRTY_LOG_PAGE_OFFSET);
 		TEST_ASSERT(addr == MAP_FAILED, "Dirty ring mapped private");
 
-		addr = mmap(NULL, size, PROT_READ | PROT_EXEC,
-			    MAP_PRIVATE, vcpu->fd,
-			    vm->page_size * KVM_DIRTY_LOG_PAGE_OFFSET);
+		addr = mmap(NULL, size, PROT_READ | PROT_EXEC, MAP_PRIVATE, vcpu->fd,
+			    page_size * KVM_DIRTY_LOG_PAGE_OFFSET);
 		TEST_ASSERT(addr == MAP_FAILED, "Dirty ring mapped exec");
 
-		addr = mmap(NULL, size, PROT_READ | PROT_WRITE,
-			    MAP_SHARED, vcpu->fd,
-			    vm->page_size * KVM_DIRTY_LOG_PAGE_OFFSET);
+		addr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, vcpu->fd,
+			    page_size * KVM_DIRTY_LOG_PAGE_OFFSET);
 		TEST_ASSERT(addr != MAP_FAILED, "Dirty ring map failed");
 
 		vcpu->dirty_gfns = addr;
@@ -1589,18 +1470,6 @@ void *vcpu_map_dirty_ring(struct kvm_vm *vm, uint32_t vcpuid)
 	}
 
 	return vcpu->dirty_gfns;
-}
-
-int __vm_ioctl(struct kvm_vm *vm, unsigned long cmd, void *arg)
-{
-	return ioctl(vm->fd, cmd, arg);
-}
-
-void _vm_ioctl(struct kvm_vm *vm, unsigned long cmd, const char *name, void *arg)
-{
-	int ret = __vm_ioctl(vm, cmd, arg);
-
-	TEST_ASSERT(!ret, __KVM_IOCTL_ERROR(name, ret));
 }
 
 /*
@@ -1664,38 +1533,6 @@ int __kvm_device_attr_set(int dev_fd, uint32_t group, uint64_t attr, void *val)
 	};
 
 	return __kvm_ioctl(dev_fd, KVM_SET_DEVICE_ATTR, &kvmattr);
-}
-
-int __vcpu_device_attr_get(struct kvm_vm *vm, uint32_t vcpuid, uint32_t group,
-			   uint64_t attr, void *val)
-{
-	return __kvm_device_attr_get(vcpu_get(vm, vcpuid)->fd, group, attr, val);
-}
-
-void vcpu_device_attr_get(struct kvm_vm *vm, uint32_t vcpuid, uint32_t group,
-			  uint64_t attr, void *val)
-{
-	kvm_device_attr_get(vcpu_get(vm, vcpuid)->fd, group, attr, val);
-}
-
-int __vcpu_device_attr_set(struct kvm_vm *vm, uint32_t vcpuid, uint32_t group,
-			   uint64_t attr, void *val)
-{
-	return __kvm_device_attr_set(vcpu_get(vm, vcpuid)->fd, group, attr, val);
-}
-
-void vcpu_device_attr_set(struct kvm_vm *vm, uint32_t vcpuid, uint32_t group,
-			  uint64_t attr, void *val)
-{
-	kvm_device_attr_set(vcpu_get(vm, vcpuid)->fd, group, attr, val);
-}
-
-int __vcpu_has_device_attr(struct kvm_vm *vm, uint32_t vcpuid, uint32_t group,
-			  uint64_t attr)
-{
-	struct vcpu *vcpu = vcpu_get(vm, vcpuid);
-
-	return __kvm_has_device_attr(vcpu->fd, group, attr);
 }
 
 /*
@@ -1788,7 +1625,7 @@ void vm_dump(FILE *stream, struct kvm_vm *vm, uint8_t indent)
 {
 	int ctr;
 	struct userspace_mem_region *region;
-	struct vcpu *vcpu;
+	struct kvm_vcpu *vcpu;
 
 	fprintf(stream, "%*smode: 0x%x\n", indent, "", vm->mode);
 	fprintf(stream, "%*sfd: %i\n", indent, "", vm->fd);
@@ -1813,8 +1650,9 @@ void vm_dump(FILE *stream, struct kvm_vm *vm, uint8_t indent)
 		virt_dump(stream, vm, indent + 4);
 	}
 	fprintf(stream, "%*sVCPUs:\n", indent, "");
+
 	list_for_each_entry(vcpu, &vm->vcpus, list)
-		vcpu_dump(stream, vm, vcpu->id, indent + 2);
+		vcpu_dump(stream, vcpu, indent + 2);
 }
 
 /* Known KVM exit reasons */
@@ -1968,67 +1806,9 @@ void *addr_gva2hva(struct kvm_vm *vm, vm_vaddr_t gva)
 	return addr_gpa2hva(vm, addr_gva2gpa(vm, gva));
 }
 
-/*
- * Is Unrestricted Guest
- *
- * Input Args:
- *   vm - Virtual Machine
- *
- * Output Args: None
- *
- * Return: True if the unrestricted guest is set to 'Y', otherwise return false.
- *
- * Check if the unrestricted guest flag is enabled.
- */
-bool vm_is_unrestricted_guest(struct kvm_vm *vm)
-{
-	char val = 'N';
-	size_t count;
-	FILE *f;
-
-	if (vm == NULL) {
-		/* Ensure that the KVM vendor-specific module is loaded. */
-		close(open_kvm_dev_path_or_exit());
-	}
-
-	f = fopen("/sys/module/kvm_intel/parameters/unrestricted_guest", "r");
-	if (f) {
-		count = fread(&val, sizeof(char), 1, f);
-		TEST_ASSERT(count == 1, "Unable to read from param file.");
-		fclose(f);
-	}
-
-	return val == 'Y';
-}
-
-unsigned int vm_get_page_size(struct kvm_vm *vm)
-{
-	return vm->page_size;
-}
-
-unsigned int vm_get_page_shift(struct kvm_vm *vm)
-{
-	return vm->page_shift;
-}
-
 unsigned long __attribute__((weak)) vm_compute_max_gfn(struct kvm_vm *vm)
 {
 	return ((1ULL << vm->pa_bits) >> vm->page_shift) - 1;
-}
-
-uint64_t vm_get_max_gfn(struct kvm_vm *vm)
-{
-	return vm->max_gfn;
-}
-
-int vm_get_kvm_fd(struct kvm_vm *vm)
-{
-	return vm->kvm_fd;
-}
-
-int vm_get_fd(struct kvm_vm *vm)
-{
-	return vm->fd;
 }
 
 static unsigned int vm_calc_num_pages(unsigned int num_pages,

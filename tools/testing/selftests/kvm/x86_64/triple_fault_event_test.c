@@ -9,7 +9,6 @@
 
 #include "kselftest.h"
 
-#define VCPU_ID			0
 #define ARBITRARY_IO_PORT	0x2000
 
 /* The virtual machine object. */
@@ -41,28 +40,23 @@ void l1_guest_code(struct vmx_pages *vmx)
 
 int main(void)
 {
+	struct kvm_vcpu *vcpu;
 	struct kvm_run *run;
 	struct kvm_vcpu_events events;
 	vm_vaddr_t vmx_pages_gva;
 	struct ucall uc;
 
-	if (!nested_vmx_supported()) {
-		print_skip("Nested VMX not supported");
-		exit(KSFT_SKIP);
-	}
+	nested_vmx_check_supported();
 
-	if (!kvm_check_cap(KVM_CAP_X86_TRIPLE_FAULT_EVENT)) {
-		print_skip("KVM_CAP_X86_TRIPLE_FAULT_EVENT not supported");
-		exit(KSFT_SKIP);
-	}
+	TEST_REQUIRE(kvm_has_cap(KVM_CAP_X86_TRIPLE_FAULT_EVENT));
 
-	vm = vm_create_default(VCPU_ID, 0, (void *) l1_guest_code);
+	vm = vm_create_with_one_vcpu(&vcpu, l1_guest_code);
 	vm_enable_cap(vm, KVM_CAP_X86_TRIPLE_FAULT_EVENT, 1);
 
-	run = vcpu_state(vm, VCPU_ID);
+	run = vcpu->run;
 	vcpu_alloc_vmx(vm, &vmx_pages_gva);
-	vcpu_args_set(vm, VCPU_ID, 1, vmx_pages_gva);
-	vcpu_run(vm, VCPU_ID);
+	vcpu_args_set(vcpu, 1, vmx_pages_gva);
+	vcpu_run(vcpu);
 
 	TEST_ASSERT(run->exit_reason == KVM_EXIT_IO,
 		    "Expected KVM_EXIT_IO, got: %u (%s)\n",
@@ -70,21 +64,21 @@ int main(void)
 	TEST_ASSERT(run->io.port == ARBITRARY_IO_PORT,
 		    "Expected IN from port %d from L2, got port %d",
 		    ARBITRARY_IO_PORT, run->io.port);
-	vcpu_events_get(vm, VCPU_ID, &events);
+	vcpu_events_get(vcpu, &events);
 	events.flags |= KVM_VCPUEVENT_VALID_TRIPLE_FAULT;
 	events.triple_fault.pending = true;
-	vcpu_events_set(vm, VCPU_ID, &events);
+	vcpu_events_set(vcpu, &events);
 	run->immediate_exit = true;
-	vcpu_run_complete_io(vm, VCPU_ID);
+	vcpu_run_complete_io(vcpu);
 
-	vcpu_events_get(vm, VCPU_ID, &events);
+	vcpu_events_get(vcpu, &events);
 	TEST_ASSERT(events.flags & KVM_VCPUEVENT_VALID_TRIPLE_FAULT,
 		    "Triple fault event invalid");
 	TEST_ASSERT(events.triple_fault.pending,
 		    "No triple fault pending");
-	vcpu_run(vm, VCPU_ID);
+	vcpu_run(vcpu);
 
-	switch (get_ucall(vm, VCPU_ID, &uc)) {
+	switch (get_ucall(vcpu, &uc)) {
 	case UCALL_DONE:
 		break;
 	case UCALL_ABORT:

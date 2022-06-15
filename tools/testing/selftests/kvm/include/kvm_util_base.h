@@ -16,6 +16,7 @@
 #include <linux/kvm.h>
 #include "linux/rbtree.h"
 
+
 #include <sys/ioctl.h>
 
 #include "sparsebit.h"
@@ -43,12 +44,12 @@ struct userspace_mem_region {
 	struct hlist_node slot_node;
 };
 
-struct vcpu {
+struct kvm_vcpu {
 	struct list_head list;
 	uint32_t id;
 	int fd;
 	struct kvm_vm *vm;
-	struct kvm_run *state;
+	struct kvm_run *run;
 	struct kvm_dirty_gfn *dirty_gfns;
 	uint32_t fetch_index;
 	uint32_t dirty_gfns_count;
@@ -92,25 +93,6 @@ struct kvm_vm {
 			continue;			\
 		else
 
-struct vcpu *vcpu_get(struct kvm_vm *vm, uint32_t vcpuid);
-
-/*
- * Virtual Translation Tables Dump
- *
- * Input Args:
- *   stream - Output FILE stream
- *   vm     - Virtual Machine
- *   indent - Left margin indent amount
- *
- * Output Args: None
- *
- * Return: None
- *
- * Dumps to the FILE stream given by @stream, the contents of all the
- * virtual translation tables for the VM given by @vm.
- */
-void virt_dump(FILE *stream, struct kvm_vm *vm, uint8_t indent);
-
 struct userspace_mem_region *
 memslot2region(struct kvm_vm *vm, uint32_t memslot);
 
@@ -118,7 +100,6 @@ memslot2region(struct kvm_vm *vm, uint32_t memslot);
 #define KVM_UTIL_MIN_VADDR		0x2000
 #define KVM_GUEST_PAGE_TABLE_MIN_PADDR	0x180000
 
-#define DEFAULT_GUEST_PHY_PAGES		512
 #define DEFAULT_GUEST_STACK_VADDR_MIN	0xab6000
 #define DEFAULT_STACK_PGS		5
 
@@ -186,7 +167,12 @@ extern const struct vm_guest_mode_params vm_guest_mode_params[];
 
 int open_path_or_exit(const char *path, int flags);
 int open_kvm_dev_path_or_exit(void);
-int kvm_check_cap(long cap);
+unsigned int kvm_check_cap(long cap);
+
+static inline bool kvm_has_cap(long cap)
+{
+	return kvm_check_cap(cap);
+}
 
 #define __KVM_SYSCALL_ERROR(_name, _ret) \
 	"%s failed, rc: %i errno: %i (%s)", (_name), (_ret), errno, strerror(errno)
@@ -194,30 +180,62 @@ int kvm_check_cap(long cap);
 #define __KVM_IOCTL_ERROR(_name, _ret)	__KVM_SYSCALL_ERROR(_name, _ret)
 #define KVM_IOCTL_ERROR(_ioctl, _ret) __KVM_IOCTL_ERROR(#_ioctl, _ret)
 
-#define __kvm_ioctl(kvm_fd, cmd, arg) \
-	ioctl(kvm_fd, cmd, arg)
+#define kvm_do_ioctl(fd, cmd, arg)						\
+({										\
+	static_assert(!_IOC_SIZE(cmd) || sizeof(*arg) == _IOC_SIZE(cmd), "");	\
+	ioctl(fd, cmd, arg);							\
+})
 
-static inline void _kvm_ioctl(int kvm_fd, unsigned long cmd, const char *name,
-			      void *arg)
-{
-	int ret = __kvm_ioctl(kvm_fd, cmd, arg);
+#define __kvm_ioctl(kvm_fd, cmd, arg)				\
+	kvm_do_ioctl(kvm_fd, cmd, arg)
 
-	TEST_ASSERT(!ret, __KVM_IOCTL_ERROR(name, ret));
-}
+
+#define _kvm_ioctl(kvm_fd, cmd, name, arg)			\
+({								\
+	int ret = __kvm_ioctl(kvm_fd, cmd, arg);		\
+								\
+	TEST_ASSERT(!ret, __KVM_IOCTL_ERROR(name, ret));	\
+})
 
 #define kvm_ioctl(kvm_fd, cmd, arg) \
 	_kvm_ioctl(kvm_fd, cmd, #cmd, arg)
 
-int __vm_ioctl(struct kvm_vm *vm, unsigned long cmd, void *arg);
-void _vm_ioctl(struct kvm_vm *vm, unsigned long cmd, const char *name, void *arg);
-#define vm_ioctl(vm, cmd, arg) _vm_ioctl(vm, cmd, #cmd, arg)
+static __always_inline void static_assert_is_vm(struct kvm_vm *vm) { }
 
-int __vcpu_ioctl(struct kvm_vm *vm, uint32_t vcpuid, unsigned long cmd,
-		 void *arg);
-void _vcpu_ioctl(struct kvm_vm *vm, uint32_t vcpuid, unsigned long cmd,
-		 const char *name, void *arg);
-#define vcpu_ioctl(vm, vcpuid, cmd, arg) \
-	_vcpu_ioctl(vm, vcpuid, cmd, #cmd, arg)
+#define __vm_ioctl(vm, cmd, arg)				\
+({								\
+	static_assert_is_vm(vm);				\
+	kvm_do_ioctl((vm)->fd, cmd, arg);			\
+})
+
+#define _vm_ioctl(vm, cmd, name, arg)				\
+({								\
+	int ret = __vm_ioctl(vm, cmd, arg);			\
+								\
+	TEST_ASSERT(!ret, __KVM_IOCTL_ERROR(name, ret));	\
+})
+
+#define vm_ioctl(vm, cmd, arg)					\
+	_vm_ioctl(vm, cmd, #cmd, arg)
+
+
+static __always_inline void static_assert_is_vcpu(struct kvm_vcpu *vcpu) { }
+
+#define __vcpu_ioctl(vcpu, cmd, arg)				\
+({								\
+	static_assert_is_vcpu(vcpu);				\
+	kvm_do_ioctl((vcpu)->fd, cmd, arg);			\
+})
+
+#define _vcpu_ioctl(vcpu, cmd, name, arg)			\
+({								\
+	int ret = __vcpu_ioctl(vcpu, cmd, arg);			\
+								\
+	TEST_ASSERT(!ret, __KVM_IOCTL_ERROR(name, ret));	\
+})
+
+#define vcpu_ioctl(vcpu, cmd, arg)				\
+	_vcpu_ioctl(vcpu, cmd, #cmd, arg)
 
 /*
  * Looks up and returns the value corresponding to the capability
@@ -247,8 +265,6 @@ static inline void vm_enable_cap(struct kvm_vm *vm, uint32_t cap, uint64_t arg0)
 void vm_enable_dirty_ring(struct kvm_vm *vm, uint32_t ring_size);
 const char *vm_guest_mode_string(uint32_t i);
 
-struct kvm_vm *__vm_create(enum vm_guest_mode mode, uint64_t phy_pages);
-struct kvm_vm *vm_create(uint64_t phy_pages);
 void kvm_vm_free(struct kvm_vm *vmp);
 void kvm_vm_restart(struct kvm_vm *vmp);
 void kvm_vm_release(struct kvm_vm *vmp);
@@ -292,25 +308,6 @@ static inline int vm_get_stats_fd(struct kvm_vm *vm)
 	return fd;
 }
 
-/*
- * VM VCPU Dump
- *
- * Input Args:
- *   stream - Output FILE stream
- *   vm     - Virtual Machine
- *   vcpuid - VCPU ID
- *   indent - Left margin indent amount
- *
- * Output Args: None
- *
- * Return: None
- *
- * Dumps the current state of the VCPU specified by @vcpuid, within the VM
- * given by @vm, to the FILE stream given by @stream.
- */
-void vcpu_dump(FILE *stream, struct kvm_vm *vm, uint32_t vcpuid,
-	       uint8_t indent);
-
 void vm_create_irqchip(struct kvm_vm *vm);
 
 void vm_set_user_memory_region(struct kvm_vm *vm, uint32_t slot, uint32_t flags,
@@ -325,7 +322,7 @@ void vm_userspace_mem_region_add(struct kvm_vm *vm,
 void vm_mem_region_set_flags(struct kvm_vm *vm, uint32_t slot, uint32_t flags);
 void vm_mem_region_move(struct kvm_vm *vm, uint32_t slot, uint64_t new_gpa);
 void vm_mem_region_delete(struct kvm_vm *vm, uint32_t slot);
-void vm_vcpu_add(struct kvm_vm *vm, uint32_t vcpuid);
+struct kvm_vcpu *__vm_vcpu_add(struct kvm_vm *vm, uint32_t vcpu_id);
 vm_vaddr_t vm_vaddr_alloc(struct kvm_vm *vm, size_t sz, vm_vaddr_t vaddr_min);
 vm_vaddr_t vm_vaddr_alloc_pages(struct kvm_vm *vm, int nr_pages);
 vm_vaddr_t vm_vaddr_alloc_page(struct kvm_vm *vm);
@@ -337,140 +334,131 @@ void *addr_gva2hva(struct kvm_vm *vm, vm_vaddr_t gva);
 vm_paddr_t addr_hva2gpa(struct kvm_vm *vm, void *hva);
 void *addr_gpa2alias(struct kvm_vm *vm, vm_paddr_t gpa);
 
-/*
- * Address Guest Virtual to Guest Physical
- *
- * Input Args:
- *   vm - Virtual Machine
- *   gva - VM virtual address
- *
- * Output Args: None
- *
- * Return:
- *   Equivalent VM physical address
- *
- * Returns the VM physical address of the translated VM virtual
- * address given by @gva.
- */
-vm_paddr_t addr_gva2gpa(struct kvm_vm *vm, vm_vaddr_t gva);
+void vcpu_run(struct kvm_vcpu *vcpu);
+int _vcpu_run(struct kvm_vcpu *vcpu);
 
-struct kvm_run *vcpu_state(struct kvm_vm *vm, uint32_t vcpuid);
-void vcpu_run(struct kvm_vm *vm, uint32_t vcpuid);
-int _vcpu_run(struct kvm_vm *vm, uint32_t vcpuid);
-
-static inline int __vcpu_run(struct kvm_vm *vm, uint32_t vcpuid)
+static inline int __vcpu_run(struct kvm_vcpu *vcpu)
 {
-	return __vcpu_ioctl(vm, vcpuid, KVM_RUN, NULL);
+	return __vcpu_ioctl(vcpu, KVM_RUN, NULL);
 }
 
-void vcpu_run_complete_io(struct kvm_vm *vm, uint32_t vcpuid);
-struct kvm_reg_list *vcpu_get_reg_list(struct kvm_vm *vm, uint32_t vcpuid);
+void vcpu_run_complete_io(struct kvm_vcpu *vcpu);
+struct kvm_reg_list *vcpu_get_reg_list(struct kvm_vcpu *vcpu);
 
-static inline void vcpu_enable_cap(struct kvm_vm *vm, uint32_t vcpu_id,
-				   uint32_t cap, uint64_t arg0)
+static inline void vcpu_enable_cap(struct kvm_vcpu *vcpu, uint32_t cap,
+				   uint64_t arg0)
 {
 	struct kvm_enable_cap enable_cap = { .cap = cap, .args = { arg0 } };
 
-	vcpu_ioctl(vm, vcpu_id, KVM_ENABLE_CAP, &enable_cap);
+	vcpu_ioctl(vcpu, KVM_ENABLE_CAP, &enable_cap);
 }
 
-static inline void vcpu_guest_debug_set(struct kvm_vm *vm, uint32_t vcpuid,
+static inline void vcpu_guest_debug_set(struct kvm_vcpu *vcpu,
 					struct kvm_guest_debug *debug)
 {
-	vcpu_ioctl(vm, vcpuid, KVM_SET_GUEST_DEBUG, debug);
+	vcpu_ioctl(vcpu, KVM_SET_GUEST_DEBUG, debug);
 }
 
-static inline void vcpu_mp_state_get(struct kvm_vm *vm, uint32_t vcpuid,
+static inline void vcpu_mp_state_get(struct kvm_vcpu *vcpu,
 				     struct kvm_mp_state *mp_state)
 {
-	vcpu_ioctl(vm, vcpuid, KVM_GET_MP_STATE, mp_state);
+	vcpu_ioctl(vcpu, KVM_GET_MP_STATE, mp_state);
 }
-static inline void vcpu_mp_state_set(struct kvm_vm *vm, uint32_t vcpuid,
+static inline void vcpu_mp_state_set(struct kvm_vcpu *vcpu,
 				     struct kvm_mp_state *mp_state)
 {
-	vcpu_ioctl(vm, vcpuid, KVM_SET_MP_STATE, mp_state);
+	vcpu_ioctl(vcpu, KVM_SET_MP_STATE, mp_state);
 }
 
-static inline void vcpu_regs_get(struct kvm_vm *vm, uint32_t vcpuid,
-				 struct kvm_regs *regs)
+static inline void vcpu_regs_get(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 {
-	vcpu_ioctl(vm, vcpuid, KVM_GET_REGS, regs);
+	vcpu_ioctl(vcpu, KVM_GET_REGS, regs);
 }
 
-static inline void vcpu_regs_set(struct kvm_vm *vm, uint32_t vcpuid,
-				 struct kvm_regs *regs)
+static inline void vcpu_regs_set(struct kvm_vcpu *vcpu, struct kvm_regs *regs)
 {
-	vcpu_ioctl(vm, vcpuid, KVM_SET_REGS, regs);
+	vcpu_ioctl(vcpu, KVM_SET_REGS, regs);
 }
-static inline void vcpu_sregs_get(struct kvm_vm *vm, uint32_t vcpuid,
-				  struct kvm_sregs *sregs)
+static inline void vcpu_sregs_get(struct kvm_vcpu *vcpu, struct kvm_sregs *sregs)
 {
-	vcpu_ioctl(vm, vcpuid, KVM_GET_SREGS, sregs);
+	vcpu_ioctl(vcpu, KVM_GET_SREGS, sregs);
 
 }
-static inline void vcpu_sregs_set(struct kvm_vm *vm, uint32_t vcpuid,
-				  struct kvm_sregs *sregs)
+static inline void vcpu_sregs_set(struct kvm_vcpu *vcpu, struct kvm_sregs *sregs)
 {
-	vcpu_ioctl(vm, vcpuid, KVM_SET_SREGS, sregs);
+	vcpu_ioctl(vcpu, KVM_SET_SREGS, sregs);
 }
-static inline int _vcpu_sregs_set(struct kvm_vm *vm, uint32_t vcpuid,
-				  struct kvm_sregs *sregs)
+static inline int _vcpu_sregs_set(struct kvm_vcpu *vcpu, struct kvm_sregs *sregs)
 {
-	return __vcpu_ioctl(vm, vcpuid, KVM_SET_SREGS, sregs);
+	return __vcpu_ioctl(vcpu, KVM_SET_SREGS, sregs);
 }
-static inline void vcpu_fpu_get(struct kvm_vm *vm, uint32_t vcpuid,
-				struct kvm_fpu *fpu)
+static inline void vcpu_fpu_get(struct kvm_vcpu *vcpu, struct kvm_fpu *fpu)
 {
-	vcpu_ioctl(vm, vcpuid, KVM_GET_FPU, fpu);
+	vcpu_ioctl(vcpu, KVM_GET_FPU, fpu);
 }
-static inline void vcpu_fpu_set(struct kvm_vm *vm, uint32_t vcpuid,
-				struct kvm_fpu *fpu)
+static inline void vcpu_fpu_set(struct kvm_vcpu *vcpu, struct kvm_fpu *fpu)
 {
-	vcpu_ioctl(vm, vcpuid, KVM_SET_FPU, fpu);
+	vcpu_ioctl(vcpu, KVM_SET_FPU, fpu);
 }
-static inline void vcpu_get_reg(struct kvm_vm *vm, uint32_t vcpuid,
-				struct kvm_one_reg *reg)
+
+static inline int __vcpu_get_reg(struct kvm_vcpu *vcpu, uint64_t id, void *addr)
 {
-	vcpu_ioctl(vm, vcpuid, KVM_GET_ONE_REG, reg);
+	struct kvm_one_reg reg = { .id = id, .addr = (uint64_t)addr };
+
+	return __vcpu_ioctl(vcpu, KVM_GET_ONE_REG, &reg);
 }
-static inline void vcpu_set_reg(struct kvm_vm *vm, uint32_t vcpuid,
-				struct kvm_one_reg *reg)
+static inline int __vcpu_set_reg(struct kvm_vcpu *vcpu, uint64_t id, uint64_t val)
 {
-	vcpu_ioctl(vm, vcpuid, KVM_SET_ONE_REG, reg);
+	struct kvm_one_reg reg = { .id = id, .addr = (uint64_t)&val };
+
+	return __vcpu_ioctl(vcpu, KVM_SET_ONE_REG, &reg);
 }
+static inline void vcpu_get_reg(struct kvm_vcpu *vcpu, uint64_t id, void *addr)
+{
+	struct kvm_one_reg reg = { .id = id, .addr = (uint64_t)addr };
+
+	vcpu_ioctl(vcpu, KVM_GET_ONE_REG, &reg);
+}
+static inline void vcpu_set_reg(struct kvm_vcpu *vcpu, uint64_t id, uint64_t val)
+{
+	struct kvm_one_reg reg = { .id = id, .addr = (uint64_t)&val };
+
+	vcpu_ioctl(vcpu, KVM_SET_ONE_REG, &reg);
+}
+
 #ifdef __KVM_HAVE_VCPU_EVENTS
-static inline void vcpu_events_get(struct kvm_vm *vm, uint32_t vcpuid,
+static inline void vcpu_events_get(struct kvm_vcpu *vcpu,
 				   struct kvm_vcpu_events *events)
 {
-	vcpu_ioctl(vm, vcpuid, KVM_GET_VCPU_EVENTS, events);
+	vcpu_ioctl(vcpu, KVM_GET_VCPU_EVENTS, events);
 }
-static inline void vcpu_events_set(struct kvm_vm *vm, uint32_t vcpuid,
+static inline void vcpu_events_set(struct kvm_vcpu *vcpu,
 				   struct kvm_vcpu_events *events)
 {
-	vcpu_ioctl(vm, vcpuid, KVM_SET_VCPU_EVENTS, events);
+	vcpu_ioctl(vcpu, KVM_SET_VCPU_EVENTS, events);
 }
 #endif
 #ifdef __x86_64__
-static inline void vcpu_nested_state_get(struct kvm_vm *vm, uint32_t vcpuid,
+static inline void vcpu_nested_state_get(struct kvm_vcpu *vcpu,
 					 struct kvm_nested_state *state)
 {
-	vcpu_ioctl(vm, vcpuid, KVM_GET_NESTED_STATE, state);
+	vcpu_ioctl(vcpu, KVM_GET_NESTED_STATE, state);
 }
-static inline int __vcpu_nested_state_set(struct kvm_vm *vm, uint32_t vcpuid,
+static inline int __vcpu_nested_state_set(struct kvm_vcpu *vcpu,
 					  struct kvm_nested_state *state)
 {
-	return __vcpu_ioctl(vm, vcpuid, KVM_SET_NESTED_STATE, state);
+	return __vcpu_ioctl(vcpu, KVM_SET_NESTED_STATE, state);
 }
 
-static inline void vcpu_nested_state_set(struct kvm_vm *vm, uint32_t vcpuid,
+static inline void vcpu_nested_state_set(struct kvm_vcpu *vcpu,
 					 struct kvm_nested_state *state)
 {
-	vcpu_ioctl(vm, vcpuid, KVM_SET_NESTED_STATE, state);
+	vcpu_ioctl(vcpu, KVM_SET_NESTED_STATE, state);
 }
 #endif
-static inline int vcpu_get_stats_fd(struct kvm_vm *vm, uint32_t vcpuid)
+static inline int vcpu_get_stats_fd(struct kvm_vcpu *vcpu)
 {
-	int fd = __vcpu_ioctl(vm, vcpuid, KVM_GET_STATS_FD, NULL);
+	int fd = __vcpu_ioctl(vcpu, KVM_GET_STATS_FD, NULL);
 
 	TEST_ASSERT(fd >= 0, KVM_IOCTL_ERROR(KVM_GET_STATS_FD, fd));
 	return fd;
@@ -505,25 +493,42 @@ static inline void kvm_device_attr_set(int dev_fd, uint32_t group,
 	TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SET_DEVICE_ATTR, ret));
 }
 
-int __vcpu_has_device_attr(struct kvm_vm *vm, uint32_t vcpuid, uint32_t group,
-			   uint64_t attr);
-
-static inline void vcpu_has_device_attr(struct kvm_vm *vm, uint32_t vcpuid,
-					uint32_t group, uint64_t attr)
+static inline int __vcpu_has_device_attr(struct kvm_vcpu *vcpu, uint32_t group,
+					 uint64_t attr)
 {
-	int ret = __vcpu_has_device_attr(vm, vcpuid, group, attr);
-
-	TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_HAS_DEVICE_ATTR, ret));
+	return __kvm_has_device_attr(vcpu->fd, group, attr);
 }
 
-int __vcpu_device_attr_get(struct kvm_vm *vm, uint32_t vcpuid, uint32_t group,
-			   uint64_t attr, void *val);
-void vcpu_device_attr_get(struct kvm_vm *vm, uint32_t vcpuid, uint32_t group,
-			  uint64_t attr, void *val);
-int __vcpu_device_attr_set(struct kvm_vm *vm, uint32_t vcpuid, uint32_t group,
-			   uint64_t attr, void *val);
-void vcpu_device_attr_set(struct kvm_vm *vm, uint32_t vcpuid, uint32_t group,
-			  uint64_t attr, void *val);
+static inline void vcpu_has_device_attr(struct kvm_vcpu *vcpu, uint32_t group,
+					uint64_t attr)
+{
+	kvm_has_device_attr(vcpu->fd, group, attr);
+}
+
+static inline int __vcpu_device_attr_get(struct kvm_vcpu *vcpu, uint32_t group,
+					 uint64_t attr, void *val)
+{
+	return __kvm_device_attr_get(vcpu->fd, group, attr, val);
+}
+
+static inline void vcpu_device_attr_get(struct kvm_vcpu *vcpu, uint32_t group,
+					uint64_t attr, void *val)
+{
+	kvm_device_attr_get(vcpu->fd, group, attr, val);
+}
+
+static inline int __vcpu_device_attr_set(struct kvm_vcpu *vcpu, uint32_t group,
+					 uint64_t attr, void *val)
+{
+	return __kvm_device_attr_set(vcpu->fd, group, attr, val);
+}
+
+static inline void vcpu_device_attr_set(struct kvm_vcpu *vcpu, uint32_t group,
+					uint64_t attr, void *val)
+{
+	kvm_device_attr_set(vcpu->fd, group, attr, val);
+}
+
 int __kvm_test_create_device(struct kvm_vm *vm, uint64_t type);
 int __kvm_create_device(struct kvm_vm *vm, uint64_t type);
 
@@ -535,14 +540,13 @@ static inline int kvm_create_device(struct kvm_vm *vm, uint64_t type)
 	return fd;
 }
 
-void *vcpu_map_dirty_ring(struct kvm_vm *vm, uint32_t vcpuid);
+void *vcpu_map_dirty_ring(struct kvm_vcpu *vcpu);
 
 /*
  * VM VCPU Args Set
  *
  * Input Args:
  *   vm - Virtual Machine
- *   vcpuid - VCPU ID
  *   num - number of arguments
  *   ... - arguments, each of type uint64_t
  *
@@ -550,12 +554,12 @@ void *vcpu_map_dirty_ring(struct kvm_vm *vm, uint32_t vcpuid);
  *
  * Return: None
  *
- * Sets the first @num function input registers of the VCPU with @vcpuid,
- * per the C calling convention of the architecture, to the values given
- * as variable args. Each of the variable args is expected to be of type
- * uint64_t. The maximum @num can be is specific to the architecture.
+ * Sets the first @num input parameters for the function at @vcpu's entry point,
+ * per the C calling convention of the architecture, to the values given as
+ * variable args. Each of the variable args is expected to be of type uint64_t.
+ * The maximum @num can be is specific to the architecture.
  */
-void vcpu_args_set(struct kvm_vm *vm, uint32_t vcpuid, unsigned int num, ...);
+void vcpu_args_set(struct kvm_vcpu *vcpu, unsigned int num, ...);
 
 void kvm_irq_line(struct kvm_vm *vm, uint32_t irq, int level);
 int _kvm_irq_line(struct kvm_vm *vm, uint32_t irq, int level);
@@ -570,26 +574,6 @@ void kvm_gsi_routing_write(struct kvm_vm *vm, struct kvm_irq_routing *routing);
 
 const char *exit_reason_str(unsigned int exit_reason);
 
-void virt_pgd_alloc(struct kvm_vm *vm);
-
-/*
- * VM Virtual Page Map
- *
- * Input Args:
- *   vm - Virtual Machine
- *   vaddr - VM Virtual Address
- *   paddr - VM Physical Address
- *   memslot - Memory region slot for new virtual translation tables
- *
- * Output Args: None
- *
- * Return: None
- *
- * Within @vm, creates a virtual translation for the page starting
- * at @vaddr to the page starting at @paddr.
- */
-void virt_pg_map(struct kvm_vm *vm, uint64_t vaddr, uint64_t paddr);
-
 vm_paddr_t vm_phy_page_alloc(struct kvm_vm *vm, vm_paddr_t paddr_min,
 			     uint32_t memslot);
 vm_paddr_t vm_phy_pages_alloc(struct kvm_vm *vm, size_t num,
@@ -597,56 +581,54 @@ vm_paddr_t vm_phy_pages_alloc(struct kvm_vm *vm, size_t num,
 vm_paddr_t vm_alloc_page_table(struct kvm_vm *vm);
 
 /*
- * Create a VM with reasonable defaults
- *
- * Input Args:
- *   vcpuid - The id of the single VCPU to add to the VM.
- *   extra_mem_pages - The number of extra pages to add (this will
- *                     decide how much extra space we will need to
- *                     setup the page tables using memslot 0)
- *   guest_code - The vCPU's entry point
- *
- * Output Args: None
- *
- * Return:
- *   Pointer to opaque structure that describes the created VM.
+ * ____vm_create() does KVM_CREATE_VM and little else.  __vm_create() also
+ * loads the test binary into guest memory and creates an IRQ chip (x86 only).
+ * __vm_create() does NOT create vCPUs, @nr_runnable_vcpus is used purely to
+ * calculate the amount of memory needed for per-vCPU data, e.g. stacks.
  */
-struct kvm_vm *vm_create_default(uint32_t vcpuid, uint64_t extra_mem_pages,
-				 void *guest_code);
+struct kvm_vm *____vm_create(enum vm_guest_mode mode, uint64_t nr_pages);
+struct kvm_vm *__vm_create(enum vm_guest_mode mode, uint32_t nr_runnable_vcpus,
+			   uint64_t nr_extra_pages);
 
-/* Same as vm_create_default, but can be used for more than one vcpu */
-struct kvm_vm *vm_create_default_with_vcpus(uint32_t nr_vcpus, uint64_t extra_mem_pages,
-					    uint32_t num_percpu_pages, void *guest_code,
-					    uint32_t vcpuids[]);
+static inline struct kvm_vm *vm_create_barebones(void)
+{
+	return ____vm_create(VM_MODE_DEFAULT, 0);
+}
 
-/* Like vm_create_default_with_vcpus, but accepts mode and slot0 memory as a parameter */
-struct kvm_vm *vm_create_with_vcpus(enum vm_guest_mode mode, uint32_t nr_vcpus,
-				    uint64_t slot0_mem_pages, uint64_t extra_mem_pages,
-				    uint32_t num_percpu_pages, void *guest_code,
-				    uint32_t vcpuids[]);
+static inline struct kvm_vm *vm_create(uint32_t nr_runnable_vcpus)
+{
+	return __vm_create(VM_MODE_DEFAULT, nr_runnable_vcpus, 0);
+}
 
-/* Create a default VM without any vcpus. */
-struct kvm_vm *vm_create_without_vcpus(enum vm_guest_mode mode, uint64_t pages);
+struct kvm_vm *__vm_create_with_vcpus(enum vm_guest_mode mode, uint32_t nr_vcpus,
+				      uint64_t extra_mem_pages,
+				      void *guest_code, struct kvm_vcpu *vcpus[]);
+
+static inline struct kvm_vm *vm_create_with_vcpus(uint32_t nr_vcpus,
+						  void *guest_code,
+						  struct kvm_vcpu *vcpus[])
+{
+	return __vm_create_with_vcpus(VM_MODE_DEFAULT, nr_vcpus, 0,
+				      guest_code, vcpus);
+}
 
 /*
- * Adds a vCPU with reasonable defaults (e.g. a stack)
- *
- * Input Args:
- *   vm - Virtual Machine
- *   vcpuid - The id of the VCPU to add to the VM.
- *   guest_code - The vCPU's entry point
+ * Create a VM with a single vCPU with reasonable defaults and @extra_mem_pages
+ * additional pages of guest memory.  Returns the VM and vCPU (via out param).
  */
-void vm_vcpu_add_default(struct kvm_vm *vm, uint32_t vcpuid, void *guest_code);
+struct kvm_vm *__vm_create_with_one_vcpu(struct kvm_vcpu **vcpu,
+					 uint64_t extra_mem_pages,
+					 void *guest_code);
 
-bool vm_is_unrestricted_guest(struct kvm_vm *vm);
+static inline struct kvm_vm *vm_create_with_one_vcpu(struct kvm_vcpu **vcpu,
+						     void *guest_code)
+{
+	return __vm_create_with_one_vcpu(vcpu, 0, guest_code);
+}
 
-unsigned int vm_get_page_size(struct kvm_vm *vm);
-unsigned int vm_get_page_shift(struct kvm_vm *vm);
+struct kvm_vcpu *vm_recreate_with_one_vcpu(struct kvm_vm *vm);
+
 unsigned long vm_compute_max_gfn(struct kvm_vm *vm);
-uint64_t vm_get_max_gfn(struct kvm_vm *vm);
-int vm_get_kvm_fd(struct kvm_vm *vm);
-int vm_get_fd(struct kvm_vm *vm);
-
 unsigned int vm_calc_num_guest_pages(enum vm_guest_mode mode, size_t size);
 unsigned int vm_num_host_pages(enum vm_guest_mode mode, unsigned int num_guest_pages);
 unsigned int vm_num_guest_pages(enum vm_guest_mode mode, unsigned int num_host_pages);
@@ -676,8 +658,107 @@ kvm_userspace_memory_region_find(struct kvm_vm *vm, uint64_t start,
 	memcpy(&(g), _p, sizeof(g));				\
 })
 
-void assert_on_unhandled_exception(struct kvm_vm *vm, uint32_t vcpuid);
+void assert_on_unhandled_exception(struct kvm_vcpu *vcpu);
 
-uint32_t guest_get_vcpuid(void);
+void vcpu_arch_dump(FILE *stream, struct kvm_vcpu *vcpu,
+		    uint8_t indent);
+
+static inline void vcpu_dump(FILE *stream, struct kvm_vcpu *vcpu,
+			     uint8_t indent)
+{
+	vcpu_arch_dump(stream, vcpu, indent);
+}
+
+/*
+ * Adds a vCPU with reasonable defaults (e.g. a stack)
+ *
+ * Input Args:
+ *   vm - Virtual Machine
+ *   vcpu_id - The id of the VCPU to add to the VM.
+ *   guest_code - The vCPU's entry point
+ */
+struct kvm_vcpu *vm_arch_vcpu_add(struct kvm_vm *vm, uint32_t vcpu_id,
+				  void *guest_code);
+
+static inline struct kvm_vcpu *vm_vcpu_add(struct kvm_vm *vm, uint32_t vcpu_id,
+					   void *guest_code)
+{
+	return vm_arch_vcpu_add(vm, vcpu_id, guest_code);
+}
+
+void virt_arch_pgd_alloc(struct kvm_vm *vm);
+
+static inline void virt_pgd_alloc(struct kvm_vm *vm)
+{
+	virt_arch_pgd_alloc(vm);
+}
+
+/*
+ * VM Virtual Page Map
+ *
+ * Input Args:
+ *   vm - Virtual Machine
+ *   vaddr - VM Virtual Address
+ *   paddr - VM Physical Address
+ *   memslot - Memory region slot for new virtual translation tables
+ *
+ * Output Args: None
+ *
+ * Return: None
+ *
+ * Within @vm, creates a virtual translation for the page starting
+ * at @vaddr to the page starting at @paddr.
+ */
+void virt_arch_pg_map(struct kvm_vm *vm, uint64_t vaddr, uint64_t paddr);
+
+static inline void virt_pg_map(struct kvm_vm *vm, uint64_t vaddr, uint64_t paddr)
+{
+	virt_arch_pg_map(vm, vaddr, paddr);
+}
+
+
+/*
+ * Address Guest Virtual to Guest Physical
+ *
+ * Input Args:
+ *   vm - Virtual Machine
+ *   gva - VM virtual address
+ *
+ * Output Args: None
+ *
+ * Return:
+ *   Equivalent VM physical address
+ *
+ * Returns the VM physical address of the translated VM virtual
+ * address given by @gva.
+ */
+vm_paddr_t addr_arch_gva2gpa(struct kvm_vm *vm, vm_vaddr_t gva);
+
+static inline vm_paddr_t addr_gva2gpa(struct kvm_vm *vm, vm_vaddr_t gva)
+{
+	return addr_arch_gva2gpa(vm, gva);
+}
+
+/*
+ * Virtual Translation Tables Dump
+ *
+ * Input Args:
+ *   stream - Output FILE stream
+ *   vm     - Virtual Machine
+ *   indent - Left margin indent amount
+ *
+ * Output Args: None
+ *
+ * Return: None
+ *
+ * Dumps to the FILE stream given by @stream, the contents of all the
+ * virtual translation tables for the VM given by @vm.
+ */
+void virt_arch_dump(FILE *stream, struct kvm_vm *vm, uint8_t indent);
+
+static inline void virt_dump(FILE *stream, struct kvm_vm *vm, uint8_t indent)
+{
+	virt_arch_dump(stream, vm, indent);
+}
 
 #endif /* SELFTEST_KVM_UTIL_BASE_H */
