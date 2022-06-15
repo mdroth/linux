@@ -53,10 +53,10 @@ static struct kvm_vm *sev_vm_create(bool es)
 	struct kvm_sev_launch_start start = { 0 };
 	int i;
 
-	vm = vm_create(0);
+	vm = vm_create_barebones();
 	sev_ioctl(vm->fd, es ? KVM_SEV_ES_INIT : KVM_SEV_INIT, NULL);
 	for (i = 0; i < NR_MIGRATE_TEST_VCPUS; ++i)
-		vm_vcpu_add(vm, i);
+		__vm_vcpu_add(vm, i);
 	if (es)
 		start.policy |= SEV_POLICY_ES;
 	sev_ioctl(vm->fd, KVM_SEV_LAUNCH_START, &start);
@@ -70,12 +70,12 @@ static struct kvm_vm *aux_vm_create(bool with_vcpus)
 	struct kvm_vm *vm;
 	int i;
 
-	vm = vm_create(0);
+	vm = vm_create_barebones();
 	if (!with_vcpus)
 		return vm;
 
 	for (i = 0; i < NR_MIGRATE_TEST_VCPUS; ++i)
-		vm_vcpu_add(vm, i);
+		__vm_vcpu_add(vm, i);
 
 	return vm;
 }
@@ -168,7 +168,7 @@ static void test_sev_migrate_parameters(void)
 		*sev_es_vm_no_vmsa;
 	int ret;
 
-	vm_no_vcpu = vm_create(0);
+	vm_no_vcpu = vm_create_barebones();
 	vm_no_sev = aux_vm_create(true);
 	ret = __sev_migrate_from(vm_no_vcpu, vm_no_sev);
 	TEST_ASSERT(ret == -1 && errno == EINVAL,
@@ -180,9 +180,9 @@ static void test_sev_migrate_parameters(void)
 
 	sev_vm = sev_vm_create(/* es= */ false);
 	sev_es_vm = sev_vm_create(/* es= */ true);
-	sev_es_vm_no_vmsa = vm_create(0);
+	sev_es_vm_no_vmsa = vm_create_barebones();
 	sev_ioctl(sev_es_vm_no_vmsa->fd, KVM_SEV_ES_INIT, NULL);
-	vm_vcpu_add(sev_es_vm_no_vmsa, 1);
+	__vm_vcpu_add(sev_es_vm_no_vmsa, 1);
 
 	ret = __sev_migrate_from(sev_vm, sev_es_vm);
 	TEST_ASSERT(
@@ -278,7 +278,7 @@ static void test_sev_mirror(bool es)
 
 	/* Check that we can complete creation of the mirror VM.  */
 	for (i = 0; i < NR_MIGRATE_TEST_VCPUS; ++i)
-		vm_vcpu_add(dst_vm, i);
+		__vm_vcpu_add(dst_vm, i);
 
 	if (es)
 		sev_ioctl(dst_vm->fd, KVM_SEV_LAUNCH_UPDATE_VMSA, NULL);
@@ -400,34 +400,27 @@ int main(int argc, char *argv[])
 {
 	struct kvm_cpuid_entry2 *cpuid;
 
-	if (!kvm_check_cap(KVM_CAP_VM_MOVE_ENC_CONTEXT_FROM) &&
-	    !kvm_check_cap(KVM_CAP_VM_COPY_ENC_CONTEXT_FROM)) {
-		print_skip("Capabilities not available");
-		exit(KSFT_SKIP);
-	}
+	TEST_REQUIRE(kvm_has_cap(KVM_CAP_VM_MOVE_ENC_CONTEXT_FROM));
+	TEST_REQUIRE(kvm_has_cap(KVM_CAP_VM_COPY_ENC_CONTEXT_FROM));
 
 	cpuid = kvm_get_supported_cpuid_entry(0x80000000);
-	if (cpuid->eax < 0x8000001f) {
-		print_skip("AMD memory encryption not available");
-		exit(KSFT_SKIP);
-	}
+	TEST_REQUIRE(cpuid->eax >= 0x8000001f);
+
 	cpuid = kvm_get_supported_cpuid_entry(0x8000001f);
-	if (!(cpuid->eax & X86_FEATURE_SEV)) {
-		print_skip("AMD SEV not available");
-		exit(KSFT_SKIP);
-	}
+	TEST_REQUIRE(cpuid->eax & X86_FEATURE_SEV);
+
 	have_sev_es = !!(cpuid->eax & X86_FEATURE_SEV_ES);
 
-	if (kvm_check_cap(KVM_CAP_VM_MOVE_ENC_CONTEXT_FROM)) {
+	if (kvm_has_cap(KVM_CAP_VM_MOVE_ENC_CONTEXT_FROM)) {
 		test_sev_migrate_from(/* es= */ false);
 		if (have_sev_es)
 			test_sev_migrate_from(/* es= */ true);
 		test_sev_migrate_locking();
 		test_sev_migrate_parameters();
-		if (kvm_check_cap(KVM_CAP_VM_COPY_ENC_CONTEXT_FROM))
+		if (kvm_has_cap(KVM_CAP_VM_COPY_ENC_CONTEXT_FROM))
 			test_sev_move_copy();
 	}
-	if (kvm_check_cap(KVM_CAP_VM_COPY_ENC_CONTEXT_FROM)) {
+	if (kvm_has_cap(KVM_CAP_VM_COPY_ENC_CONTEXT_FROM)) {
 		test_sev_mirror(/* es= */ false);
 		if (have_sev_es)
 			test_sev_mirror(/* es= */ true);
