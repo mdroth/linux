@@ -977,12 +977,35 @@ static void perf_ibs_get_data_src(struct perf_event *event,
 	perf_ibs_get_mem_lock(&op_data3, data);
 }
 
+static void perf_ibs_get_data_addr(struct perf_event *event,
+				   struct perf_ibs_data *ibs_data,
+				   struct perf_sample_data *data)
+{
+	union perf_mem_data_src *data_src = &data->data_src;
+	union ibs_op_data3 op_data3;
+
+	op_data3.val = ibs_data->regs[ibs_op_msr_idx(MSR_AMD64_IBSOPDATA3)];
+
+	if (!(event->attr.sample_type & PERF_SAMPLE_DATA_SRC))
+		perf_ibs_get_mem_op(&op_data3, data);
+
+	if ((data_src->mem_op != PERF_MEM_OP_LOAD &&
+	    data_src->mem_op != PERF_MEM_OP_STORE) ||
+	    !op_data3.dc_lin_addr_valid) {
+		data->addr = 0x0;
+		return;
+	}
+
+	data->addr = ibs_data->regs[ibs_op_msr_idx(MSR_AMD64_IBSDCLINAD)];
+}
+
 static int perf_ibs_get_offset_max(struct perf_ibs *perf_ibs, u64 sample_type,
 				   int check_rip)
 {
 	if (sample_type & PERF_SAMPLE_RAW ||
 	    (perf_ibs == &perf_ibs_op &&
-	     sample_type & PERF_SAMPLE_DATA_SRC))
+	    (sample_type & PERF_SAMPLE_DATA_SRC ||
+	     sample_type & PERF_SAMPLE_ADDR)))
 		return perf_ibs->offset_max;
 	else if (check_rip)
 		return 3;
@@ -1094,6 +1117,8 @@ fail:
 	if (perf_ibs == &perf_ibs_op) {
 		if (event->attr.sample_type & PERF_SAMPLE_DATA_SRC)
 			perf_ibs_get_data_src(event, &ibs_data, &data);
+		if (event->attr.sample_type & PERF_SAMPLE_ADDR)
+			perf_ibs_get_data_addr(event, &ibs_data, &data);
 	}
 
 	/*
