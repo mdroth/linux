@@ -714,6 +714,7 @@ static u8 perf_ibs_data_src(union ibs_op_data2 *op_data2)
 }
 
 static void perf_ibs_get_mem_lvl(struct perf_event *event,
+				 union ibs_op_data *op_data,
 				 union ibs_op_data2 *op_data2,
 				 union ibs_op_data3 *op_data3,
 				 struct perf_sample_data *data)
@@ -736,6 +737,16 @@ static void perf_ibs_get_mem_lvl(struct perf_event *event,
 	if (op_data3->dc_miss == 0) {
 		data_src->mem_lvl = PERF_MEM_LVL_L1 | PERF_MEM_LVL_HIT;
 		return;
+	}
+
+	/* Load latency (Data cache miss latency) */
+	if (data_src->mem_op == PERF_MEM_OP_LOAD) {
+		if (event->attr.sample_type & PERF_SAMPLE_WEIGHT_STRUCT) {
+			data->weight.var1_dw = op_data3->dc_miss_lat;
+			data->weight.var2_w = op_data->tag_to_ret_ctr;
+		} else if (event->attr.sample_type & PERF_SAMPLE_WEIGHT) {
+			data->weight.full = op_data3->dc_miss_lat;
+		}
 	}
 
 	/* L2 Hit */
@@ -935,6 +946,7 @@ static void perf_ibs_get_data_src(struct perf_event *event,
 				  struct perf_sample_data *data)
 {
 	union perf_mem_data_src *data_src = &data->data_src;
+	union ibs_op_data op_data;
 	union ibs_op_data2 op_data2;
 	union ibs_op_data3 op_data3;
 
@@ -945,6 +957,7 @@ static void perf_ibs_get_data_src(struct perf_event *event,
 	    data_src->mem_op != PERF_MEM_OP_STORE)
 		return;
 
+	op_data.val = ibs_data->regs[ibs_op_msr_idx(MSR_AMD64_IBSOPDATA)];
 	op_data2.val = ibs_data->regs[ibs_op_msr_idx(MSR_AMD64_IBSOPDATA2)];
 
 	/* Erratum #1293 */
@@ -958,7 +971,7 @@ static void perf_ibs_get_data_src(struct perf_event *event,
 		op_data2.val = 0;
 	}
 
-	perf_ibs_get_mem_lvl(event, &op_data2, &op_data3, data);
+	perf_ibs_get_mem_lvl(event, &op_data, &op_data2, &op_data3, data);
 	perf_ibs_get_mem_snoop(&op_data2, data);
 	perf_ibs_get_tlb_lvl(&op_data3, data);
 	perf_ibs_get_mem_lock(&op_data3, data);
