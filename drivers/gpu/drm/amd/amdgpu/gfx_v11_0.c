@@ -1096,6 +1096,7 @@ static void gfx_v11_0_read_wave_data(struct amdgpu_device *adev, uint32_t simd, 
 	dst[(*no_fields)++] = wave_read_ind(adev, wave, ixSQ_WAVE_IB_STS2);
 	dst[(*no_fields)++] = wave_read_ind(adev, wave, ixSQ_WAVE_IB_DBG1);
 	dst[(*no_fields)++] = wave_read_ind(adev, wave, ixSQ_WAVE_M0);
+	dst[(*no_fields)++] = wave_read_ind(adev, wave, ixSQ_WAVE_MODE);
 }
 
 static void gfx_v11_0_read_wave_sgprs(struct amdgpu_device *adev, uint32_t simd,
@@ -4562,6 +4563,9 @@ static int gfx_v11_0_hw_init(void *handle)
 				if (adev->gfx.imu.funcs->start_imu)
 					adev->gfx.imu.funcs->start_imu(adev);
 			}
+
+			/* disable gpa mode in backdoor loading */
+			gfx_v11_0_disable_gpa_mode(adev);
 		}
 	}
 
@@ -4780,19 +4784,17 @@ static int gfx_v11_0_soft_reset(void *handle)
 		/* Disable MEC parsing/prefetching */
 		gfx_v11_0_cp_compute_enable(adev, false);
 
-		if (grbm_soft_reset) {
-			tmp = RREG32_SOC15(GC, 0, regGRBM_SOFT_RESET);
-			tmp |= grbm_soft_reset;
-			dev_info(adev->dev, "GRBM_SOFT_RESET=0x%08X\n", tmp);
-			WREG32_SOC15(GC, 0, regGRBM_SOFT_RESET, tmp);
-			tmp = RREG32_SOC15(GC, 0, regGRBM_SOFT_RESET);
+		tmp = RREG32_SOC15(GC, 0, regGRBM_SOFT_RESET);
+		tmp |= grbm_soft_reset;
+		dev_info(adev->dev, "GRBM_SOFT_RESET=0x%08X\n", tmp);
+		WREG32_SOC15(GC, 0, regGRBM_SOFT_RESET, tmp);
+		tmp = RREG32_SOC15(GC, 0, regGRBM_SOFT_RESET);
 
-			udelay(50);
+		udelay(50);
 
-			tmp &= ~grbm_soft_reset;
-			WREG32_SOC15(GC, 0, regGRBM_SOFT_RESET, tmp);
-			tmp = RREG32_SOC15(GC, 0, regGRBM_SOFT_RESET);
-		}
+		tmp &= ~grbm_soft_reset;
+		WREG32_SOC15(GC, 0, regGRBM_SOFT_RESET, tmp);
+		tmp = RREG32_SOC15(GC, 0, regGRBM_SOFT_RESET);
 
 		/* Wait a little for things to settle down */
 		udelay(50);
@@ -6292,6 +6294,11 @@ static void gfx_v11_0_set_irq_funcs(struct amdgpu_device *adev)
 
 static void gfx_v11_0_set_imu_funcs(struct amdgpu_device *adev)
 {
+	if (adev->flags & AMD_IS_APU)
+		adev->gfx.imu.mode = MISSION_MODE;
+	else
+		adev->gfx.imu.mode = DEBUG_MODE;
+
 	adev->gfx.imu.funcs = &gfx_v11_0_imu_funcs;
 }
 
