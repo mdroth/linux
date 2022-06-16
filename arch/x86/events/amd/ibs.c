@@ -310,6 +310,13 @@ static int perf_ibs_init(struct perf_event *event)
 	if (event->attr.sample_type & PERF_SAMPLE_CALLCHAIN)
 		event->attr.sample_type |= __PERF_SAMPLE_CALLCHAIN_EARLY;
 
+	/*
+	 * Setting _EARLY flag makes sure generic perf driver does not
+	 * overwrite physical address set by arch specific pmu driver.
+	 */
+	if (event->attr.sample_type & PERF_SAMPLE_PHYS_ADDR)
+		event->attr.sample_type |= __PERF_SAMPLE_PHYS_ADDR_EARLY;
+
 	return 0;
 }
 
@@ -999,13 +1006,36 @@ static void perf_ibs_get_data_addr(struct perf_event *event,
 	data->addr = ibs_data->regs[ibs_op_msr_idx(MSR_AMD64_IBSDCLINAD)];
 }
 
+static void perf_ibs_get_phy_addr(struct perf_event *event,
+				  struct perf_ibs_data *ibs_data,
+				  struct perf_sample_data *data)
+{
+	union perf_mem_data_src *data_src = &data->data_src;
+	union ibs_op_data3 op_data3;
+
+	op_data3.val = ibs_data->regs[ibs_op_msr_idx(MSR_AMD64_IBSOPDATA3)];
+
+	if (!(event->attr.sample_type & PERF_SAMPLE_DATA_SRC))
+		perf_ibs_get_mem_op(&op_data3, data);
+
+	if ((data_src->mem_op != PERF_MEM_OP_LOAD &&
+	    data_src->mem_op != PERF_MEM_OP_STORE) ||
+	    !op_data3.dc_phy_addr_valid) {
+		data->phys_addr = 0x0;
+		return;
+	}
+
+	data->phys_addr = ibs_data->regs[ibs_op_msr_idx(MSR_AMD64_IBSDCPHYSAD)];
+}
+
 static int perf_ibs_get_offset_max(struct perf_ibs *perf_ibs, u64 sample_type,
 				   int check_rip)
 {
 	if (sample_type & PERF_SAMPLE_RAW ||
 	    (perf_ibs == &perf_ibs_op &&
 	    (sample_type & PERF_SAMPLE_DATA_SRC ||
-	     sample_type & PERF_SAMPLE_ADDR)))
+	     sample_type & PERF_SAMPLE_ADDR ||
+	     sample_type & PERF_SAMPLE_PHYS_ADDR)))
 		return perf_ibs->offset_max;
 	else if (check_rip)
 		return 3;
@@ -1119,6 +1149,8 @@ fail:
 			perf_ibs_get_data_src(event, &ibs_data, &data);
 		if (event->attr.sample_type & PERF_SAMPLE_ADDR)
 			perf_ibs_get_data_addr(event, &ibs_data, &data);
+		if (event->attr.sample_type & PERF_SAMPLE_PHYS_ADDR)
+			perf_ibs_get_phy_addr(event, &ibs_data, &data);
 	}
 
 	/*
