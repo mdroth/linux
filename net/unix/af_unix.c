@@ -302,7 +302,7 @@ static void __unix_remove_socket(struct sock *sk)
 
 static void __unix_insert_socket(struct sock *sk)
 {
-	WARN_ON(!sk_unhashed(sk));
+	DEBUG_NET_WARN_ON_ONCE(!sk_unhashed(sk));
 	sk_add_node(sk, &unix_socket_table[sk->sk_hash]);
 }
 
@@ -490,7 +490,7 @@ static int unix_dgram_peer_wake_me(struct sock *sk, struct sock *other)
 	 * -ECONNREFUSED. Otherwise, if we haven't queued any skbs
 	 * to other and its full, we will hang waiting for POLLOUT.
 	 */
-	if (unix_recvq_full(other) && !sock_flag(other, SOCK_DEAD))
+	if (unix_recvq_full_lockless(other) && !sock_flag(other, SOCK_DEAD))
 		return 1;
 
 	if (connected)
@@ -554,9 +554,9 @@ static void unix_sock_destructor(struct sock *sk)
 		u->oob_skb = NULL;
 	}
 #endif
-	WARN_ON(refcount_read(&sk->sk_wmem_alloc));
-	WARN_ON(!sk_unhashed(sk));
-	WARN_ON(sk->sk_socket);
+	DEBUG_NET_WARN_ON_ONCE(refcount_read(&sk->sk_wmem_alloc));
+	DEBUG_NET_WARN_ON_ONCE(!sk_unhashed(sk));
+	DEBUG_NET_WARN_ON_ONCE(sk->sk_socket);
 	if (!sock_flag(sk, SOCK_DEAD)) {
 		pr_info("Attempt to release alive unix socket: %p\n", sk);
 		return;
@@ -741,10 +741,8 @@ static ssize_t unix_stream_splice_read(struct socket *,  loff_t *ppos,
 				       unsigned int flags);
 static int unix_dgram_sendmsg(struct socket *, struct msghdr *, size_t);
 static int unix_dgram_recvmsg(struct socket *, struct msghdr *, size_t, int);
-static int unix_read_sock(struct sock *sk, read_descriptor_t *desc,
-			  sk_read_actor_t recv_actor);
-static int unix_stream_read_sock(struct sock *sk, read_descriptor_t *desc,
-				 sk_read_actor_t recv_actor);
+static int unix_read_skb(struct sock *sk, skb_read_actor_t recv_actor);
+static int unix_stream_read_skb(struct sock *sk, skb_read_actor_t recv_actor);
 static int unix_dgram_connect(struct socket *, struct sockaddr *,
 			      int, int);
 static int unix_seqpacket_sendmsg(struct socket *, struct msghdr *, size_t);
@@ -798,7 +796,7 @@ static const struct proto_ops unix_stream_ops = {
 	.shutdown =	unix_shutdown,
 	.sendmsg =	unix_stream_sendmsg,
 	.recvmsg =	unix_stream_recvmsg,
-	.read_sock =	unix_stream_read_sock,
+	.read_skb =	unix_stream_read_skb,
 	.mmap =		sock_no_mmap,
 	.sendpage =	unix_stream_sendpage,
 	.splice_read =	unix_stream_splice_read,
@@ -823,7 +821,7 @@ static const struct proto_ops unix_dgram_ops = {
 	.listen =	sock_no_listen,
 	.shutdown =	unix_shutdown,
 	.sendmsg =	unix_dgram_sendmsg,
-	.read_sock =	unix_read_sock,
+	.read_skb =	unix_read_skb,
 	.recvmsg =	unix_dgram_recvmsg,
 	.mmap =		sock_no_mmap,
 	.sendpage =	sock_no_sendpage,
@@ -2487,8 +2485,7 @@ static int unix_dgram_recvmsg(struct socket *sock, struct msghdr *msg, size_t si
 	return __unix_dgram_recvmsg(sk, msg, size, flags);
 }
 
-static int unix_read_sock(struct sock *sk, read_descriptor_t *desc,
-			  sk_read_actor_t recv_actor)
+static int unix_read_skb(struct sock *sk, skb_read_actor_t recv_actor)
 {
 	int copied = 0;
 
@@ -2503,7 +2500,7 @@ static int unix_read_sock(struct sock *sk, read_descriptor_t *desc,
 		if (!skb)
 			return err;
 
-		used = recv_actor(desc, skb, 0, skb->len);
+		used = recv_actor(sk, skb);
 		if (used <= 0) {
 			if (!copied)
 				copied = used;
@@ -2514,8 +2511,7 @@ static int unix_read_sock(struct sock *sk, read_descriptor_t *desc,
 		}
 
 		kfree_skb(skb);
-		if (!desc->count)
-			break;
+		break;
 	}
 
 	return copied;
@@ -2650,13 +2646,12 @@ static struct sk_buff *manage_oob(struct sk_buff *skb, struct sock *sk,
 }
 #endif
 
-static int unix_stream_read_sock(struct sock *sk, read_descriptor_t *desc,
-				 sk_read_actor_t recv_actor)
+static int unix_stream_read_skb(struct sock *sk, skb_read_actor_t recv_actor)
 {
 	if (unlikely(sk->sk_state != TCP_ESTABLISHED))
 		return -ENOTCONN;
 
-	return unix_read_sock(sk, desc, recv_actor);
+	return unix_read_skb(sk, recv_actor);
 }
 
 static int unix_stream_read_generic(struct unix_stream_read_state *state,
