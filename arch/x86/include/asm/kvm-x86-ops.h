@@ -130,7 +130,6 @@ KVM_X86_OP(vcpu_deliver_sipi_vector)
 KVM_X86_OP_OPTIONAL_RET0(vcpu_get_apicv_inhibit_reasons);
 KVM_X86_OP(alloc_apic_backing_page)
 KVM_X86_OP_OPTIONAL(rmp_page_level_adjust)
-KVM_X86_OP(update_protected_guest_state)
 
 #undef KVM_X86_OP
 #undef KVM_X86_OP_OPTIONAL
