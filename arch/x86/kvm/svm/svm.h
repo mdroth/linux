@@ -210,6 +210,8 @@ struct vcpu_sev_es_state {
 	u64 ghcb_sa_gpa;
 	u32 ghcb_sa_alloc_len;
 	bool ghcb_sa_sync;
+	bool ghcb_sa_contained;
+	u32 ghcb_sa_offset;
 
 	/*
 	 * SEV-ES support to hold the sw_exit_info return values to be
