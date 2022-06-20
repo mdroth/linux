@@ -189,8 +189,7 @@ struct svm_nested_state {
 struct vcpu_sev_es_state {
 	/* SEV-ES support */
 	struct sev_es_save_area *vmsa;
-	struct ghcb *ghcb;
-	struct kvm_host_map ghcb_map;
+	bool ghcb_in_use;
 	bool received_first_sipi;
 	unsigned int ap_reset_hold_type;
 
@@ -200,6 +199,13 @@ struct vcpu_sev_es_state {
 	u64 ghcb_sa_gpa;
 	u32 ghcb_sa_alloc_len;
 	bool ghcb_sa_sync;
+
+	/*
+	 * SEV-ES support to hold the sw_exit_info return values to be
+	 * sync'ed to the GHCB when mapped.
+	 */
+	u64 ghcb_sw_exit_info_1;
+	u64 ghcb_sw_exit_info_2;
 };
 
 struct vcpu_svm {
@@ -613,6 +619,20 @@ void nested_copy_vmcb_save_to_cache(struct vcpu_svm *svm,
 void nested_sync_control_from_vmcb02(struct vcpu_svm *svm);
 void nested_vmcb02_compute_g_pat(struct vcpu_svm *svm);
 void svm_switch_vmcb(struct vcpu_svm *svm, struct kvm_vmcb_info *target_vmcb);
+
+static inline void svm_set_ghcb_sw_exit_info_1(struct kvm_vcpu *vcpu, u64 val)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+
+	svm->sev_es.ghcb_sw_exit_info_1 = val;
+}
+
+static inline void svm_set_ghcb_sw_exit_info_2(struct kvm_vcpu *vcpu, u64 val)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+
+	svm->sev_es.ghcb_sw_exit_info_2 = val;
+}
 
 extern struct kvm_x86_nested_ops svm_nested_ops;
 
