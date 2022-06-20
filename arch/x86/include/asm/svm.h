@@ -263,6 +263,7 @@ enum avic_ipi_failure_cause {
 #define AVIC_HPA_MASK	~((0xFFFULL << 52) | 0xFFF)
 #define VMCB_AVIC_APIC_BAR_MASK		0xFFFFFFFFFF000ULL
 
+#define SVM_SEV_FEAT_SNP_ACTIVE		BIT(0)
 
 struct vmcb_seg {
 	u16 selector;
