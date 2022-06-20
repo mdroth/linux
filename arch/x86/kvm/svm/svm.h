@@ -206,6 +206,8 @@ struct vcpu_sev_es_state {
 	 */
 	u64 ghcb_sw_exit_info_1;
 	u64 ghcb_sw_exit_info_2;
+
+	u64 ghcb_registered_gpa;
 };
 
 struct vcpu_svm {
@@ -332,6 +334,11 @@ static inline bool sev_snp_guest(struct kvm *kvm)
 	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
 
 	return sev_es_guest(kvm) && sev->snp_active;
+}
+
+static inline bool ghcb_gpa_is_registered(struct vcpu_svm *svm, u64 val)
+{
+	return svm->sev_es.ghcb_registered_gpa == val;
 }
 
 static inline void vmcb_mark_all_dirty(struct vmcb *vmcb)
