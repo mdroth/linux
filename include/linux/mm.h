@@ -2746,8 +2746,9 @@ extern unsigned long mmap_region(struct file *file, unsigned long addr,
 extern unsigned long do_mmap(struct file *file, unsigned long addr,
 	unsigned long len, unsigned long prot, unsigned long flags,
 	unsigned long pgoff, unsigned long *populate, struct list_head *uf);
-extern int __do_munmap(struct mm_struct *, unsigned long, size_t,
-		       struct list_head *uf, bool downgrade);
+extern int do_mas_munmap(struct ma_state *mas, struct mm_struct *mm,
+			 unsigned long start, size_t len, struct list_head *uf,
+			 bool downgrade);
 extern int do_munmap(struct mm_struct *, unsigned long, size_t,
 		     struct list_head *uf);
 extern int do_madvise(struct mm_struct *mm, unsigned long start, size_t len_in, int behavior);
@@ -2814,26 +2815,12 @@ extern struct vm_area_struct * find_vma(struct mm_struct * mm, unsigned long add
 extern struct vm_area_struct * find_vma_prev(struct mm_struct * mm, unsigned long addr,
 					     struct vm_area_struct **pprev);
 
-/**
- * find_vma_intersection() - Look up the first VMA which intersects the interval
- * @mm: The process address space.
- * @start_addr: The inclusive start user address.
- * @end_addr: The exclusive end user address.
- *
- * Returns: The first VMA within the provided range, %NULL otherwise.  Assumes
- * start_addr < end_addr.
+/*
+ * Look up the first VMA which intersects the interval [start_addr, end_addr)
+ * NULL if none.  Assume start_addr < end_addr.
  */
-static inline
 struct vm_area_struct *find_vma_intersection(struct mm_struct *mm,
-					     unsigned long start_addr,
-					     unsigned long end_addr)
-{
-	struct vm_area_struct *vma = find_vma(mm, start_addr);
-
-	if (vma && end_addr <= vma->vm_start)
-		vma = NULL;
-	return vma;
-}
+			unsigned long start_addr, unsigned long end_addr);
 
 /**
  * vma_lookup() - Find a VMA at a specific address
@@ -2845,12 +2832,7 @@ struct vm_area_struct *find_vma_intersection(struct mm_struct *mm,
 static inline
 struct vm_area_struct *vma_lookup(struct mm_struct *mm, unsigned long addr)
 {
-	struct vm_area_struct *vma = find_vma(mm, addr);
-
-	if (vma && addr < vma->vm_start)
-		vma = NULL;
-
-	return vma;
+	return mtree_load(&mm->mm_mt, addr);
 }
 
 static inline unsigned long vm_start_gap(struct vm_area_struct *vma)
@@ -2886,7 +2868,7 @@ static inline unsigned long vma_pages(struct vm_area_struct *vma)
 static inline struct vm_area_struct *find_exact_vma(struct mm_struct *mm,
 				unsigned long vm_start, unsigned long vm_end)
 {
-	struct vm_area_struct *vma = find_vma(mm, vm_start);
+	struct vm_area_struct *vma = vma_lookup(mm, vm_start);
 
 	if (vma && (vma->vm_start != vm_start || vma->vm_end != vm_end))
 		vma = NULL;
