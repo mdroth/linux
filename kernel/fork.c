@@ -581,11 +581,11 @@ static __latent_entropy int dup_mmap(struct mm_struct *mm,
 					struct mm_struct *oldmm)
 {
 	struct vm_area_struct *mpnt, *tmp, *prev, **pprev;
-	struct rb_node **rb_link, *rb_parent;
 	int retval;
-	unsigned long charge;
-	LIST_HEAD(uf);
+	unsigned long charge = 0;
+	MA_STATE(old_mas, &oldmm->mm_mt, 0, 0);
 	MA_STATE(mas, &mm->mm_mt, 0, 0);
+	LIST_HEAD(uf);
 
 	uprobe_start_dup_mmap();
 	if (mmap_write_lock_killable(oldmm)) {
@@ -607,8 +607,6 @@ static __latent_entropy int dup_mmap(struct mm_struct *mm,
 	mm->exec_vm = oldmm->exec_vm;
 	mm->stack_vm = oldmm->stack_vm;
 
-	rb_link = &mm->mm_rb.rb_node;
-	rb_parent = NULL;
 	pprev = &mm->mmap;
 	retval = ksm_fork(mm, oldmm);
 	if (retval)
@@ -620,7 +618,12 @@ static __latent_entropy int dup_mmap(struct mm_struct *mm,
 		goto out;
 
 	prev = NULL;
-	for (mpnt = oldmm->mmap; mpnt; mpnt = mpnt->vm_next) {
+
+	retval = mas_expected_entries(&mas, oldmm->map_count);
+	if (retval)
+		goto out;
+
+	mas_for_each(&old_mas, mpnt, ULONG_MAX) {
 		struct file *file;
 
 		if (mpnt->vm_flags & VM_DONTCOPY) {
@@ -694,10 +697,6 @@ static __latent_entropy int dup_mmap(struct mm_struct *mm,
 		pprev = &tmp->vm_next;
 		tmp->vm_prev = prev;
 		prev = tmp;
-
-		__vma_link_rb(mm, tmp, rb_link, rb_parent);
-		rb_link = &tmp->vm_rb.rb_right;
-		rb_parent = &tmp->vm_rb;
 
 		/* Link the vma into the MT */
 		mas.index = tmp->vm_start;
@@ -1122,7 +1121,6 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 	struct user_namespace *user_ns)
 {
 	mm->mmap = NULL;
-	mm->mm_rb = RB_ROOT;
 	mt_init_flags(&mm->mm_mt, MM_MT_FLAGS);
 	mt_set_external_lock(&mm->mm_mt, &mm->mmap_lock);
 	mm->vmacache_seqnum = 0;
