@@ -547,6 +547,12 @@ void kvm_vm_free(struct kvm_vm *vmp)
 	if (vmp == NULL)
 		return;
 
+	/* Free cached stats metadata and close FD */
+	if (vmp->stats_fd) {
+		free(vmp->stats_desc);
+		close(vmp->stats_fd);
+	}
+
 	/* Free userspace_mem_regions. */
 	hash_for_each_safe(vmp->regions.slot_hash, ctr, node, region, slot_node)
 		__vm_mem_region_delete(vmp, region, false);
@@ -1917,4 +1923,46 @@ void read_stat_data(int stats_fd, struct kvm_stats_header *header,
 	TEST_ASSERT(ret == size,
 		    "pread() on stat '%s' read %ld bytes, wanted %lu bytes",
 		    desc->name, size, ret);
+}
+
+/*
+ * Read the data of the named stat
+ *
+ * Input Args:
+ *   vm - the VM for which the stat should be read
+ *   stat_name - the name of the stat to read
+ *   max_elements - the maximum number of 8-byte values to read into data
+ *
+ * Output Args:
+ *   data - the buffer into which stat data should be read
+ *
+ * Read the data values of a specified stat from the binary stats interface.
+ */
+void __vm_get_stat(struct kvm_vm *vm, const char *stat_name, uint64_t *data,
+		   size_t max_elements)
+{
+	struct kvm_stats_desc *desc;
+	size_t size_desc;
+	int i;
+
+	if (!vm->stats_fd) {
+		vm->stats_fd = vm_get_stats_fd(vm);
+		read_stats_header(vm->stats_fd, &vm->stats_header);
+		vm->stats_desc = read_stats_descriptors(vm->stats_fd,
+							&vm->stats_header);
+	}
+
+	size_desc = get_stats_descriptor_size(&vm->stats_header);
+
+	for (i = 0; i < vm->stats_header.num_desc; ++i) {
+		desc = (void *)vm->stats_desc + (i * size_desc);
+
+		if (strcmp(desc->name, stat_name))
+			continue;
+
+		read_stat_data(vm->stats_fd, &vm->stats_header, desc,
+			       data, max_elements);
+
+		break;
+	}
 }

@@ -84,6 +84,11 @@ struct kvm_vm {
 	vm_vaddr_t idt;
 	vm_vaddr_t handlers;
 	uint32_t dirty_ring_size;
+
+	/* Cache of information for binary stats interface */
+	int stats_fd;
+	struct kvm_stats_header stats_header;
+	struct kvm_stats_desc *stats_desc;
 };
 
 
@@ -344,6 +349,17 @@ static inline struct kvm_stats_desc *get_stats_descriptor(struct kvm_stats_desc 
 void read_stat_data(int stats_fd, struct kvm_stats_header *header,
 		    struct kvm_stats_desc *desc, uint64_t *data,
 		    size_t max_elements);
+
+void __vm_get_stat(struct kvm_vm *vm, const char *stat_name, uint64_t *data,
+		   size_t max_elements);
+
+static inline uint64_t vm_get_stat(struct kvm_vm *vm, const char *stat_name)
+{
+	uint64_t data;
+
+	__vm_get_stat(vm, stat_name, &data, 1);
+	return data;
+}
 
 void vm_create_irqchip(struct kvm_vm *vm);
 
@@ -796,6 +812,12 @@ void virt_arch_dump(FILE *stream, struct kvm_vm *vm, uint8_t indent);
 static inline void virt_dump(FILE *stream, struct kvm_vm *vm, uint8_t indent)
 {
 	virt_arch_dump(stream, vm, indent);
+}
+
+
+static inline int __vm_disable_nx_huge_pages(struct kvm_vm *vm)
+{
+	return __vm_enable_cap(vm, KVM_CAP_VM_DISABLE_NX_HUGE_PAGES, 0);
 }
 
 #endif /* SELFTEST_KVM_UTIL_BASE_H */
