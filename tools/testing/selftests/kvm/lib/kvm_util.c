@@ -547,6 +547,12 @@ void kvm_vm_free(struct kvm_vm *vmp)
 	if (vmp == NULL)
 		return;
 
+	/* Free cached stats metadata and close FD */
+	if (vmp->stats_fd) {
+		free(vmp->stats_desc);
+		close(vmp->stats_fd);
+	}
+
 	/* Free userspace_mem_regions. */
 	hash_for_each_safe(vmp->regions.slot_hash, ctr, node, region, slot_node)
 		__vm_mem_region_delete(vmp, region, false);
@@ -1849,4 +1855,114 @@ unsigned int vm_calc_num_guest_pages(enum vm_guest_mode mode, size_t size)
 	unsigned int n;
 	n = DIV_ROUND_UP(size, vm_guest_mode_params[mode].page_size);
 	return vm_adjust_num_guest_pages(mode, n);
+}
+
+/*
+ * Read binary stats descriptors
+ *
+ * Input Args:
+ *   stats_fd - the file descriptor for the binary stats file from which to read
+ *   header - the binary stats metadata header corresponding to the given FD
+ *
+ * Output Args: None
+ *
+ * Return:
+ *   A pointer to a newly allocated series of stat descriptors.
+ *   Caller is responsible for freeing the returned kvm_stats_desc.
+ *
+ * Read the stats descriptors from the binary stats interface.
+ */
+struct kvm_stats_desc *read_stats_descriptors(int stats_fd,
+					      struct kvm_stats_header *header)
+{
+	struct kvm_stats_desc *stats_desc;
+	ssize_t desc_size, total_size, ret;
+
+	desc_size = get_stats_descriptor_size(header);
+	total_size = header->num_desc * desc_size;
+
+	stats_desc = calloc(header->num_desc, desc_size);
+	TEST_ASSERT(stats_desc, "Allocate memory for stats descriptors");
+
+	ret = pread(stats_fd, stats_desc, total_size, header->desc_offset);
+	TEST_ASSERT(ret == total_size, "Read KVM stats descriptors");
+
+	return stats_desc;
+}
+
+/*
+ * Read stat data for a particular stat
+ *
+ * Input Args:
+ *   stats_fd - the file descriptor for the binary stats file from which to read
+ *   header - the binary stats metadata header corresponding to the given FD
+ *   desc - the binary stat metadata for the particular stat to be read
+ *   max_elements - the maximum number of 8-byte values to read into data
+ *
+ * Output Args:
+ *   data - the buffer into which stat data should be read
+ *
+ * Read the data values of a specified stat from the binary stats interface.
+ */
+void read_stat_data(int stats_fd, struct kvm_stats_header *header,
+		    struct kvm_stats_desc *desc, uint64_t *data,
+		    size_t max_elements)
+{
+	size_t nr_elements = min_t(ssize_t, desc->size, max_elements);
+	size_t size = nr_elements * sizeof(*data);
+	ssize_t ret;
+
+	TEST_ASSERT(desc->size, "No elements in stat '%s'", desc->name);
+	TEST_ASSERT(max_elements, "Zero elements requested for stat '%s'", desc->name);
+
+	ret = pread(stats_fd, data, size,
+		    header->data_offset + desc->offset);
+
+	TEST_ASSERT(ret >= 0, "pread() failed on stat '%s', errno: %i (%s)",
+		    desc->name, errno, strerror(errno));
+	TEST_ASSERT(ret == size,
+		    "pread() on stat '%s' read %ld bytes, wanted %lu bytes",
+		    desc->name, size, ret);
+}
+
+/*
+ * Read the data of the named stat
+ *
+ * Input Args:
+ *   vm - the VM for which the stat should be read
+ *   stat_name - the name of the stat to read
+ *   max_elements - the maximum number of 8-byte values to read into data
+ *
+ * Output Args:
+ *   data - the buffer into which stat data should be read
+ *
+ * Read the data values of a specified stat from the binary stats interface.
+ */
+void __vm_get_stat(struct kvm_vm *vm, const char *stat_name, uint64_t *data,
+		   size_t max_elements)
+{
+	struct kvm_stats_desc *desc;
+	size_t size_desc;
+	int i;
+
+	if (!vm->stats_fd) {
+		vm->stats_fd = vm_get_stats_fd(vm);
+		read_stats_header(vm->stats_fd, &vm->stats_header);
+		vm->stats_desc = read_stats_descriptors(vm->stats_fd,
+							&vm->stats_header);
+	}
+
+	size_desc = get_stats_descriptor_size(&vm->stats_header);
+
+	for (i = 0; i < vm->stats_header.num_desc; ++i) {
+		desc = (void *)vm->stats_desc + (i * size_desc);
+
+		if (strcmp(desc->name, stat_name))
+			continue;
+
+		read_stat_data(vm->stats_fd, &vm->stats_header, desc,
+			       data, max_elements);
+
+		break;
+	}
 }

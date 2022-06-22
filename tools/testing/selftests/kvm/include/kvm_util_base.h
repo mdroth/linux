@@ -84,6 +84,11 @@ struct kvm_vm {
 	vm_vaddr_t idt;
 	vm_vaddr_t handlers;
 	uint32_t dirty_ring_size;
+
+	/* Cache of information for binary stats interface */
+	int stats_fd;
+	struct kvm_stats_header stats_header;
+	struct kvm_stats_desc *stats_desc;
 };
 
 
@@ -306,6 +311,54 @@ static inline int vm_get_stats_fd(struct kvm_vm *vm)
 
 	TEST_ASSERT(fd >= 0, KVM_IOCTL_ERROR(KVM_GET_STATS_FD, fd));
 	return fd;
+}
+
+static inline void read_stats_header(int stats_fd, struct kvm_stats_header *header)
+{
+	ssize_t ret;
+
+	ret = read(stats_fd, header, sizeof(*header));
+	TEST_ASSERT(ret == sizeof(*header), "Read stats header");
+}
+
+struct kvm_stats_desc *read_stats_descriptors(int stats_fd,
+					      struct kvm_stats_header *header);
+
+static inline ssize_t get_stats_descriptor_size(struct kvm_stats_header *header)
+{
+	 /*
+	  * The base size of the descriptor is defined by KVM's ABI, but the
+	  * size of the name field is variable, as far as KVM's ABI is
+	  * concerned. For a given instance of KVM, the name field is the same
+	  * size for all stats and is provided in the overall stats header.
+	  */
+	return sizeof(struct kvm_stats_desc) + header->name_size;
+}
+
+static inline struct kvm_stats_desc *get_stats_descriptor(struct kvm_stats_desc *stats,
+							  int index,
+							  struct kvm_stats_header *header)
+{
+	/*
+	 * Note, size_desc includes the size of the name field, which is
+	 * variable. i.e. this is NOT equivalent to &stats_desc[i].
+	 */
+	return (void *)stats + index * get_stats_descriptor_size(header);
+}
+
+void read_stat_data(int stats_fd, struct kvm_stats_header *header,
+		    struct kvm_stats_desc *desc, uint64_t *data,
+		    size_t max_elements);
+
+void __vm_get_stat(struct kvm_vm *vm, const char *stat_name, uint64_t *data,
+		   size_t max_elements);
+
+static inline uint64_t vm_get_stat(struct kvm_vm *vm, const char *stat_name)
+{
+	uint64_t data;
+
+	__vm_get_stat(vm, stat_name, &data, 1);
+	return data;
 }
 
 void vm_create_irqchip(struct kvm_vm *vm);
@@ -759,6 +812,12 @@ void virt_arch_dump(FILE *stream, struct kvm_vm *vm, uint8_t indent);
 static inline void virt_dump(FILE *stream, struct kvm_vm *vm, uint8_t indent)
 {
 	virt_arch_dump(stream, vm, indent);
+}
+
+
+static inline int __vm_disable_nx_huge_pages(struct kvm_vm *vm)
+{
+	return __vm_enable_cap(vm, KVM_CAP_VM_DISABLE_NX_HUGE_PAGES, 0);
 }
 
 #endif /* SELFTEST_KVM_UTIL_BASE_H */
