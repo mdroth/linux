@@ -4037,6 +4037,9 @@ static int kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 		r = kvm_faultin_pfn_private(vcpu, fault);
 		if (r != RET_PF_CONTINUE)
 			return r == RET_PF_FIXED ? RET_PF_CONTINUE : r;
+	} else if (vcpu->kvm->arch.upm_mode && slot) {
+		pr_warn("non-private slot for gfn 0x%llx, error code 0x%llx, id: %d\n",
+			fault->gfn, fault->error_code_ext, slot ? slot->id : -1);
 	}
 
 	async = false;
