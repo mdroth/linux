@@ -18,7 +18,7 @@
 #include <asm/perf_event.h>
 #include <asm/msr.h>
 
-#define NUM_COUNTERS_NB		8
+#define NUM_COUNTERS_NB		4
 #define NUM_COUNTERS_DFDBG	4
 #define NUM_COUNTERS_L2		4
 #define NUM_COUNTERS_L3		6
@@ -158,18 +158,9 @@ out:
 	if (hwc->idx == -1)
 		return -EBUSY;
 
-	if (uncore->dbg_msr_base && hwc->idx >= (NUM_COUNTERS_NB - NUM_COUNTERS_DFDBG)) {
-		hwc->config_base = uncore->dbg_msr_base + (2 * (hwc->idx -
-				  (NUM_COUNTERS_NB - NUM_COUNTERS_DFDBG)));
-		hwc->event_base = uncore->dbg_msr_base + (2 * (hwc->idx -
-				  (NUM_COUNTERS_NB - NUM_COUNTERS_DFDBG))) + 1;
-		/* debug MSRs don't have rdpmc assignments */
-		hwc->event_base_rdpmc = 0;
-	} else {
-		hwc->config_base = uncore->msr_base + (2 * hwc->idx);
-		hwc->event_base = uncore->msr_base + 1 + (2 * hwc->idx);
-		hwc->event_base_rdpmc = uncore->rdpmc_base + hwc->idx;
-	}
+	hwc->config_base = uncore->msr_base + (2 * hwc->idx);
+	hwc->event_base = uncore->msr_base + 1 + (2 * hwc->idx);
+	hwc->event_base_rdpmc = uncore->rdpmc_base + hwc->idx;
 
 	hwc->state = PERF_HES_UPTODATE | PERF_HES_STOPPED;
 
@@ -180,9 +171,24 @@ out:
 	 * discontiguous as the additional counters are accessible starting
 	 * from index 16.
 	 */
-	if (is_nb_event(event) && hwc->idx >= NUM_COUNTERS_NB)
+	if (!is_nb_event(event))
+		goto done;
+
+	if (hwc->idx >= NUM_COUNTERS_NB)
 		hwc->event_base_rdpmc += NUM_COUNTERS_L3;
 
+	if (uncore->dbg_msr_base &&
+	    num_counters_nb <= (NUM_COUNTERS_NB + NUM_COUNTERS_DFDBG) &&
+	    hwc->idx >= (num_counters_nb - NUM_COUNTERS_DFDBG)) {
+		hwc->config_base = uncore->dbg_msr_base + (2 * (hwc->idx -
+				  (num_counters_nb - NUM_COUNTERS_DFDBG)));
+		hwc->event_base = uncore->dbg_msr_base + (2 * (hwc->idx -
+				  (num_counters_nb - NUM_COUNTERS_DFDBG))) + 1;
+		/* debug MSRs don't have rdpmc assignments */
+		hwc->event_base_rdpmc = 0;
+	}
+
+done:
 	if (flags & PERF_EF_START)
 		amd_uncore_start(event, PERF_EF_RELOAD);
 
@@ -685,6 +691,7 @@ static int __init amd_uncore_init(void)
 		 * counters are supported too. The PMUs are exported
 		 * based on family as either L2 or L3 and NB or DF.
 		 */
+		num_counters_nb		 += NUM_COUNTERS_DFDBG;
 		num_counters_llc	  = NUM_COUNTERS_L3;
 		amd_nb_pmu.name		  = "amd_df";
 		amd_llc_pmu.name	  = "amd_l3";
