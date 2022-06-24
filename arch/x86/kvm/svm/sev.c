@@ -5122,7 +5122,8 @@ int sev_snp_rmp_update(struct kvm *kvm, struct kvm_gfn_range *gfn_range, bool pr
 	pfn = pfn_start;
 
 	if ((gfn_range->end - gfn_range->start) > 1)
-		pr_warn_ratelimited("sev_snp_rmp_update called for more than 1 page\n");
+		pr_warn("sev_snp_rmp_update called for more than 1 page, start: %llx, end: %llx, pfn_start: %lx\n",
+			gfn_range->start, gfn_range->end, pfn_start);
 
 	/*
 	 * TODO: for now we assume 4K, but userspace should have a way to hint
