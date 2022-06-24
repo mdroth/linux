@@ -2898,6 +2898,9 @@ int kvm_mmu_max_mapping_level(struct kvm *kvm,
 	max_level = min(max_level, max_huge_page_level);
 	for ( ; max_level > PG_LEVEL_4K; max_level--) {
 		linfo = lpage_info_slot(gfn, slot, max_level);
+		if (gfn == 0x2b || gfn == 0x2c)
+			pr_warn("gfn: %llx, max level: %d, linfo->disallow_lpage: %d\n",
+				gfn, max_level, linfo->disallow_lpage);
 		if (!linfo->disallow_lpage)
 			break;
 	}
