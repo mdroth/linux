@@ -3757,6 +3757,7 @@ static int __snp_handle_page_state_change_upm(struct kvm_vcpu *vcpu, enum psc_op
 					      gpa_t gpa, int level)
 {
 	struct kvm_sev_info *sev = &to_kvm_svm(vcpu->kvm)->sev_info;
+	struct kvm_memory_slot *slot;
 	struct kvm *kvm = vcpu->kvm;
 	int rc, npt_level;
 	kvm_pfn_t pfn;
@@ -3772,6 +3773,7 @@ static int __snp_handle_page_state_change_upm(struct kvm_vcpu *vcpu, enum psc_op
 		 * RMP at the same time (?) or NPT and then a subsequent RMP fault. Too many
 		 * exits but good enough for testing hopefully.
 		 */
+		slot = gfn_to_memslot(kvm, gpa_to_gfn(gpa));
 
 		/*
 		 * If the gpa is not present in the NPT then build the NPT.
@@ -3796,6 +3798,9 @@ static int __snp_handle_page_state_change_upm(struct kvm_vcpu *vcpu, enum psc_op
 			write_unlock(&kvm->mmu_lock);
 			return 0;
 		}
+
+		pr_warn("PSC due to RMP fault, gpa: %llx, pfn: %llx, slot: %d, private: %d\n",
+			gpa, pfn, slot->id, kvm_slot_is_private(slot));
 
 		/*
 		 * Adjust the level so that we don't go higher than the backing
