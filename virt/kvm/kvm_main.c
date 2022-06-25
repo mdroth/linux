@@ -873,6 +873,9 @@ static void kvm_private_mem_notifier_handler(struct memfile_notifier *notifier,
 	};
 	struct kvm *kvm = slot->kvm;
 
+	if (slot->private_offset > end)
+		return;
+
 	gfn_range.start = slot->base_gfn + gfn_range.start;
 	gfn_range.end = slot->base_gfn + min((unsigned long)gfn_range.end, slot->npages);
 
