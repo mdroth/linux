@@ -5183,6 +5183,7 @@ int sev_snp_rmp_update(struct kvm *kvm, struct kvm_gfn_range *gfn_range, bool pr
 			return -1;
 		}
 		gfn++;
+		pfn++;
 	}
 
 	return 0;
