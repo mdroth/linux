@@ -825,6 +825,12 @@ __bad_area_nosemaphore(struct pt_regs *regs, unsigned long error_code,
 		return;
 	}
 
+	if (error_code & X86_PF_RMP) {
+		/* RMP faults on kernel addresses are not expected. */
+		page_fault_oops(regs, error_code, address);
+		return;
+	}
+
 	/*
 	 * User mode accesses just cause a SIGSEGV.
 	 * It's possible to have interrupts off here:
