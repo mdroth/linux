@@ -1892,11 +1892,11 @@ static int npf_interception(struct kvm_vcpu *vcpu)
 				svm->vmcb->control.insn_len);
 
 	/*
-	 * rc == -1 indicates a userspace exit is needed to handle page
+	 * rc == 0 indicates a userspace exit is needed to handle page
 	 * transitions, so do that first before updating the RMP table.
 	 */
 	if (error_code & PFERR_GUEST_RMP_MASK) {
-		if (rc == -1)
+		if (rc == 0)
 			return rc;
 		handle_rmp_page_fault(vcpu, fault_address, error_code);
 	}
