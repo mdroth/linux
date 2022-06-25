@@ -398,7 +398,7 @@ static void ip6erspan_tunnel_uninit(struct net_device *dev)
 	ip6erspan_tunnel_unlink_md(ign, t);
 	ip6gre_tunnel_unlink(ign, t);
 	dst_cache_reset(&t->dst_cache);
-	dev_put_track(dev, &t->dev_tracker);
+	netdev_put(dev, &t->dev_tracker);
 }
 
 static void ip6gre_tunnel_uninit(struct net_device *dev)
@@ -411,7 +411,7 @@ static void ip6gre_tunnel_uninit(struct net_device *dev)
 	if (ign->fb_tunnel_dev == dev)
 		WRITE_ONCE(ign->fb_tunnel_dev, NULL);
 	dst_cache_reset(&t->dst_cache);
-	dev_put_track(dev, &t->dev_tracker);
+	netdev_put(dev, &t->dev_tracker);
 }
 
 
@@ -939,7 +939,6 @@ static netdev_tx_t ip6erspan_tunnel_xmit(struct sk_buff *skb,
 	__be16 proto;
 	__u32 mtu;
 	int nhoff;
-	int thoff;
 
 	if (!pskb_inet_may_pull(skb))
 		goto tx_err;
@@ -960,10 +959,16 @@ static netdev_tx_t ip6erspan_tunnel_xmit(struct sk_buff *skb,
 	    (ntohs(ip_hdr(skb)->tot_len) > skb->len - nhoff))
 		truncate = true;
 
-	thoff = skb_transport_header(skb) - skb_mac_header(skb);
-	if (skb->protocol == htons(ETH_P_IPV6) &&
-	    (ntohs(ipv6_hdr(skb)->payload_len) > skb->len - thoff))
-		truncate = true;
+	if (skb->protocol == htons(ETH_P_IPV6)) {
+		int thoff;
+
+		if (skb_transport_header_was_set(skb))
+			thoff = skb_transport_header(skb) - skb_mac_header(skb);
+		else
+			thoff = nhoff + sizeof(struct ipv6hdr);
+		if (ntohs(ipv6_hdr(skb)->payload_len) > skb->len - thoff)
+			truncate = true;
+	}
 
 	if (skb_cow_head(skb, dev->needed_headroom ?: t->hlen))
 		goto tx_err;
@@ -1495,7 +1500,7 @@ static int ip6gre_tunnel_init_common(struct net_device *dev)
 	}
 	ip6gre_tnl_init_features(dev);
 
-	dev_hold_track(dev, &tunnel->dev_tracker, GFP_KERNEL);
+	netdev_hold(dev, &tunnel->dev_tracker, GFP_KERNEL);
 	return 0;
 
 cleanup_dst_cache_init:
@@ -1887,7 +1892,7 @@ static int ip6erspan_tap_init(struct net_device *dev)
 	dev->priv_flags |= IFF_LIVE_ADDR_CHANGE;
 	ip6erspan_tnl_link_config(tunnel, 1);
 
-	dev_hold_track(dev, &tunnel->dev_tracker, GFP_KERNEL);
+	netdev_hold(dev, &tunnel->dev_tracker, GFP_KERNEL);
 	return 0;
 
 cleanup_dst_cache_init:
