@@ -222,8 +222,10 @@ SYM_FUNC_END(idmap_cpu_replace_ttbr1)
  *
  * Called exactly once from stop_machine context by each CPU found during boot.
  */
-__idmap_kpti_flag:
-	.long	1
+	.pushsection	".data", "aw", %progbits
+SYM_DATA(__idmap_kpti_flag, .long 1)
+	.popsection
+
 SYM_FUNC_START(idmap_kpti_install_ng_mappings)
 	cpu		.req	w0
 	num_cpus	.req	w1
@@ -245,7 +247,7 @@ SYM_FUNC_START(idmap_kpti_install_ng_mappings)
 
 	mrs	swapper_ttb, ttbr1_el1
 	restore_ttbr1	swapper_ttb
-	adr	flag_ptr, __idmap_kpti_flag
+	adr_l	flag_ptr, __idmap_kpti_flag
 
 	cbnz	cpu, __idmap_kpti_secondary
 
@@ -395,6 +397,8 @@ SYM_FUNC_END(idmap_kpti_install_ng_mappings)
  *
  *	Initialise the processor for turning the MMU on.
  *
+ * Input:
+ *	x0 - actual number of VA bits (ignored unless VA_BITS > 48)
  * Output:
  *	Return in x0 the value of the SCTLR_EL1 register.
  */
@@ -464,12 +468,11 @@ SYM_FUNC_START(__cpu_setup)
 	tcr_clear_errata_bits tcr, x9, x5
 
 #ifdef CONFIG_ARM64_VA_BITS_52
-	ldr_l		x9, vabits_actual
-	sub		x9, xzr, x9
+	sub		x9, xzr, x0
 	add		x9, x9, #64
 	tcr_set_t1sz	tcr, x9
 #else
-	ldr_l		x9, idmap_t0sz
+	idmap_get_t0sz	x9
 #endif
 	tcr_set_t0sz	tcr, x9
 
