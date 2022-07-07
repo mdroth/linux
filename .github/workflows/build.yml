@@ -39,7 +39,7 @@ jobs:
       - run: rm -f foo/lib/modules/*/source
       - run: rm -f foo/lib/modules/*/build
       - run: tar -C foo -cvjf linux.tar.bz2 .
-      - run: git diff v5.18.6..v5.18.6-enarx-2 > patch-5.18.6-enarx.patch
+      - run: git diff v5.18.6..v5.18.6-enarx-3 > patch-5.18.6-enarx.patch
 
       # Upload the results
       - uses: actions/upload-artifact@v2
