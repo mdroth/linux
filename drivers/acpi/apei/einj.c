@@ -37,6 +37,12 @@
 				ACPI_EINJ_MEMORY_UNCORRECTABLE | \
 				ACPI_EINJ_MEMORY_FATAL)
 
+#define CXL_ERROR_MASK		(ACPI_EINJ_CXL_CACHE_CORRECTABLE	| \
+				ACPI_EINJ_CXL_CACHE_UNCORRECTABLE	| \
+				ACPI_EINJ_CXL_CACHE_FATAL		| \
+				ACPI_EINJ_CXL_MEM_CORRECTABLE		| \
+				ACPI_EINJ_CXL_MEM_UNCORRECTABLE		| \
+				ACPI_EINJ_CXL_MEM_FATAL)
 /*
  * ACPI version 5 provides a SET_ERROR_TYPE_WITH_ADDRESS action.
  */
@@ -531,8 +537,11 @@ static int einj_error_inject(u32 type, u32 flags, u64 param1, u64 param2,
 	if (type & ACPI5_VENDOR_BIT) {
 		if (vendor_flags != SETWA_FLAGS_MEM)
 			goto inject;
-	} else if (!(type & MEM_ERROR_MASK) && !(flags & SETWA_FLAGS_MEM))
+	} else if (!(type & MEM_ERROR_MASK) && !(flags & SETWA_FLAGS_MEM)) {
 		goto inject;
+	} else if (type & CXL_ERROR_MASK) {
+		goto inject;
+	}
 
 	/*
 	 * Disallow crazy address masks that give BIOS leeway to pick
