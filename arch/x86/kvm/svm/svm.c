@@ -117,7 +117,14 @@ static const struct svm_direct_access_msrs {
 	{ .index = X2APIC_MSR(APIC_ESR),		.always = false },
 	{ .index = X2APIC_MSR(APIC_ICR),		.always = false },
 	{ .index = X2APIC_MSR(APIC_ICR2),		.always = false },
-	{ .index = X2APIC_MSR(APIC_LVTT),		.always = false },
+	/*
+	 * Note:
+	 * Do not setup MSR interception for APIC_LVTT register.
+	 * AMD does not currently support APIC TSC-deadline timer mode.
+	 * The AVIC HW will not generate avic_unaccelerated_access #VMEXIT when
+	 * writing 10b to APIC LVTT[18:17] bits to set the TSC-deadline mode.
+	 * Instead trap and let KVM emulate MSR accesses.
+	 */
 	{ .index = X2APIC_MSR(APIC_LVTTHMR),		.always = false },
 	{ .index = X2APIC_MSR(APIC_LVTPC),		.always = false },
 	{ .index = X2APIC_MSR(APIC_LVT0),		.always = false },
