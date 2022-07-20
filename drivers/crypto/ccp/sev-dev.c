@@ -317,12 +317,15 @@ EXPORT_SYMBOL_GPL(snp_alloc_firmware_page);
 static void __snp_free_firmware_pages(struct page *page, int order, bool locked)
 {
 	unsigned long paddr, npages = 1ul << order;
+	struct sev_device *sev;
 
 	if (!page)
 		return;
 
 	paddr = __pa((unsigned long)page_address(page));
-	if (snp_set_rmp_state(paddr, npages, false, locked, true))
+	sev = psp_master->sev_data;
+	if (sev->snp_inited && snp_set_rmp_state(paddr, npages, false, locked, true))
+
 		return;
 
 	__free_pages(page, order);
