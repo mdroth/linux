@@ -97,7 +97,9 @@ int apei_smca_report_x86_error(struct cper_ia_proc_ctx *ctx_info, u64 lapic_id)
 	if (ctx_info->reg_arr_size < 48)
 		return -EINVAL;
 
+	get_cpu();
 	mce_setup(&m);
+	put_cpu();
 
 	m.extcpu = -1;
 	m.socketid = -1;
