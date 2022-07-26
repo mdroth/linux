@@ -7159,6 +7159,9 @@ static void kvm_update_lpage_private_shared_mixed(struct kvm *kvm,
 		for (gfn = first + pages; gfn < last; gfn += pages)
 			linfo_set_mixed(gfn, slot, level, false);
 
+		if (gfn == last)
+			goto out;
+
 		gfn = last;
 		gfn_end = min(last + pages, slot->base_gfn + slot->npages);
 		mixed = mem_attrs_mixed(kvm, slot, level, attrs, gfn, gfn_end);
