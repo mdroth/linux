@@ -4727,6 +4727,18 @@ static int svm_vm_init(struct kvm *kvm)
 	return 0;
 }
 
+static int svm_private_mem_enabled(struct kvm *kvm)
+{
+	if (sev_guest(kvm))
+		return kvm->arch.upm_mode ? 1 : 0;
+
+#ifdef CONFIG_HAVE_KVM_PRIVATE_MEM_TESTING
+	return 1;
+#else
+	return 0;
+#endif
+}
+
 static struct kvm_x86_ops svm_x86_ops __initdata = {
 	.name = "kvm_amd",
 
@@ -4806,6 +4818,8 @@ static struct kvm_x86_ops svm_x86_ops __initdata = {
 	.get_exit_info = svm_get_exit_info,
 
 	.vcpu_after_set_cpuid = svm_vcpu_after_set_cpuid,
+
+	.private_mem_enabled = svm_private_mem_enabled,
 
 	.has_wbinvd_exit = svm_has_wbinvd_exit,
 
