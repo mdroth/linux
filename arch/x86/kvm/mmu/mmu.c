@@ -7083,6 +7083,9 @@ void kvm_arch_update_mem_attr(struct kvm *kvm, struct kvm_memory_slot *slot,
 			linfo_update_mixed(lpage_info_slot(gfn, slot, level),
 					   false);
 
+		if (gfn == lpage_end)
+			goto out;
+
 		linfo_update_mixed(lpage_info_slot(lpage_end, slot, level),
 				   mem_attr_is_mixed(kvm, slot, level, attr,
 						     end, lpage_end + pages));
