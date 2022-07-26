@@ -1568,6 +1568,7 @@ struct kvm_x86_ops {
 
 	void (*load_mmu_pgd)(struct kvm_vcpu *vcpu, hpa_t root_hpa,
 			     int root_level);
+	int (*private_mem_enabled)(struct kvm *kvm);
 
 	bool (*has_wbinvd_exit)(void);
 
