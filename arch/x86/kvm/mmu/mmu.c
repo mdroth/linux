@@ -7026,8 +7026,8 @@ static void update_mem_lpage_info(struct kvm *kvm,
 				  unsigned int attr,
 				  gfn_t start, gfn_t end)
 {
-	unsigned long lpage_start, lpage_end;
-	unsigned long gfn, pages, mask;
+	gfn_t lpage_start, lpage_end, gfn;
+	unsigned long pages, mask;
 	int level;
 
 	for (level = PG_LEVEL_2M; level <= KVM_MAX_HUGEPAGE_LEVEL; level++) {
@@ -7049,6 +7049,9 @@ static void update_mem_lpage_info(struct kvm *kvm,
 
 		for (gfn = lpage_start + pages; gfn < lpage_end; gfn += pages)
 			update_mixed(lpage_info_slot(gfn, slot, level), false);
+
+		if (gfn == lpage_end)
+			return;
 
 		update_mixed(lpage_info_slot(lpage_end, slot, level),
 			     mem_attr_is_mixed(kvm, attr, lpage_end,
