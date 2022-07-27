@@ -4213,7 +4213,7 @@ kvm_pfn_t kvm_mmu_map_tdp_page(struct kvm_vcpu *vcpu, gpa_t gpa,
 		 * direct_page_fault() when appropriate.
 		 */
 		//r = direct_page_fault(vcpu, &fault);
-#if CONFIG_RETPOLINE
+#ifdef CONFIG_RETPOLINE
 		if (fault.is_tdp)
 			r = kvm_tdp_page_fault(vcpu, &fault);
 #else
