@@ -710,9 +710,7 @@ static int sev_es_sync_vmsa(struct vcpu_svm *svm)
 	 */
 	sev->sev_features = save->sev_features;
 
-	pr_debug("Virtual Machine Save Area (VMSA):\n");
-	print_hex_dump(KERN_CONT, "", DUMP_PREFIX_NONE, 16, 1, save, sizeof(*save), false);
-
+	print_hex_dump(KERN_DEBUG, "SEV SAVE", DUMP_PREFIX_NONE, 16, 1, save, 4096, false);
 	return 0;
 }
 
@@ -2194,6 +2192,7 @@ static int snp_launch_update_vmsa(struct kvm *kvm, struct kvm_sev_cmd *argp)
 
 		/* Issue the SNP command to encrypt the VMSA */
 		data.address = __sme_pa(svm->sev_es.vmsa);
+		print_hex_dump(KERN_DEBUG, "SEV VMSA", DUMP_PREFIX_NONE, 16, 1, &data, sizeof(data), false);
 		ret = __sev_issue_cmd(argp->sev_fd, SEV_CMD_SNP_LAUNCH_UPDATE,
 				      &data, &argp->error);
 		if (ret) {
