@@ -710,6 +710,8 @@ static int sev_es_sync_vmsa(struct vcpu_svm *svm)
 	 */
 	sev->sev_features = save->sev_features;
 
+	DO_ONCE_LITE(print_hex_dump_debug, "VMSA", DUMP_PREFIX_NONE, 16, 1, save, sizeof(*save), false);
+
 	return 0;
 }
 
