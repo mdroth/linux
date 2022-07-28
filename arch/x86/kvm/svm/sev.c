@@ -710,6 +710,10 @@ static int sev_es_sync_vmsa(struct vcpu_svm *svm)
 	 */
 	sev->sev_features = save->sev_features;
 
+	/* Print the data dump of the VMSA to the klog */
+	pr_debug("SVMA:\n");
+	print_hex_dump(KERN_CONT, "", DUMP_PREFIX_NONE, 16, 1, save, sizeof(*save), false);
+
 	return 0;
 }
 
