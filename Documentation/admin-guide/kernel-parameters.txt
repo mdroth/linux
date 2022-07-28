@@ -5608,6 +5608,7 @@
 			eibrs,retpoline   - enhanced IBRS + Retpolines
 			eibrs,lfence      - enhanced IBRS + LFENCE
 			ibrs		  - use IBRS to protect kernel
+			autoibrs          - AMD Automatic IBRS
 
 			Not specifying this option is equivalent to
 			spectre_v2=auto.
