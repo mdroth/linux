@@ -89,6 +89,9 @@ static size_t sev_es_tmr_size = SEV_ES_TMR_SIZE;
 static int __sev_do_cmd_locked(int cmd, void *data, int *psp_ret);
 static int sev_do_cmd(int cmd, void *data, int *psp_ret);
 
+/*
+ * SEV API version >= maj.min?
+ */
 static inline bool sev_version_greater_or_equal(u8 maj, u8 min)
 {
 	struct sev_device *sev = psp_master->sev_data;
@@ -100,6 +103,14 @@ static inline bool sev_version_greater_or_equal(u8 maj, u8 min)
 		return true;
 
 	return false;
+}
+
+/*
+ * SEV API version < maj.min?
+ */
+static inline bool sev_version_less(u8 maj, u8 min)
+{
+	return !sev_version_greater_or_equal(maj, min);
 }
 
 static void sev_irq_handler(int irq, void *data, unsigned int status)
@@ -2117,6 +2128,7 @@ void sev_pci_init(void)
 {
 	struct sev_device *sev = psp_master->sev_data;
 	int error, rc;
+	int trials;
 
 	if (!sev)
 		return;
@@ -2126,9 +2138,12 @@ void sev_pci_init(void)
 	if (sev_get_api_version())
 		goto err;
 
-	if (sev_version_greater_or_equal(0, 15) &&
-	    sev_update_firmware(sev->dev) == 0)
-		sev_get_api_version();
+	/* SEV-SNP FW needs to be reloaded once, for SEV API version < 1.43. */
+	trials = sev_version_greater_or_equal(0, 15) + sev_version_less(1, 43);
+
+	while (trials-- > 0)
+		if (sev_update_firmware(sev->dev) == 0)
+			sev_get_api_version();
 
 	/* If an init_ex_path is provided rely on INIT_EX for PSP initialization
 	 * instead of INIT.
