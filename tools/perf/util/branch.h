@@ -24,7 +24,8 @@ struct branch_flags {
 			u64 abort:1;
 			u64 cycles:16;
 			u64 type:4;
-			u64 reserved:40;
+			u64 spec:2;
+			u64 reserved:38;
 		};
 	};
 };
@@ -84,5 +85,7 @@ void branch_type_count(struct branch_type_stat *st, struct branch_flags *flags,
 const char *branch_type_name(int type);
 void branch_type_stat_display(FILE *fp, struct branch_type_stat *st);
 int branch_type_str(struct branch_type_stat *st, char *bf, int bfsize);
+
+const char *branch_spec_desc(int spec);
 
 #endif /* _PERF_BRANCH_H */
