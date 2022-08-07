@@ -4807,3 +4807,53 @@ int sev_update_mem_attr(struct kvm_memory_slot *slot, unsigned int attr,
 
 	return 0;
 }
+
+int sev_fault_is_private(struct kvm *kvm, gpa_t gpa, u64 error_code, bool *private_fault)
+{
+	struct kvm_memory_slot *slot;
+	int rc, rmp_level, order;
+	bool handled = false;
+	kvm_pfn_t pfn;
+	gfn_t gfn;
+
+	if (!kvm_is_upm_enabled(kvm) || !sev_guest(kvm))
+		goto out;
+
+	gfn = gpa_to_gfn(gpa);
+
+	if (!sev_snp_guest(kvm)) {
+		/* SEV relies purely on the xarray for tracking private accesses */
+		*private_fault = kvm_mem_is_private(kvm, gfn);
+		handled = true;
+		goto out;
+	}
+
+	*private_fault = (error_code & PFERR_GUEST_ENC_MASK) ? true : false;
+	handled = true;
+
+	if (kvm_mem_is_private(kvm, gfn) != *private_fault)
+		pr_debug("%s: implicit page-state change to %s for gpa: %llx\n",
+			 __func__, *private_fault ? "private" : "shared", gpa);
+
+	/* TODO: debug-only */
+	slot = gfn_to_memslot(kvm, gfn);
+	rc = kvm_private_mem_get_pfn(slot, gfn, &pfn, &order);
+	if (rc) {
+		pr_debug("%s: get_pfn failed, rc: %d\n", __func__, rc);
+		goto out;
+	}
+
+	rc = snp_lookup_rmpentry(pfn, &rmp_level);
+	if (rc < 0) {
+		pr_debug("%s: smp_lookup_rmpentry failed, GFN: 0x%llx, PFN: 0x%llx, rc: %d\n", __func__, gfn, pfn, rc);
+		kvm_private_mem_put_pfn(slot, pfn);
+		goto out;
+	}
+
+	pr_debug("%s: GFN: 0x%llx, private_fault: %d, error_code: %llx, PFN: %llx, order: %d, snp_lookup_rmpentry: %d, rmp_level: %d\n",
+		__func__, gfn, *private_fault, error_code, pfn, order, rc, rmp_level);
+	kvm_private_mem_put_pfn(slot, pfn);
+
+out:
+	return handled ? 1 : 0;
+}
