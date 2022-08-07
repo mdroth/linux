@@ -4508,7 +4508,10 @@ int sev_fault_is_private(struct kvm *kvm, gpa_t gpa, u64 error_code, bool *priva
 	 * via SEV guests anyway, leaving the shared bitmap free for other this
 	 * other use).
 	 */
-	*private_fault = kvm_mem_is_private(kvm, gfn);
+	if (sev_snp_guest(kvm))
+		*private_fault = (error_code & PFERR_GUEST_ENC_MASK) ? true : false;
+	else
+		*private_fault = kvm_mem_is_private(kvm, gfn);
 
 	return 1;
 
