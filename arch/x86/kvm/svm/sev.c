@@ -4788,3 +4788,29 @@ int sev_update_mem_attr(struct kvm *kvm, unsigned int attr, gfn_t start, gfn_t e
 
 	return 0;
 }
+
+int sev_fault_is_private(struct kvm *kvm, gpa_t gpa, u64 error_code)
+{
+	bool private;
+	gfn_t gfn;
+
+	if (!sev_guest(kvm))
+		return 0;
+
+	if (!kvm->arch.upm_mode)
+		return 0;
+
+	gfn = gpa_to_gfn(gpa);
+	private = kvm_mem_is_private(kvm, gfn);
+
+	if (sev_snp_guest(kvm)) {
+		bool private_cbit = (error_code & PFERR_GUEST_ENC_MASK) ? true : false;
+
+		if (private_cbit != private)
+			pr_debug("%s: implicit page-state change to %s for gpa: %llx\n",
+				 __func__, private_cbit ? "private" : "shared", gpa);
+		private = private_cbit;
+	}
+
+	return private ? 1 : 0;
+}
