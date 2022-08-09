@@ -2860,7 +2860,7 @@ static int host_pfn_mapping_level(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn,
 
 	/* Adjust the page level based on the SEV-SNP RMP page level. */
 	if (kvm_x86_ops.rmp_page_level_adjust)
-		static_call(kvm_x86_rmp_page_level_adjust)(kvm, pfn, &level);
+		static_call(kvm_x86_rmp_page_level_adjust)(kvm, gfn, &level);
 
 out:
 	local_irq_restore(flags);
