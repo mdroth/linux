@@ -4403,13 +4403,15 @@ static bool is_pfn_range_shared(kvm_pfn_t start, kvm_pfn_t end)
 	return true;
 }
 
-void sev_rmp_page_level_adjust(struct kvm *kvm, kvm_pfn_t pfn, int *level)
+void sev_rmp_page_level_adjust(struct kvm *kvm, gfn_t gfn, int *level)
 {
 	int rmp_level, assigned;
+	kvm_pfn_t pfn;
 
 	if (!cpu_feature_enabled(X86_FEATURE_SEV_SNP))
 		return;
 
+	pfn = gfn_to_pfn(kvm, gfn);
 	assigned = snp_lookup_rmpentry(pfn, &rmp_level);
 	if (unlikely(assigned < 0))
 		return;
