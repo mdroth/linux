@@ -89,7 +89,7 @@ static void ucall_free(struct ucall *uc)
 void ucall(uint64_t cmd, int nargs, ...)
 {
 	struct ucall *uc;
-	struct ucall tmp = {};
+	struct ucall tmp;
 	va_list va;
 	int i;
 
