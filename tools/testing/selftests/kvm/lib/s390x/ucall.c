@@ -30,7 +30,10 @@ void *ucall_arch_get_ucall(struct kvm_vcpu *vcpu)
 	    (run->s390_sieic.ipb >> 16) == 0x501) {
 		int reg = run->s390_sieic.ipa & 0xf;
 
-		return addr_gva2hva(vcpu->vm, run->s.regs.gprs[reg]);
+		if (vcpu->vm->use_ucall_pool)
+			return (void *)run->s.regs.gprs[reg];
+		else
+			return addr_gva2hva(vcpu->vm, run->s.regs.gprs[reg]);
 	}
 	return NULL;
 }
