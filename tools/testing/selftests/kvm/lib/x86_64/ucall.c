@@ -30,7 +30,11 @@ void *ucall_arch_get_ucall(struct kvm_vcpu *vcpu)
 		struct kvm_regs regs;
 
 		vcpu_regs_get(vcpu, &regs);
-		return addr_gva2hva(vcpu->vm, regs.rdi);
+
+		if (vcpu->vm->use_ucall_pool)
+			return (void *)regs.rdi;
+		else
+			return addr_gva2hva(vcpu->vm, regs.rdi);
 	}
 	return NULL;
 }

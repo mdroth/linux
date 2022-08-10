@@ -103,6 +103,8 @@ struct kvm_vm {
 	int stats_fd;
 	struct kvm_stats_header stats_header;
 	struct kvm_stats_desc *stats_desc;
+
+	bool use_ucall_pool;
 };
 
 
