@@ -68,6 +68,7 @@ struct userspace_mem_regions {
 /* Memory encryption policy/configuration. */
 struct vm_memcrypt {
 	bool enabled;
+	bool encrypted;
 	int8_t enc_by_default;
 	bool has_enc_bit;
 	int8_t enc_bit;
@@ -820,6 +821,8 @@ vm_paddr_t addr_arch_gva2gpa(struct kvm_vm *vm, vm_vaddr_t gva);
 
 static inline vm_paddr_t addr_gva2gpa(struct kvm_vm *vm, vm_vaddr_t gva)
 {
+	TEST_ASSERT(!vm->memcrypt.encrypted,
+		    "Encrypted guests have their page tables encrypted so gva2gpa conversions are not possible.");
 	return addr_arch_gva2gpa(vm, gva);
 }
 
