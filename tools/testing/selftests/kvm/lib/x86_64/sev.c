@@ -13,8 +13,6 @@
 #include "sev.h"
 
 #define PAGE_SHIFT		12
-#define CPUID_MEM_ENC_LEAF 0x8000001f
-#define CPUID_EBX_CBIT_MASK 0x3f
 
 struct sev_vm {
 	struct kvm_vm *vm;
@@ -157,8 +155,9 @@ static struct sev_vm *sev_vm_alloc(struct kvm_vm *vm)
 	sev->fd = sev_fd;
 	sev->vm = vm;
 
+	eax = CPUID_MEM_ENC_LEAF;
 	/* Get encryption bit via CPUID. */
-	cpuid(CPUID_MEM_ENC_LEAF, &eax, &ebx, &ecx, &edx);
+	cpuid(&eax, &ebx, &ecx, &edx);
 	sev->enc_bit = ebx & CPUID_EBX_CBIT_MASK;
 
 	return sev;
