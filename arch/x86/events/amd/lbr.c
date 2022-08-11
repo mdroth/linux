@@ -37,6 +37,9 @@
 	(LBR_JCC | LBR_REL_CALL | LBR_IND_CALL | LBR_RETURN |	\
 	 LBR_REL_JMP | LBR_IND_JMP | LBR_FAR)
 
+/* Freeze LBR on PMC Interrupt (FLBRI) bitmask in Debug Control register */
+static u64 dbg_ctl_lbr_freeze_mask __read_mostly;
+
 struct branch_entry {
 	union {
 		struct {
@@ -403,7 +406,7 @@ void amd_pmu_lbr_enable_all(void)
 	rdmsrl(MSR_IA32_DEBUGCTLMSR, dbg_ctl);
 	rdmsrl(MSR_AMD_DBG_EXTN_CFG, dbg_extn_cfg);
 
-	wrmsrl(MSR_IA32_DEBUGCTLMSR, dbg_ctl | DEBUGCTLMSR_FREEZE_LBRS_ON_PMI);
+	wrmsrl(MSR_IA32_DEBUGCTLMSR, dbg_ctl | dbg_ctl_lbr_freeze_mask);
 	wrmsrl(MSR_AMD_DBG_EXTN_CFG, dbg_extn_cfg | DBG_EXTN_CFG_LBRV2EN);
 }
 
@@ -419,12 +422,14 @@ void amd_pmu_lbr_disable_all(void)
 	rdmsrl(MSR_IA32_DEBUGCTLMSR, dbg_ctl);
 
 	wrmsrl(MSR_AMD_DBG_EXTN_CFG, dbg_extn_cfg & ~DBG_EXTN_CFG_LBRV2EN);
-	wrmsrl(MSR_IA32_DEBUGCTLMSR, dbg_ctl & ~DEBUGCTLMSR_FREEZE_LBRS_ON_PMI);
+	wrmsrl(MSR_IA32_DEBUGCTLMSR, dbg_ctl & ~dbg_ctl_lbr_freeze_mask);
 }
 
 __init int amd_pmu_lbr_init(void)
 {
 	union cpuid_0x80000022_ebx ebx;
+	u8 family, model, stepping;
+	u32 microcode;
 
 	if (x86_pmu.version < 2 || !boot_cpu_has(X86_FEATURE_AMD_LBR_V2))
 		return -EOPNOTSUPP;
@@ -432,6 +437,24 @@ __init int amd_pmu_lbr_init(void)
 	/* Set number of entries */
 	ebx.full = cpuid_ebx(EXT_PERFMON_DEBUG_FEATURES);
 	x86_pmu.lbr_nr = ebx.split.lbr_v2_stack_sz;
+
+	family = boot_cpu_data.x86;
+	model = boot_cpu_data.x86_model;
+	stepping = boot_cpu_data.x86_stepping;
+	microcode = boot_cpu_data.microcode;
+
+	/*
+	 * For Zen 4 processors, the position of the Freeze LBR on PMC
+	 * Interrupt (FLBRI) bit in the Debug Control register changes
+	 * based on processor revision and microcode version
+	 */
+	dbg_ctl_lbr_freeze_mask = DEBUGCTLMSR_FREEZE_PERFMON_ON_PMI;
+	if (family == 0x19 &&
+	    ((model == 0x11 && stepping == 0x0 && microcode >= 0x0a101010) ||	/* Genoa B0 */
+	     (model == 0x11 && stepping == 0x1 && microcode >= 0x0a101109) ||	/* Genoa B1 */
+	     (model == 0xa0 && stepping == 0x0 && microcode >= 0x0aa00006) ||	/* Bergamo A0 */
+	     (model == 0xa0 && stepping == 0x1 && microcode >= 0x0aa00100)))	/* Bergamo A1 */
+		dbg_ctl_lbr_freeze_mask = DEBUGCTLMSR_FREEZE_LBRS_ON_PMI;
 
 	pr_cont("%d-deep LBR, ", x86_pmu.lbr_nr);
 
