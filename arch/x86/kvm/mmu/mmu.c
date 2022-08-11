@@ -4354,7 +4354,7 @@ kvm_pfn_t kvm_mmu_map_tdp_page(struct kvm_vcpu *vcpu, gpa_t gpa,
 		.user = err & PFERR_USER_MASK,
 		.prefetch = false,
 		.is_tdp = likely(vcpu->arch.mmu->page_fault == kvm_tdp_page_fault),
-		.nx_huge_page_workaround_enabled = is_nx_huge_page_enabled(),
+		.nx_huge_page_workaround_enabled = is_nx_huge_page_enabled(vcpu->kvm),
 
 		.max_level = max_level,
 		.req_level = PG_LEVEL_4K,
