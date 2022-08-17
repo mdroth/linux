@@ -188,7 +188,7 @@ struct kvm_page_fault {
 
 	/* Derived from mmu and global state.  */
 	const bool is_tdp;
-	const bool is_private;
+	bool is_private;
 	const bool nx_huge_page_workaround_enabled;
 
 	/*

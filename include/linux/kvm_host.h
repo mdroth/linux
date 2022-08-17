@@ -327,6 +327,9 @@ struct kvm_vcpu {
 	u64 requests;
 	unsigned long guest_debug;
 
+	uint64_t priv_gfn;
+	uint64_t priv_pages;
+
 	struct mutex mutex;
 	struct kvm_run *run;
 
@@ -575,6 +578,7 @@ struct kvm_memory_slot {
 	gfn_t base_gfn;
 	unsigned long npages;
 	unsigned long *dirty_bitmap;
+	unsigned long *shared_bitmap;
 	struct kvm_arch_memory_slot arch;
 	unsigned long userspace_addr;
 	u32 flags;
@@ -597,6 +601,11 @@ static inline bool kvm_slot_dirty_track_enabled(const struct kvm_memory_slot *sl
 }
 
 static inline unsigned long kvm_dirty_bitmap_bytes(struct kvm_memory_slot *memslot)
+{
+	return ALIGN(memslot->npages, BITS_PER_LONG) / 8;
+}
+
+static inline unsigned long kvm_shared_bitmap_bytes(struct kvm_memory_slot *memslot)
 {
 	return ALIGN(memslot->npages, BITS_PER_LONG) / 8;
 }
@@ -794,6 +803,9 @@ struct kvm {
 	u32 dirty_ring_size;
 	bool vm_bugged;
 	bool vm_dead;
+#ifdef CONFIG_HAVE_KVM_PRIVATE_MEM_TESTING
+	bool vm_entry_attempted;
+#endif
 
 #ifdef CONFIG_HAVE_KVM_PM_NOTIFIER
 	struct notifier_block pm_notifier;

@@ -9575,6 +9575,46 @@ static int complete_hypercall_exit(struct kvm_vcpu *vcpu)
 	return kvm_skip_emulated_instruction(vcpu);
 }
 
+#ifdef CONFIG_HAVE_KVM_GUEST_PRIVATE_ACCESS_TRACKING
+static int kvm_update_guest_access_tracking(struct kvm *kvm, u64 attrs,
+					gfn_t gfn, u64 npages)
+{
+	int ret = 0;
+	struct kvm_memory_slot *memslot = gfn_to_memslot(kvm, gfn);
+
+	if (!memslot) {
+		pr_err("memslot doesn't exist for 0x%llx\n", gfn);
+		return -KVM_EINVAL;
+	}
+
+	mutex_lock(&kvm->slots_lock);
+	if (!kvm_slot_can_be_private(memslot)) {
+		pr_err("memslot not private for 0x%llx\n", gfn);
+		ret = -KVM_EINVAL;
+		goto err;
+	}
+
+	if (memslot->npages - (gfn - memslot->base_gfn) < npages) {
+		pr_err("memslot length insufficient for gfn 0x%llx pages 0x%llx\n",
+			gfn, npages);
+		ret = -KVM_EINVAL;
+		goto err;
+	}
+
+	if (attrs & KVM_MAP_GPA_RANGE_ENCRYPTED) {
+		bitmap_clear(memslot->shared_bitmap, (gfn - memslot->base_gfn),
+			npages);
+	} else {
+		bitmap_set(memslot->shared_bitmap, (gfn - memslot->base_gfn),
+			npages);
+	}
+
+err:
+	mutex_unlock(&kvm->slots_lock);
+	return ret;
+}
+#endif
+
 int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 {
 	unsigned long nr, a0, a1, a2, a3, ret;
@@ -9642,16 +9682,35 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 		break;
 	case KVM_HC_MAP_GPA_RANGE: {
 		u64 gpa = a0, npages = a1, attrs = a2;
+		bool exit_to_userspace = true;
+		gfn_t gfn;
 
 		ret = -KVM_ENOSYS;
 		if (!(vcpu->kvm->arch.hypercall_exit_enabled & (1 << KVM_HC_MAP_GPA_RANGE)))
 			break;
 
-		if (!PAGE_ALIGNED(gpa) || !npages ||
-		    gpa_to_gfn(gpa) + npages <= gpa_to_gfn(gpa)) {
+		gfn = gpa_to_gfn(gpa);
+		if (!PAGE_ALIGNED(gpa) || (gfn + npages < gfn) || !npages) {
 			ret = -KVM_EINVAL;
 			break;
 		}
+
+#ifdef CONFIG_HAVE_KVM_PRIVATE_MEM_TESTING
+		if (attrs & (KVM_MARK_GPA_RANGE_ENC_ACCESS | KVM_CLR_GPA_RANGE_ENC_ACCESS)) {
+			exit_to_userspace = false;
+			if (attrs & KVM_MARK_GPA_RANGE_ENC_ACCESS)
+				attrs |= KVM_MAP_GPA_RANGE_ENCRYPTED;
+		}
+#endif
+
+#ifdef CONFIG_HAVE_KVM_GUEST_PRIVATE_ACCESS_TRACKING
+		ret = kvm_update_guest_access_tracking(vcpu->kvm, attrs,
+				gfn, npages);
+		if (ret)
+			break;
+#endif
+		if (!exit_to_userspace)
+			break;
 
 		vcpu->run->exit_reason        = KVM_EXIT_HYPERCALL;
 		vcpu->run->hypercall.nr       = KVM_HC_MAP_GPA_RANGE;
@@ -10607,6 +10666,10 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 	}
 
 	preempt_disable();
+
+#ifdef CONFIG_HAVE_KVM_PRIVATE_MEM_TESTING
+	vcpu->kvm->vm_entry_attempted = true;
+#endif
 
 	static_call(kvm_x86_prepare_switch_to_guest)(vcpu);
 

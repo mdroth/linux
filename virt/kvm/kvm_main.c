@@ -972,6 +972,51 @@ static void kvm_unmap_mem_range(struct kvm *kvm, gfn_t start, gfn_t end,
 		kvm_flush_remote_tlbs(kvm);
 }
 
+#ifdef CONFIG_HAVE_KVM_PRIVATE_MEM_TESTING
+static int kvm_vm_populate_private_mem(struct kvm *kvm, unsigned long gfn_start,
+	unsigned long gfn_end)
+{
+	gfn_t gfn;
+	int ret = 0;
+	kvm_pfn_t pfn;
+	struct kvm_memory_slot *memslot = gfn_to_memslot(kvm, gfn_start);
+
+	if (!memslot || !kvm_slot_can_be_private(memslot)) {
+		pr_err("Private memslot not registered for gfn 0x%lx\n",
+			gfn_start);
+		return -EINVAL;
+	}
+
+	mutex_lock(&kvm->slots_lock);
+	for (gfn = gfn_start; gfn < gfn_end; gfn++) {
+		int order;
+		void *kvaddr;
+
+		ret = kvm_restricted_mem_get_pfn(memslot, gfn, &pfn, &order);
+		if (ret) {
+			pr_err("pfn not found for 0x%llx\n", gfn);
+			goto err_ret;
+		}
+
+		kvaddr = pfn_to_kaddr(pfn);
+		if (!virt_addr_valid(kvaddr)) {
+			pr_err("Invalid kvaddr 0x%llx\n", (uint64_t)kvaddr);
+			ret = -EINVAL;
+			goto err_ret;
+		}
+
+		ret = kvm_read_guest_page(kvm, gfn, kvaddr, 0, PAGE_SIZE);
+		if (ret) {
+			pr_err("guest read failed 0x%x\n", ret);
+			goto err_ret;
+		}
+	}
+err_ret:
+	mutex_unlock(&kvm->slots_lock);
+	return ret;
+}
+#endif
+
 static int kvm_vm_ioctl_set_mem_attr(struct kvm *kvm, gpa_t gpa, gpa_t size,
 				     bool is_private)
 {
@@ -1015,7 +1060,12 @@ static int kvm_vm_ioctl_set_mem_attr(struct kvm *kvm, gpa_t gpa, gpa_t size,
 
 	kvm_unmap_mem_range(kvm, start, end, attr);
 
+#ifdef CONFIG_HAVE_KVM_PRIVATE_MEM_TESTING
+	if (!kvm->vm_entry_attempted && is_private)
+		r = kvm_vm_populate_private_mem(kvm, start, end);
+#endif
 	goto ret;
+
 err:
 	for (; i > start; i--)
 		xa_erase(&kvm->mem_attr_array, i);
@@ -1174,12 +1224,22 @@ static void kvm_destroy_dirty_bitmap(struct kvm_memory_slot *memslot)
 	memslot->dirty_bitmap = NULL;
 }
 
+static void kvm_destroy_shared_bitmap(struct kvm_memory_slot *memslot)
+{
+	if (!memslot->shared_bitmap)
+		return;
+
+	kvfree(memslot->shared_bitmap);
+	memslot->shared_bitmap = NULL;
+}
+
 /* This does not remove the slot from struct kvm_memslots data structures */
 static void kvm_free_memslot(struct kvm *kvm, struct kvm_memory_slot *slot)
 {
 	if (slot->flags & KVM_MEM_PRIVATE) {
 		kvm_restrictedmem_unregister(slot);
 		fput(slot->restricted_file);
+		kvm_destroy_shared_bitmap(slot);
 	}
 
 	kvm_destroy_dirty_bitmap(slot);
@@ -1615,6 +1675,19 @@ static int kvm_alloc_dirty_bitmap(struct kvm_memory_slot *memslot)
 	return 0;
 }
 
+#ifdef CONFIG_HAVE_KVM_GUEST_PRIVATE_ACCESS_TRACKING
+static int kvm_alloc_shared_bitmap(struct kvm_memory_slot *memslot)
+{
+	unsigned long bitmap_bytes = kvm_shared_bitmap_bytes(memslot);
+
+	memslot->shared_bitmap = __vcalloc(2, bitmap_bytes, GFP_KERNEL_ACCOUNT);
+	if (!memslot->shared_bitmap)
+		return -ENOMEM;
+
+	return 0;
+}
+#endif
+
 static struct kvm_memslots *kvm_get_inactive_memslots(struct kvm *kvm, int as_id)
 {
 	struct kvm_memslots *active = __kvm_memslots(kvm, as_id);
@@ -1750,7 +1823,11 @@ static void kvm_replace_memslot(struct kvm *kvm,
 
 bool __weak kvm_arch_has_private_mem(struct kvm *kvm)
 {
+#ifdef CONFIG_HAVE_KVM_PRIVATE_MEM_TESTING
+	return true;
+#else
 	return false;
+#endif
 }
 
 static int check_memory_region_flags(struct kvm *kvm,
@@ -1838,8 +1915,15 @@ static int kvm_prepare_memory_region(struct kvm *kvm,
 {
 	int r;
 
-	if (change == KVM_MR_CREATE && new->flags & KVM_MEM_PRIVATE)
+	if (change == KVM_MR_CREATE && new->flags & KVM_MEM_PRIVATE) {
 		kvm_restrictedmem_register(new);
+#ifdef CONFIG_HAVE_KVM_GUEST_PRIVATE_ACCESS_TRACKING
+		r = kvm_alloc_shared_bitmap(new);
+		if (r)
+			return r;
+#endif
+		kvm_restrictedmem_register(new);
+	}
 
 	/*
 	 * If dirty logging is disabled, nullify the bitmap; the old bitmap
@@ -1869,8 +1953,10 @@ static int kvm_prepare_memory_region(struct kvm *kvm,
 	if (r && new && new->dirty_bitmap && (!old || !old->dirty_bitmap))
 		kvm_destroy_dirty_bitmap(new);
 
-	if (r && change == KVM_MR_CREATE && new->flags & KVM_MEM_PRIVATE)
+	if (r && change == KVM_MR_CREATE && new->flags & KVM_MEM_PRIVATE) {
 		kvm_restrictedmem_unregister(new);
+		kvm_destroy_shared_bitmap(new);
+	}
 
 	return r;
 }
