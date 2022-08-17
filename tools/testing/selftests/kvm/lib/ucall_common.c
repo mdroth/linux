@@ -11,6 +11,7 @@ struct ucall_header {
 
 static bool use_ucall_pool;
 static struct ucall_header *ucall_pool;
+static vm_paddr_t ucall_page_paddr;
 
 void ucall_init(struct kvm_vm *vm, void *arg)
 {
@@ -35,7 +36,10 @@ void ucall_init(struct kvm_vm *vm, void *arg)
 	}
 
 	ucall_pool = (struct ucall_header *)vaddr;
+	ucall_page_paddr = addr_gva2gpa(vm, vaddr);
 	sync_global_to_guest(vm, ucall_pool);
+	sync_global_to_guest(vm, ucall_page_paddr);
+	printf("ucall_page_paddr 0x%lx\n", ucall_page_paddr);
 
 out:
 	ucall_arch_init(vm, arg);
@@ -52,6 +56,14 @@ void ucall_uninit(struct kvm_vm *vm)
 	}
 
 	ucall_arch_uninit(vm);
+}
+
+vm_paddr_t get_ucall_pool_paddr(void)
+{
+	if (!use_ucall_pool)
+		return 0;
+
+	return ucall_page_paddr;
 }
 
 static struct ucall *ucall_alloc(void)
