@@ -1213,10 +1213,21 @@ uint64_t kvm_hypercall(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
 		       uint64_t a3)
 {
 	uint64_t r;
+	static bool is_cpu_checked;
+	static bool is_cpu_amd;
 
-	asm volatile("vmcall"
+	if (!is_cpu_checked)
+		is_cpu_amd = is_amd_cpu();
+
+	if (is_cpu_amd) {
+		asm volatile("vmmcall"
 		     : "=a"(r)
 		     : "a"(nr), "b"(a0), "c"(a1), "d"(a2), "S"(a3));
+	} else {
+		asm volatile("vmcall"
+		     : "=a"(r)
+		     : "a"(nr), "b"(a0), "c"(a1), "d"(a2), "S"(a3));
+	}
 	return r;
 }
 
