@@ -30,7 +30,10 @@ typedef uint64_t vm_paddr_t; /* Virtual Machine (Guest) physical address */
 typedef uint64_t vm_vaddr_t; /* Virtual Machine (Guest) virtual address */
 
 struct userspace_mem_region {
-	struct kvm_userspace_memory_region region;
+	union {
+		struct kvm_userspace_memory_region region;
+		struct kvm_userspace_memory_region_ext region_ext;
+	};
 	struct sparsebit *unused_phy_pages;
 	struct sparsebit *encrypted_phy_pages;
 	int fd;
@@ -207,7 +210,7 @@ static inline bool kvm_has_cap(long cap)
 
 #define kvm_do_ioctl(fd, cmd, arg)						\
 ({										\
-	static_assert(!_IOC_SIZE(cmd) || sizeof(*arg) == _IOC_SIZE(cmd), "");	\
+	static_assert(!_IOC_SIZE(cmd) || sizeof(*arg) >= _IOC_SIZE(cmd), "");	\
 	ioctl(fd, cmd, arg);							\
 })
 
@@ -395,6 +398,7 @@ void vm_userspace_mem_region_add(struct kvm_vm *vm,
 void vm_mem_region_set_flags(struct kvm_vm *vm, uint32_t slot, uint32_t flags);
 void vm_mem_region_move(struct kvm_vm *vm, uint32_t slot, uint64_t new_gpa);
 void vm_mem_region_delete(struct kvm_vm *vm, uint32_t slot);
+
 struct kvm_vcpu *__vm_vcpu_add(struct kvm_vm *vm, uint32_t vcpu_id);
 vm_vaddr_t vm_vaddr_alloc(struct kvm_vm *vm, size_t sz, vm_vaddr_t vaddr_min);
 vm_vaddr_t vm_vaddr_alloc_shared(struct kvm_vm *vm, size_t sz, vm_vaddr_t vaddr_min);
@@ -722,6 +726,10 @@ vm_adjust_num_guest_pages(enum vm_guest_mode mode, unsigned int num_guest_pages)
 
 struct kvm_userspace_memory_region *
 kvm_userspace_memory_region_find(struct kvm_vm *vm, uint64_t start,
+				 uint64_t end);
+
+struct kvm_userspace_memory_region_ext *
+kvm_userspace_memory_region_ext_find(struct kvm_vm *vm, uint64_t start,
 				 uint64_t end);
 
 #define sync_global_to_guest(vm, g) ({				\

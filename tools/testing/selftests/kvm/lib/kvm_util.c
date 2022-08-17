@@ -17,6 +17,7 @@
 #include <unistd.h>
 #include <linux/kernel.h>
 
+#define MFD_INACCESSIBLE  0x0008U
 #define KVM_UTIL_MIN_PFN	2
 
 static int vcpu_mmap_sz(void);
@@ -520,6 +521,35 @@ __weak void vcpu_arch_free(struct kvm_vcpu *vcpu)
 }
 
 /*
+ * KVM Userspace Memory Region Ext Find
+ *
+ * Input Args:
+ *   vm - Virtual Machine
+ *   start - Starting VM physical address
+ *   end - Ending VM physical address, inclusive.
+ *
+ * Output Args: None
+ *
+ * Return:
+ *   Pointer to overlapping ext region, NULL if no such region.
+ *
+ * Public interface to userspace_mem_region_find. Allows tests to look up
+ * the memslot datastructure for a given range of guest physical memory.
+ */
+struct kvm_userspace_memory_region_ext *
+kvm_userspace_memory_region_ext_find(struct kvm_vm *vm, uint64_t start,
+				 uint64_t end)
+{
+	struct userspace_mem_region *region;
+
+	region = userspace_mem_region_find(vm, start, end);
+	if (!region)
+		return NULL;
+
+	return &region->region_ext;
+}
+
+/*
  * VM VCPU Remove
  *
  * Input Args:
@@ -819,6 +849,7 @@ void vm_userspace_mem_region_add(struct kvm_vm *vm,
 	struct userspace_mem_region *region;
 	size_t backing_src_pagesz = get_backing_src_pagesz(src_type);
 	size_t alignment;
+	int priv_memfd = -1;
 
 	TEST_ASSERT(vm_adjust_num_guest_pages(vm->mode, npages) == npages,
 		"Number of guest pages is not compatible with the host. "
@@ -924,6 +955,11 @@ void vm_userspace_mem_region_add(struct kvm_vm *vm,
 			    vm_mem_backing_src_alias(src_type)->name);
 	}
 
+	if (flags & KVM_MEM_PRIVATE) {
+		priv_memfd = memfd_create("vm_private_mem_", MFD_INACCESSIBLE);
+		TEST_ASSERT(priv_memfd != -1, "Failed to create private memfd");
+	}
+
 	region->unused_phy_pages = sparsebit_alloc();
 	region->encrypted_phy_pages = sparsebit_alloc();
 	sparsebit_set_num(region->unused_phy_pages,
@@ -933,7 +969,9 @@ void vm_userspace_mem_region_add(struct kvm_vm *vm,
 	region->region.guest_phys_addr = guest_paddr;
 	region->region.memory_size = npages * vm->page_size;
 	region->region.userspace_addr = (uintptr_t) region->host_mem;
-	ret = __vm_ioctl(vm, KVM_SET_USER_MEMORY_REGION, &region->region);
+	region->region_ext.private_fd = priv_memfd;
+	region->region_ext.private_offset = 0;
+	ret = ioctl(vm->fd, KVM_SET_USER_MEMORY_REGION, &region->region_ext);
 	TEST_ASSERT(ret == 0, "KVM_SET_USER_MEMORY_REGION IOCTL failed,\n"
 		"  rc: %i errno: %i\n"
 		"  slot: %u flags: 0x%x\n"
