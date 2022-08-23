@@ -278,7 +278,7 @@ void execute_vm_with_private_mem(struct vm_setup_info *info)
 
 	test_area_size = test_info->test_area_size;
 	test_area_gpa = test_info->test_area_gpa;
-	vm_userspace_mem_region_add(vm, info->vm_mem_src, test_area_gpa,
+	vm_userspace_mem_region_add(vm, test_info->test_area_mem_src, test_area_gpa,
 		test_info->test_area_slot, test_area_size / vm->page_size,
 		KVM_MEM_PRIVATE);
 	vm_update_private_mem(vm, test_area_gpa, test_area_size, ALLOCATE_MEM);

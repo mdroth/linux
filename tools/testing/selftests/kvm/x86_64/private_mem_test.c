@@ -243,6 +243,7 @@ static void execute_memory_conversion_test(void)
 	test_info->test_area_gpa = TEST_AREA_GPA;
 	test_info->test_area_size = TEST_AREA_SIZE;
 	test_info->test_area_slot = TEST_AREA_SLOT;
+	test_info->test_area_mem_src = VM_MEM_SRC_ANONYMOUS;
 	info.ioexit_cb = conv_test_ioexit_fn;
 
 	info.guest_fn = guest_explicit_conv_test_fn;

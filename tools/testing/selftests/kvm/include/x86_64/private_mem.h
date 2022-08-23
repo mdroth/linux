@@ -36,6 +36,7 @@ struct test_setup_info {
 	uint64_t test_area_gpa;
 	uint64_t test_area_size;
 	uint32_t test_area_slot;
+	uint32_t test_area_mem_src;
 };
 
 struct vm_setup_info {
