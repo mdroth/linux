@@ -970,6 +970,8 @@ int kvm_init(void *opaque, unsigned vcpu_size, unsigned vcpu_align,
 void kvm_exit(void);
 
 void kvm_get_kvm(struct kvm *kvm);
+int kvm_vm_set_region_attr(struct kvm *kvm, unsigned long gfn_start,
+	unsigned long gfn_end, bool priv_attr);
 bool kvm_get_kvm_safe(struct kvm *kvm);
 void kvm_put_kvm(struct kvm *kvm);
 bool file_is_kvm(struct file *file);
