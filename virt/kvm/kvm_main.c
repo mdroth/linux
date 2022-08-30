@@ -692,6 +692,7 @@ e_ret:
 
 	return ret;
 }
+EXPORT_SYMBOL_GPL(kvm_vm_do_hva_range_op);
 
 static __always_inline int kvm_handle_hva_range(struct mmu_notifier *mn,
 						unsigned long start,
@@ -1027,12 +1028,30 @@ err_ret:
 }
 #endif
 
+int kvm_vm_set_region_attr(struct kvm *kvm, unsigned long gfn_start,
+	unsigned long gfn_end, bool is_private)
+{
+	int r;
+	void *entry;
+	unsigned long index;
+
+	entry = is_private ? NULL : xa_mk_value(KVM_MEM_ATTR_SHARED);
+
+	for (index = gfn_start; index < gfn_end; index++) {
+		r = xa_err(xa_store(&kvm->mem_attr_array, index, entry,
+				    GFP_KERNEL_ACCOUNT));
+		if (r)
+			break;
+	}
+
+	return r;
+}
+EXPORT_SYMBOL_GPL(kvm_vm_set_region_attr);
+
 static int kvm_vm_ioctl_set_mem_attr(struct kvm *kvm, gpa_t gpa, gpa_t size,
 				     bool is_private)
 {
-	gfn_t start, end;
-	unsigned long index;
-	void *entry;
+	gfn_t start, end, index;
 	int attr;
 	int r;
 
@@ -1048,33 +1067,22 @@ static int kvm_vm_ioctl_set_mem_attr(struct kvm *kvm, gpa_t gpa, gpa_t size,
 	 * Guest memory defaults to private, kvm->mem_attr_array only stores
 	 * shared memory.
 	 */
-	if (is_private) {
-		attr = KVM_MEM_ATTR_PRIVATE;
-		entry = NULL;
-	} else {
-		attr = KVM_MEM_ATTR_SHARED;
-		entry = xa_mk_value(KVM_MEM_ATTR_SHARED);
-	}
+	attr = is_private ? KVM_MEM_ATTR_PRIVATE : KVM_MEM_ATTR_SHARED;
 
-	for (index = start; index < end; index++) {
-		r = xa_err(xa_store(&kvm->mem_attr_array, index, entry,
-				    GFP_KERNEL_ACCOUNT));
-		if (r)
-			goto err;
-	}
+	r = kvm_vm_set_region_attr(kvm, start, end, is_private);
 
 	kvm_zap_gfn_range(kvm, start, end);
 	kvm_arch_update_mem_attr(kvm, attr, start, end);
 
 #ifdef CONFIG_HAVE_KVM_PRIVATE_MEM_TESTING
-	if (!kvm->vm_entry_attempted && is_private)
+	if (!r && !kvm->vm_entry_attempted && is_private)
 		r = kvm_vm_populate_private_mem(kvm, start, end);
 #endif
 
-	return r;
-err:
-	for (; index > start; index--)
-		xa_erase(&kvm->mem_attr_array, index);
+	if (r) {
+		for (index = start; index < end; index++)
+			xa_erase(&kvm->mem_attr_array, index);
+	}
 	return r;
 }
 
@@ -2755,6 +2763,7 @@ unsigned long gfn_to_hva_memslot_prot(struct kvm_memory_slot *slot,
 
 	return hva;
 }
+EXPORT_SYMBOL_GPL(gfn_to_hva_memslot_prot);
 
 unsigned long gfn_to_hva_prot(struct kvm *kvm, gfn_t gfn, bool *writable)
 {
