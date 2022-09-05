@@ -79,6 +79,10 @@ extern void vc_no_ghcb(void);
 extern void vc_boot_ghcb(void);
 extern bool handle_vc_boot_ghcb(struct pt_regs *regs);
 
+/* RMPUPDATE/PSMASH failure codes */
+#define RMPUPDATE_FAIL_INUSE		3
+#define PSMASH_FAIL_INUSE		3
+
 /* Software defined (when rFlags.CF = 1) */
 #define PVALIDATE_FAIL_NOUPDATE		255
 
