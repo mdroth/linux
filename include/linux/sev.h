@@ -8,8 +8,11 @@
 #ifndef __LINUX_SEV_H
 #define __LINUX_SEV_H
 
+#define RMPUPDATE_FAIL_INUSE		3
 /* RMUPDATE detected 4K page and 2MB page overlap. */
 #define RMPUPDATE_FAIL_OVERLAP		7
+
+#define PSMASH_FAIL_INUSE		3
 
 #ifdef CONFIG_AMD_MEM_ENCRYPT
 int snp_lookup_rmpentry(u64 pfn, int *level);
