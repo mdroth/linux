@@ -1184,6 +1184,113 @@ bool fault_in_kernel_space(unsigned long address)
 	return address >= TASK_SIZE_MAX;
 }
 
+static inline size_t pages_per_hpage(int level)
+{
+	return page_level_size(level) / PAGE_SIZE;
+}
+
+#define RMPUPDATE_FAIL_INUSE           3
+#define PSMASH_FAIL_INUSE              3
+
+/*
+ * Check if the fault address corresponds to a page that's marked as private
+ * in the RMP table. If so, then a guest may have changed a shared page to
+ * private while the kernel was attempting to access it. This is undefined
+ * behavior on the part of the guest, so switch the page back to the state
+ * the kernel expects and let the kernel retry. This will unset the validated
+ * bit in the RMP table, so the guest will be made aware and have a chance to
+ * terminate itself.
+ *
+ * Note: this is currently called even when the X86_PF_RMP flag isn't set,
+ * since marking a page as private in the RMP table is also accompanied by the
+ * removal of its mapping from the directmap. As such, a #PF for these direct
+ * map entries will likely be triggered first due to the page not being found
+ * rather than an RMP violation. There is however a small window where a #PF
+ * might occur just before removal from directmap, in which case this will be
+ * called due to X86_PF_RMP fault. This function will resolve both of those
+ * fault conditions.
+ *
+ * Returns true if RMP fault was potentially resolved, false otherwise.
+ */
+static bool handle_kern_rmp_page_fault(struct pt_regs *regs, unsigned long error_code,
+				       unsigned long address)
+{
+	int level, rmp_level, ret;
+	u64 pfn;
+
+	if (is_vmalloc_addr((void *)address)) {
+		pgd_t *pgd;
+		pte_t *pte;
+
+		pgd = __va(read_cr3_pa());
+		pgd += pgd_index(address);
+
+		pte = lookup_address_in_pgd(pgd, address, &level);
+
+		/*
+		 * This can happen if there was a race between an unmap event and
+		 * the RMP fault delivery.
+		 */
+		if (!pte || !pte_present(*pte))
+			return false;
+
+		pfn = pte_pfn(*pte);
+
+		/*
+		 * RMP table entries cover a max physical address range of 2M. So
+		 * for a host page mapped as 1GB+, the address bits that identify
+		 * the specific 2M range are still needed.
+		 */
+		if (level > PG_LEVEL_2M) {
+			unsigned long mask;
+
+			mask = ~(pages_per_hpage(PG_LEVEL_2M) - 1);
+			pfn |= (address >> PAGE_SHIFT) & mask;
+		}
+	} else {
+		pfn = __pa(address) >> PAGE_SHIFT;
+		level = PG_LEVEL_4K;
+	}
+
+	/* If page isn't assigned/private, nothing to do here. Fall through. */
+	ret = snp_lookup_rmpentry(pfn, &rmp_level);
+	if (!ret)
+		return false;
+
+	pr_warn_ratelimited("Address 0x%lx PFN 0x%llx (level %d) is private in RMP table (level %d), making it shared\n",
+			    address, pfn, level, rmp_level);
+
+	/* Split the RMP mapping if it's larger than the faulting page. */
+	if (rmp_level == PG_LEVEL_2M && level == PG_LEVEL_4K) {
+		u64 pfn_huge = pfn & ~(pages_per_hpage(PG_LEVEL_2M) - 1);
+
+		/*
+		 * Make sure to retry to avoid a scenario where a guest
+		 * generates another shared/private conversion to cause
+		 * PSMASH to fail and sabotage host recovery.
+		 */
+		do {
+			ret = psmash(pfn_huge);
+		} while (ret == PSMASH_FAIL_INUSE);
+
+		if (ret) {
+			pr_err("Failed to PSMASH RMP entry for address 0x%lx: %d\n",
+			       address, ret);
+			goto out_bad;
+		}
+	}
+
+	do {
+		ret = rmp_make_shared(pfn, level);
+	} while (ret == RMPUPDATE_FAIL_INUSE);
+	if (!ret)
+		return true;
+
+out_bad:
+	pr_err("Unable to fix up RMP entry for PFN 0x%llx\n", pfn);
+	return false;
+}
+
 /*
  * Called for all faults where 'address' is part of the kernel address
  * space.  Might get called for faults that originate from *code* that
@@ -1240,6 +1347,9 @@ do_kern_addr_fault(struct pt_regs *regs, unsigned long hw_error_code,
 
 	/* kprobes don't want to hook the spurious faults: */
 	if (WARN_ON_ONCE(kprobe_page_fault(regs, X86_TRAP_PF)))
+		return;
+
+	if (handle_kern_rmp_page_fault(regs, hw_error_code, address))
 		return;
 
 	/*
