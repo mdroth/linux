@@ -4999,6 +4999,11 @@ unlock:
 static int handle_split_page_fault(struct vm_fault *vmf)
 {
 	__split_huge_pmd(vmf->vma, vmf->pmd, vmf->address, false, NULL);
+	/*
+	 * Install a PTE immediately to ensure that any other pages in
+	 * this 2MB region are brought back in as 4K pages.
+	 */
+	__pte_alloc(vmf->vma->vm_mm, vmf->pmd);
 	return 0;
 }
 
