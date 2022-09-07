@@ -254,6 +254,10 @@ static const struct kernfs_ops kf_mondata_ops = {
 	.seq_show		= rdtgroup_mondata_show,
 };
 
+static const struct kernfs_ops kf_mondata_config_ops = {
+	.atomic_write_len       = PAGE_SIZE,
+};
+
 static bool is_cpu_list(struct kernfs_open_file *of)
 {
 	struct rftype *rft = of->kn->priv;
@@ -2478,22 +2482,38 @@ static struct file_system_type rdt_fs_type = {
 	.kill_sb		= rdt_kill_sb,
 };
 
-static int mon_addfile(struct kernfs_node *parent_kn, const char *name,
+static int mon_addfile(struct kernfs_node *parent_kn, struct mon_evt *mevt,
 		       void *priv)
 {
-	struct kernfs_node *kn;
+	struct kernfs_node *kn_evt, *kn_evt_config;
 	int ret = 0;
 
-	kn = __kernfs_create_file(parent_kn, name, 0444,
-				  GLOBAL_ROOT_UID, GLOBAL_ROOT_GID, 0,
-				  &kf_mondata_ops, priv, NULL, NULL);
-	if (IS_ERR(kn))
-		return PTR_ERR(kn);
+	kn_evt = __kernfs_create_file(parent_kn, mevt->name, 0444,
+			GLOBAL_ROOT_UID, GLOBAL_ROOT_GID, 0,
+			&kf_mondata_ops, priv, NULL, NULL);
+	if (IS_ERR(kn_evt))
+		return PTR_ERR(kn_evt);
 
-	ret = rdtgroup_kn_set_ugid(kn);
+	ret = rdtgroup_kn_set_ugid(kn_evt);
 	if (ret) {
-		kernfs_remove(kn);
+		kernfs_remove(kn_evt);
 		return ret;
+	}
+
+	if (mevt->configurable) {
+		kn_evt_config = __kernfs_create_file(parent_kn,
+				mevt->config_name, 0644,
+				GLOBAL_ROOT_UID, GLOBAL_ROOT_GID, 0,
+				&kf_mondata_config_ops, priv, NULL, NULL);
+		if (IS_ERR(kn_evt_config))
+			return PTR_ERR(kn_evt_config);
+
+		ret = rdtgroup_kn_set_ugid(kn_evt_config);
+		if (ret) {
+			kernfs_remove(kn_evt_config);
+			kernfs_remove(kn_evt);
+			return ret;
+		}
 	}
 
 	return ret;
@@ -2550,7 +2570,7 @@ static int mkdir_mondata_subdir(struct kernfs_node *parent_kn,
 	priv.u.domid = d->id;
 	list_for_each_entry(mevt, &r->evt_list, list) {
 		priv.u.evtid = mevt->evtid;
-		ret = mon_addfile(kn, mevt->name, priv.priv);
+		ret = mon_addfile(kn, mevt, priv.priv);
 		if (ret)
 			goto out_destroy;
 
