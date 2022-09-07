@@ -656,11 +656,13 @@ static struct mon_evt llc_occupancy_event = {
 static struct mon_evt mbm_total_event = {
 	.name		= "mbm_total_bytes",
 	.evtid		= QOS_L3_MBM_TOTAL_EVENT_ID,
+	.config_name	= "mbm_total_config",
 };
 
 static struct mon_evt mbm_local_event = {
 	.name		= "mbm_local_bytes",
 	.evtid		= QOS_L3_MBM_LOCAL_EVENT_ID,
+	.config_name	= "mbm_local_config",
 };
 
 /*
@@ -682,7 +684,7 @@ static void l3_mon_evt_init(struct rdt_resource *r)
 		list_add_tail(&mbm_local_event.list, &r->evt_list);
 }
 
-int rdt_get_mon_l3_config(struct rdt_resource *r)
+int rdt_get_mon_l3_config(struct rdt_resource *r, bool configurable)
 {
 	unsigned int mbm_offset = boot_cpu_data.x86_cache_mbm_width_offset;
 	struct rdt_hw_resource *hw_res = resctrl_to_arch_res(r);
@@ -713,6 +715,11 @@ int rdt_get_mon_l3_config(struct rdt_resource *r)
 	ret = dom_data_init(r);
 	if (ret)
 		return ret;
+
+	if (configurable) {
+		mbm_total_event.configurable = true;
+		mbm_local_event.configurable = true;
+	}
 
 	l3_mon_evt_init(r);
 
