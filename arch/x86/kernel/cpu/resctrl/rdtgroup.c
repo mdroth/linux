@@ -254,8 +254,85 @@ static const struct kernfs_ops kf_mondata_ops = {
 	.seq_show		= rdtgroup_mondata_show,
 };
 
+struct mon_config_info {
+	u32 evtid;
+	u32 mon_config;
+};
+
+/*
+ * This is called via IPI to read the CQM/MBM counters
+ * in a domain.
+ */
+void mon_event_config_read(void *info)
+{
+	struct mon_config_info *mon_info = info;
+	u32 h, msr_index;
+
+	switch (mon_info->evtid) {
+	case QOS_L3_MBM_TOTAL_EVENT_ID:
+		msr_index = 0;
+		break;
+	case QOS_L3_MBM_LOCAL_EVENT_ID:
+		msr_index = 1;
+		break;
+	default:
+		/* Not expected to come here */
+		return;
+	}
+
+	rdmsr(MSR_IA32_EVT_CFG_BASE + msr_index, mon_info->mon_config, h);
+}
+
+void mondata_config_read(struct rdt_domain *d, struct mon_config_info *mon_info)
+{
+	smp_call_function_any(&d->cpu_mask, mon_event_config_read, mon_info, 1);
+}
+
+int rdtgroup_mondata_config_show(struct seq_file *m, void *arg)
+{
+	struct kernfs_open_file *of = m->private;
+	struct mon_config_info mon_info;
+	struct rdt_hw_resource *hw_res;
+	u32 resid, evtid, domid;
+	struct rdtgroup *rdtgrp;
+	struct rdt_resource *r;
+	union mon_data_bits md;
+	struct rdt_domain *d;
+	int ret = 0;
+
+	rdtgrp = rdtgroup_kn_lock_live(of->kn);
+	if (!rdtgrp) {
+		ret = -ENOENT;
+		goto out;
+	}
+
+	md.priv = of->kn->priv;
+	resid = md.u.rid;
+	domid = md.u.domid;
+	evtid = md.u.evtid;
+
+	hw_res = &rdt_resources_all[resid];
+	r = &hw_res->r_resctrl;
+
+	d = rdt_find_domain(r, domid, NULL);
+	if (IS_ERR_OR_NULL(d)) {
+		ret = -ENOENT;
+		goto out;
+	}
+
+	mon_info.evtid = evtid;
+	mondata_config_read(d, &mon_info);
+
+	seq_printf(m, "0x%x\n", mon_info.mon_config);
+
+out:
+	rdtgroup_kn_unlock(of->kn);
+	return ret;
+}
+
 static const struct kernfs_ops kf_mondata_config_ops = {
 	.atomic_write_len       = PAGE_SIZE,
+	.seq_show               = rdtgroup_mondata_config_show,
 };
 
 static bool is_cpu_list(struct kernfs_open_file *of)
