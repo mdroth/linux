@@ -330,9 +330,121 @@ out:
 	return ret;
 }
 
+/*
+ * This is called via IPI to read the CQM/MBM counters
+ * in a domain.
+ */
+void mon_event_config_write(void *info)
+{
+	struct mon_config_info *mon_info = info;
+	u32 msr_index;
+
+	switch (mon_info->evtid) {
+	case QOS_L3_MBM_TOTAL_EVENT_ID:
+		msr_index = 0;
+		break;
+	case QOS_L3_MBM_LOCAL_EVENT_ID:
+		msr_index = 1;
+		break;
+	default:
+		/* Not expected to come here */
+		return;
+	}
+
+	wrmsr(MSR_IA32_EVT_CFG_BASE + msr_index, mon_info->mon_config, 0);
+}
+
+ssize_t  rdtgroup_mondata_config_write(struct kernfs_open_file *of,
+				       char *buf, size_t nbytes, loff_t off)
+{
+	struct mon_config_info mon_info;
+	struct rdt_hw_resource *hw_res;
+	struct rdtgroup *rdtgrp;
+	struct rdt_resource *r;
+	unsigned int mon_config;
+	cpumask_var_t cpu_mask;
+	union mon_data_bits md;
+	struct rdt_domain *d;
+	u32 resid, domid;
+	int ret = 0, cpu;
+
+	ret = kstrtouint(buf, 0, &mon_config);
+	if (ret)
+		return ret;
+
+	rdt_last_cmd_clear();
+
+	/* mon_config cannot be more than the supported set of events */
+	if (mon_config > MAX_EVT_CONFIG_BITS) {
+		rdt_last_cmd_puts("Invalid event configuration\n");
+		return -EINVAL;
+	}
+
+	cpus_read_lock();
+	rdtgrp = rdtgroup_kn_lock_live(of->kn);
+	if (!rdtgrp) {
+		return -ENOENT;
+		goto e_unlock;
+	}
+
+	if (!zalloc_cpumask_var(&cpu_mask, GFP_KERNEL)) {
+		ret = -ENOMEM;
+		goto e_unlock;
+	}
+
+	md.priv = of->kn->priv;
+	resid = md.u.rid;
+	domid = md.u.domid;
+
+	hw_res = &rdt_resources_all[resid];
+	r = &hw_res->r_resctrl;
+	d = rdt_find_domain(r, domid, NULL);
+	if (IS_ERR_OR_NULL(d)) {
+		ret = -ENOENT;
+		goto e_cpumask;
+	}
+
+	/*
+	 * Read the current config value first. If both are same
+	 * then we dont need to write again
+	 */
+	mon_info.evtid = md.u.evtid;
+	mondata_config_read(d, &mon_info);
+	if (mon_info.mon_config == mon_config)
+		goto e_cpumask;
+
+	mon_info.mon_config = mon_config;
+
+	/* Pick all the CPUs in the domain instance */
+	for_each_cpu(cpu, &d->cpu_mask)
+		cpumask_set_cpu(cpu, cpu_mask);
+
+	/* Update MSR_IA32_EVT_CFG_BASE MSR on all the CPUs in cpu_mask */
+	on_each_cpu_mask(cpu_mask, mon_event_config_write, &mon_info, 1);
+
+	/*
+	 * When an Event Configuration is changed, the bandwidth counters
+	 * for all RMIDs and Events will be cleared, and the U-bit for every
+	 * RMID will be set on the next read to any BwEvent for every RMID.
+	 * Clear the mbm_local and mbm_total counts for all the RMIDs.
+	 */
+	memset(d->mbm_local, 0, sizeof(struct mbm_state) * r->num_rmid);
+	memset(d->mbm_total, 0, sizeof(struct mbm_state) * r->num_rmid);
+
+e_cpumask:
+	free_cpumask_var(cpu_mask);
+
+e_unlock:
+	rdtgroup_kn_unlock(of->kn);
+	cpus_read_unlock();
+
+	return ret ?: nbytes;
+}
+
 static const struct kernfs_ops kf_mondata_config_ops = {
 	.atomic_write_len       = PAGE_SIZE,
 	.seq_show               = rdtgroup_mondata_config_show,
+	.write                  = rdtgroup_mondata_config_write,
 };
 
 static bool is_cpu_list(struct kernfs_open_file *of)
