@@ -2537,38 +2537,6 @@ int psmash(u64 pfn)
 }
 EXPORT_SYMBOL_GPL(psmash);
 
-static int restore_direct_map(u64 pfn, int npages)
-{
-	int i, ret = 0;
-
-	for (i = 0; i < npages; i++) {
-		ret = set_direct_map_default_noflush(pfn_to_page(pfn + i));
-		if (ret)
-			goto cleanup;
-	}
-
-cleanup:
-	WARN(ret > 0, "Failed to restore direct map for pfn 0x%llx\n", pfn + i);
-	return ret;
-}
-
-static int invalid_direct_map(unsigned long pfn, int npages)
-{
-	int i, ret = 0;
-
-	for (i = 0; i < npages; i++) {
-		ret = set_direct_map_invalid_noflush(pfn_to_page(pfn + i));
-		if (ret)
-			goto cleanup;
-	}
-
-	return 0;
-
-cleanup:
-	restore_direct_map(pfn, i);
-	return ret;
-}
-
 static int rmpupdate(u64 pfn, struct rmpupdate *val)
 {
 	unsigned long paddr = pfn << PAGE_SHIFT;
@@ -2584,15 +2552,11 @@ static int rmpupdate(u64 pfn, struct rmpupdate *val)
 	level = RMP_TO_X86_PG_LEVEL(val->pagesize);
 	npages = page_level_size(level) / PAGE_SIZE;
 
-	/*
-	 * If page is getting assigned in the RMP table then unmap it from the
-	 * direct map.
-	 */
 	if (val->assigned) {
-		if (invalid_direct_map(pfn, npages)) {
-			pr_err("Failed to unmap pfn 0x%llx pages %d from direct_map\n",
-			       pfn, npages);
-			return -EFAULT;
+		ret = set_memory_4k((unsigned long)phys_to_virt(paddr), npages);
+		if (ret) {
+			pr_err("Failed to split physical address 0x%lx (%d)\n", paddr, ret);
+			return ret;
 		}
 	}
 
@@ -2614,17 +2578,6 @@ retry:
 			goto retry;
 	} else if (retries > 0) {
 		pr_err("rmpupdate for pfn %llx succeeded after %d retries\n", pfn, retries);
-	}
-
-	/*
-	 * Restore the direct map after the page is removed from the RMP table.
-	 */
-	if (!ret && !val->assigned) {
-		if (restore_direct_map(pfn, npages)) {
-			pr_err("Failed to map pfn 0x%llx pages %d in direct_map\n",
-			       pfn, npages);
-			return -EFAULT;
-		}
 	}
 
 	return ret;
