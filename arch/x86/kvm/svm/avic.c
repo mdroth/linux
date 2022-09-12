@@ -370,8 +370,8 @@ static int avic_kick_target_vcpus_fast(struct kvm *kvm, struct kvm_lapic *source
 
 		if (apic_x2apic_mode(source)) {
 			/* 16 bit dest mask, 16 bit cluster id */
-			bitmap = dest & 0xFFFF0000;
-			cluster = (dest >> 16) << 4;
+			bitmap = dest & 0xffff;
+			cluster = (dest & 0xffff0000) >> 16;
 		} else if (kvm_lapic_get_reg(source, APIC_DFR) == APIC_DFR_FLAT) {
 			/* 8 bit dest mask*/
 			bitmap = dest;
@@ -379,7 +379,7 @@ static int avic_kick_target_vcpus_fast(struct kvm *kvm, struct kvm_lapic *source
 		} else {
 			/* 4 bit desk mask, 4 bit cluster id */
 			bitmap = dest & 0xF;
-			cluster = (dest >> 4) << 2;
+			cluster = (dest & 0xf0) >> 4;
 		}
 
 		if (unlikely(!bitmap))
@@ -412,18 +412,7 @@ static int avic_kick_target_vcpus_fast(struct kvm *kvm, struct kvm_lapic *source
 			 * For x2APIC logical mode, cannot leverage the index.
 			 * Instead, calculate physical ID from logical ID in ICRH.
 			 */
-			int cluster = (icrh & 0xffff0000) >> 16;
-			int apic = ffs(icrh & 0xffff) - 1;
-
-			/*
-			 * If the x2APIC logical ID sub-field (i.e. icrh[15:0])
-			 * contains anything but a single bit, we cannot use the
-			 * fast path, because it is limited to a single vCPU.
-			 */
-			if (apic < 0 || icrh != (1 << apic))
-				return -EINVAL;
-
-			l1_physical_id = (cluster << 4) + apic;
+			l1_physical_id = (cluster << 4) + (ffs(bitmap) - 1);
 		}
 	}
 
