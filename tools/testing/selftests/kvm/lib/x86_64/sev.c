@@ -157,7 +157,7 @@ static struct sev_vm *sev_vm_alloc(struct kvm_vm *vm)
 
 	eax = CPUID_MEM_ENC_LEAF;
 	/* Get encryption bit via CPUID. */
-	cpuid(&eax, &ebx, &ecx, &edx);
+	cpuid(eax, &eax, &ebx, &ecx, &edx);
 	sev->enc_bit = ebx & CPUID_EBX_CBIT_MASK;
 
 	return sev;
