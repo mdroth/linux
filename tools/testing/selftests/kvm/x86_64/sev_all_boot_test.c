@@ -64,7 +64,7 @@ static void __attribute__((__flatten__)) guest_sev_code(void)
 	GUEST_SYNC(1);
 
 	eax = CPUID_MEM_ENC_LEAF;
-	cpuid(&eax, &ebx, &ecx, &edx);
+	cpuid(eax, &eax, &ebx, &ecx, &edx);
 	GUEST_ASSERT(eax & (1 << 1));
 
 	sev_status = rdmsr(MSR_AMD64_SEV);
