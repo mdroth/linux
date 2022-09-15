@@ -527,8 +527,11 @@ static int acpi_idle_bm_check(void)
 static void wait_for_freeze(void)
 {
 #ifdef	CONFIG_X86
-	/* No delay is needed if we are in guest */
-	if (boot_cpu_has(X86_FEATURE_HYPERVISOR))
+	/*
+	 * No delay is needed if we are in guest or on a modern processor
+	 * featuring Zen microarchitecture.
+	 */
+	if (boot_cpu_has(X86_FEATURE_HYPERVISOR) || boot_cpu_has(X86_FEATURE_ZEN))
 		return;
 #endif
 	/* Dummy wait op - must do something useless after P_LVL2 read
