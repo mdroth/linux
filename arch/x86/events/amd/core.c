@@ -1368,6 +1368,8 @@ static int __init amd_core_pmu_init(void)
 		x86_pmu.enable = amd_pmu_v2_enable_event;
 		x86_pmu.handle_irq = amd_pmu_v2_handle_irq;
 		static_call_update(amd_pmu_test_overflow, amd_pmu_test_overflow_status);
+
+		amd_perfmon_event_map[PERF_COUNT_HW_REF_CPU_CYCLES] = 0x100000120;
 	}
 
 	/*
