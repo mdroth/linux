@@ -233,9 +233,11 @@ static __initconst const u64 amd_hw_cache_event_ids_f17h
 };
 
 /*
- * AMD Performance Monitor K7 and later, up to and including Family 16h:
+ * AMD Performance Monitor K7 and later, up to and including Family 16h
+ * For Family 17h and later, the events are updated based on availability
+ * during PMU initialization
  */
-static const u64 amd_perfmon_event_map[PERF_COUNT_HW_MAX] =
+static u64 amd_perfmon_event_map[PERF_COUNT_HW_MAX] __read_mostly =
 {
 	[PERF_COUNT_HW_CPU_CYCLES]		= 0x0076,
 	[PERF_COUNT_HW_INSTRUCTIONS]		= 0x00c0,
@@ -247,26 +249,8 @@ static const u64 amd_perfmon_event_map[PERF_COUNT_HW_MAX] =
 	[PERF_COUNT_HW_STALLED_CYCLES_BACKEND]	= 0x00d1, /* "Dispatch stalls" event */
 };
 
-/*
- * AMD Performance Monitor Family 17h and later:
- */
-static const u64 amd_f17h_perfmon_event_map[PERF_COUNT_HW_MAX] =
-{
-	[PERF_COUNT_HW_CPU_CYCLES]		= 0x0076,
-	[PERF_COUNT_HW_INSTRUCTIONS]		= 0x00c0,
-	[PERF_COUNT_HW_CACHE_REFERENCES]	= 0xff60,
-	[PERF_COUNT_HW_CACHE_MISSES]		= 0x0964,
-	[PERF_COUNT_HW_BRANCH_INSTRUCTIONS]	= 0x00c2,
-	[PERF_COUNT_HW_BRANCH_MISSES]		= 0x00c3,
-	[PERF_COUNT_HW_STALLED_CYCLES_FRONTEND]	= 0x0287,
-	[PERF_COUNT_HW_STALLED_CYCLES_BACKEND]	= 0x0187,
-};
-
 static u64 amd_pmu_event_map(int hw_event)
 {
-	if (boot_cpu_data.x86 >= 0x17)
-		return amd_f17h_perfmon_event_map[hw_event];
-
 	return amd_perfmon_event_map[hw_event];
 }
 
@@ -1416,6 +1400,11 @@ static int __init amd_core_pmu_init(void)
 		x86_pmu.put_event_constraints = amd_put_event_constraints_f17h;
 		x86_pmu.perf_ctr_pair_en = AMD_MERGE_EVENT_ENABLE;
 		x86_pmu.flags |= PMU_FL_PAIR;
+
+		amd_perfmon_event_map[PERF_COUNT_HW_CACHE_REFERENCES] = 0xff60;
+		amd_perfmon_event_map[PERF_COUNT_HW_CACHE_MISSES] = 0x0964;
+		amd_perfmon_event_map[PERF_COUNT_HW_STALLED_CYCLES_FRONTEND] = 0x0287;
+		amd_perfmon_event_map[PERF_COUNT_HW_STALLED_CYCLES_BACKEND] = 0x0187;
 	}
 
 	/* LBR and BRS are mutually exclusive features */
