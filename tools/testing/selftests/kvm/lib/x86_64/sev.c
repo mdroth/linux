@@ -188,6 +188,7 @@ struct sev_vm *sev_vm_create(uint32_t policy, uint64_t npages)
 	vm->vpages_mapped = sparsebit_alloc();
 	vm_set_memory_encryption(vm, true, true, sev->enc_bit);
 	pr_info("SEV cbit: %d\n", sev->enc_bit);
+	vm->use_ucall_pool = true;
 	vm_userspace_mem_region_add(vm, VM_MEM_SRC_ANONYMOUS, 0, 0, npages, 0);
 	sev_register_user_region(sev, addr_gpa2hva(vm, 0),
 				 npages * vm->page_size);
