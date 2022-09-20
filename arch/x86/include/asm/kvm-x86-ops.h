@@ -130,6 +130,7 @@ KVM_X86_OP(complete_emulated_msr)
 KVM_X86_OP(vcpu_deliver_sipi_vector)
 KVM_X86_OP_OPTIONAL_RET0(vcpu_get_apicv_inhibit_reasons);
 KVM_X86_OP_OPTIONAL_RET0(private_mem_enabled);
+KVM_X86_OP_OPTIONAL_RET0(fault_is_private);
 
 #undef KVM_X86_OP
 #undef KVM_X86_OP_OPTIONAL
