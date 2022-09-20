@@ -3070,7 +3070,7 @@ int kvm_mmu_max_mapping_level(struct kvm *kvm,
 			break;
 	}
 
-	if (is_private)
+	if (kvm_slot_can_be_private(slot) && is_private)
 		return max_level;
 
 	if (max_level == PG_LEVEL_4K)
