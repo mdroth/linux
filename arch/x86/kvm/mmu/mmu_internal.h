@@ -231,10 +231,7 @@ int kvm_tdp_page_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault);
 
 static bool kvm_mmu_fault_is_private(struct kvm *kvm, gpa_t gpa, u64 err)
 {
-	if (static_call(kvm_x86_fault_is_private)(kvm, gpa, err))
-		return true;
-
-	return false;
+	return static_call(kvm_x86_fault_is_private)(kvm, gpa, err);
 }
 
 /*
