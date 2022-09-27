@@ -1993,6 +1993,8 @@ clear:
 	if (sgp != SGP_WRITE && !folio_test_uptodate(folio)) {
 		long i, n = folio_nr_pages(folio);
 
+		pr_info_ratelimited("clearing page %px\n", page_to_pfn(folio_page(folio, 0)));
+
 		for (i = 0; i < n; i++)
 			clear_highpage(folio_page(folio, i));
 		flush_dcache_folio(folio);
