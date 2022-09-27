@@ -4216,7 +4216,7 @@ static int kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 		return RET_PF_USER;
 	}
 
-	if (fault->is_private)
+	if (fault->slot && fault->is_private)
 		return kvm_faultin_pfn_private(fault);
 
 	async = false;
