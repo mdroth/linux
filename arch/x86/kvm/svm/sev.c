@@ -3331,7 +3331,7 @@ static int sev_es_validate_vmgexit(struct vcpu_svm *svm, u64 *exit_code)
 
 	ghcb = map.hva;
 
-	trace_kvm_vmgexit_enter(vcpu->vcpu_id, ghcb);
+	trace_kvm_vmgexit_enter(vcpu->vcpu_id, ghcb, svm->vmcb->control.ghcb_gpa);
 
 	/*
 	 * Retrieve the exit code now even though it may not be marked valid
