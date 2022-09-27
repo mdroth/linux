@@ -2292,7 +2292,21 @@ static int snp_launch_update_upm(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	data.gctx_paddr = __psp_pa(sev->snp_context);
 
 	for (i = 0; i < npages; i++) {
+		void *addr;
 		pfn = pfns[i];
+
+		addr = pfn_to_kaddr(pfn);
+		if (!virt_addr_valid(addr)) {
+			pr_err("%s: Invalid kernel address: 0x%llx\n",
+			       __func__, (uint64_t)addr);
+			return -EFAULT;
+		}
+
+		ret = kvm_read_guest_page(kvm, gfn, addr, 0, PAGE_SIZE);
+		if (ret) {
+			pr_err("%s: Guest read failed: %d\n", __func__, ret);
+			return -EFAULT;
+		}
 
 		ret = rmp_make_private(pfn, gfn << PAGE_SHIFT, level, sev_get_asid(kvm), true);
 		if (ret) {
