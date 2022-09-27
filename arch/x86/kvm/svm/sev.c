@@ -4995,16 +4995,25 @@ int sev_update_mem_attr(struct kvm *kvm, unsigned int attr, gfn_t start, gfn_t e
 
 int sev_fault_is_private(struct kvm *kvm, gpa_t gpa, u64 error_code)
 {
-	bool private;
-	gfn_t gfn;
+	gfn_t gfn = gpa_to_gfn(gpa);
+	bool private = false;
 
-	if (!sev_guest(kvm))
-		return 0;
+	if (!sev_guest(kvm)) {
+		struct kvm_memory_slot *slot = gfn_to_memslot(kvm, gfn);
+
+		if (!slot->shared_bitmap)
+			goto out;
+
+		/* handle private access tracking for UPM self-tests */
+		mutex_lock(&kvm->slots_lock);
+		private = !test_bit(gfn - slot->base_gfn, slot->shared_bitmap);
+		mutex_unlock(&kvm->slots_lock);
+		goto out;
+	}
 
 	if (!kvm->arch.upm_mode)
-		return 0;
+		goto out;
 
-	gfn = gpa_to_gfn(gpa);
 	private = kvm_mem_is_private(kvm, gfn);
 
 	if (sev_snp_guest(kvm)) {
@@ -5016,5 +5025,6 @@ int sev_fault_is_private(struct kvm *kvm, gpa_t gpa, u64 error_code)
 		private = private_cbit;
 	}
 
+out:
 	return private ? 1 : 0;
 }
