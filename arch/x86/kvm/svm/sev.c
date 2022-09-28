@@ -2294,6 +2294,7 @@ static int snp_launch_update_upm(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	for (i = 0; i < npages; i++) {
 		void *addr;
 		pfn = pfns[i];
+		pr_info("launch_update_upm: GFN %llx, PFN: %llx\n", gfn, pfn);
 
 		addr = pfn_to_kaddr(pfn);
 		if (!virt_addr_valid(addr)) {
@@ -4929,6 +4930,8 @@ int sev_update_mem_attr(struct kvm *kvm, unsigned int attr, gfn_t start, gfn_t e
 
 	if (!sev_snp_guest(kvm))
 		return 0;
+
+	pr_info("%s: GFN 0x%llx - 0x%llx, op: %d\n", __func__, start, end, op);
 
 	while (gfn < end) {
 		struct kvm_memory_slot *slot;
