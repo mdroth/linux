@@ -195,8 +195,10 @@ int inaccessible_get_pfn(struct file *file, pgoff_t offset, pfn_t *pfn,
 	int ret;
 
 	ret = shmem_getpage(file_inode(memfd), offset, &page, SGP_WRITE);
-	if (ret)
+	if (ret) {
+		pr_warn("%s: ret: %d\n", __func__, ret);
 		return ret;
+	}
 
 	*pfn = page_to_pfn_t(page);
 	*order = thp_order(compound_head(page));
