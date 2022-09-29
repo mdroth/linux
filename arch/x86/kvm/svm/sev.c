@@ -5029,5 +5029,6 @@ int sev_fault_is_private(struct kvm *kvm, gpa_t gpa, u64 error_code)
 	}
 
 out:
+	pr_info("%s: GFN: 0x%llx, private: %d\n", __func__, gfn, private);
 	return private ? 1 : 0;
 }
