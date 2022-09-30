@@ -1087,7 +1087,8 @@ static int kvm_vm_ioctl_set_mem_attr(struct kvm *kvm, gpa_t gpa, gpa_t size,
 }
 
 static void kvm_private_notifier_invalidate(struct inaccessible_notifier *notifier,
-					    pgoff_t start, pgoff_t end)
+					    pgoff_t start, pgoff_t end, pfn_t pfn,
+					    int order)
 {
 	struct kvm_memory_slot *slot = container_of(notifier,
 						    struct kvm_memory_slot,
@@ -1103,8 +1104,16 @@ static void kvm_private_notifier_invalidate(struct inaccessible_notifier *notifi
 	if (end < base_pgoff + slot->npages)
 		end_gfn = slot->base_gfn + end - base_pgoff;
 
+	pr_info("%s, start_gfn: 0x%llx, end_gfn: 0x%llx, start: 0x%lx, end: 0x%lx, pfn: 0x%lx, order: %d\n",
+		__func__, start_gfn, end_gfn, start, end, pfn_t_to_pfn(pfn), order);
+
 	if (start_gfn >= end_gfn)
 		return;
+
+#if 0
+	pr_info("%s, start_gfn: 0%llx, end_gfn: 0x%llx, start: 0x%lx, end: 0x%lx, pfn: 0x%lx, order: %d\n",
+		__func__, start_gfn, end_gfn, start, end, pfn_t_to_pfn(pfn), order);
+#endif
 
 	kvm_zap_gfn_range(slot->kvm, start_gfn, end_gfn);
 }

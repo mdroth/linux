@@ -14,13 +14,13 @@ struct inaccessible_data {
 };
 
 static void inaccessible_notifier_invalidate(struct inaccessible_data *data,
-				 pgoff_t start, pgoff_t end)
+				 pgoff_t start, pgoff_t end, pfn_t pfn, int order)
 {
 	struct inaccessible_notifier *notifier;
 
 	mutex_lock(&data->lock);
 	list_for_each_entry(notifier, &data->notifiers, list) {
-		notifier->ops->invalidate(notifier, start, end);
+		notifier->ops->invalidate(notifier, start, end, pfn, order);
 	}
 	mutex_unlock(&data->lock);
 }
@@ -39,15 +39,43 @@ static long inaccessible_fallocate(struct file *file, int mode,
 {
 	struct inaccessible_data *data = file->f_mapping->private_data;
 	struct file *memfd = data->memfd;
+	pfn_t pfn = pfn_to_pfn_t(0);
+	int order = 0;
 	int ret;
 
 	if (mode & FALLOC_FL_PUNCH_HOLE) {
 		if (!PAGE_ALIGNED(offset) || !PAGE_ALIGNED(len))
 			return -EINVAL;
+		ret = inaccessible_get_pfn(file, offset, &pfn, &order);
+		if (ret) {
+			pr_warn("%s: failed to retrieve pfn, ret: %d, offset: 0x%llx", __func__, ret, offset);
+			goto out;
+		}
+	} else {
+		/* TODO: because we don't need this other than for hole-punching anymore? */
+		goto out;
 	}
 
 	ret = memfd->f_op->fallocate(memfd, mode, offset, len);
-	inaccessible_notifier_invalidate(data, offset, offset + len);
+	if (ret) {
+		pr_warn("%s: fallocate() failed, ret: %d, offset: 0x%llx, mode: %x", __func__,
+			ret, offset, mode);
+		goto out;
+	}
+
+	if (!(mode & FALLOC_FL_PUNCH_HOLE)) {
+		ret = inaccessible_get_pfn(file, offset, &pfn, &order);
+		if (ret) {
+			pr_warn("%s: failed to retrieve pfn, ret: %d, offset: 0x%llx", __func__, ret, offset);
+			goto out;
+		}
+	}
+
+	inaccessible_notifier_invalidate(data, offset >> PAGE_SHIFT,
+					 (offset + len) >> PAGE_SHIFT, pfn, order);
+out:
+	if (pfn_t_to_pfn(pfn))
+		inaccessible_put_pfn(file, pfn);
 	return ret;
 }
 

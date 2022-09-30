@@ -18,7 +18,7 @@ struct inaccessible_notifier;
 
 struct inaccessible_notifier_ops {
 	void (*invalidate)(struct inaccessible_notifier *notifier,
-			   pgoff_t start, pgoff_t end);
+			   pgoff_t start, pgoff_t end, pfn_t pfn, int order);
 };
 
 struct inaccessible_notifier {
