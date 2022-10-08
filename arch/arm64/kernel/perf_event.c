@@ -806,10 +806,20 @@ static void armv8pmu_disable_event(struct perf_event *event)
 
 static void armv8pmu_start(struct arm_pmu *cpu_pmu)
 {
-	struct perf_event_context *task_ctx =
-		this_cpu_ptr(cpu_pmu->pmu.pmu_cpu_context)->task_ctx;
+	/* XXX: Get this verified by Arm folks */
+	struct perf_event_context *ctx;
+	int nr_user = 0;
 
-	if (sysctl_perf_user_access && task_ctx && task_ctx->nr_user)
+	rcu_read_lock();
+	ctx = rcu_dereference(current->perf_event_ctxp);
+	if (ctx) {
+		raw_spin_lock(&ctx->lock);
+		nr_user = ctx->nr_user;
+		raw_spin_unlock(&ctx->lock);
+	}
+	rcu_read_unlock();
+
+	if (sysctl_perf_user_access && nr_user)
 		armv8pmu_enable_user_access(cpu_pmu);
 	else
 		armv8pmu_disable_user_access();
@@ -1019,10 +1029,10 @@ static int armv8pmu_set_event_filter(struct hw_perf_event *event,
 	return 0;
 }
 
-static int armv8pmu_filter_match(struct perf_event *event)
+static bool armv8pmu_filter(struct pmu *pmu, int cpu)
 {
-	unsigned long evtype = event->hw.config_base & ARMV8_PMU_EVTYPE_EVENT;
-	return evtype != ARMV8_PMUV3_PERFCTR_CHAIN;
+	struct arm_pmu *armpmu = to_arm_pmu(pmu);
+	return !cpumask_test_cpu(smp_processor_id(), &armpmu->supported_cpus);
 }
 
 static void armv8pmu_reset(void *info)
@@ -1253,7 +1263,7 @@ static int armv8_pmu_init(struct arm_pmu *cpu_pmu, char *name,
 	cpu_pmu->stop			= armv8pmu_stop;
 	cpu_pmu->reset			= armv8pmu_reset;
 	cpu_pmu->set_event_filter	= armv8pmu_set_event_filter;
-	cpu_pmu->filter_match		= armv8pmu_filter_match;
+	cpu_pmu->filter			= armv8pmu_filter;
 
 	cpu_pmu->pmu.event_idx		= armv8pmu_user_event_idx;
 
