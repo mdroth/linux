@@ -63,6 +63,10 @@ module_param(shared_mem, bool, 0444);
 MODULE_PARM_DESC(shared_mem,
 		 "enable amd-pstate on processors with shared memory solution (false = disabled (default), true = enabled)");
 
+static bool epp_enabled = false;
+module_param(epp_enabled, bool, 0444);
+MODULE_PARM_DESC(epp_enabled, "Enable energy performance preference (EPP) control");
+
 static struct cpufreq_driver amd_pstate_driver;
 
 /**
