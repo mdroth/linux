@@ -305,6 +305,7 @@
 #define X86_FEATURE_USE_IBPB_FW		(11*32+16) /* "" Use IBPB during runtime firmware calls */
 #define X86_FEATURE_RSB_VMEXIT_LITE	(11*32+17) /* "" Fill RSB on VM exit when EIBRS is enabled */
 #define X86_FEATURE_SMBA		(11*32+18) /* Slow Memory Bandwidth Allocation */
+#define X86_FEATURE_BMEC		(11*32+19) /* AMD Bandwidth Monitoring Event Configuration (BMEC) */
 
 /* Intel-defined CPU features, CPUID level 0x00000007:1 (EAX), word 12 */
 #define X86_FEATURE_AVX_VNNI		(12*32+ 4) /* AVX VNNI instructions */
