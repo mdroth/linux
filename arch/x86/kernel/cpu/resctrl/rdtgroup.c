@@ -1420,6 +1420,67 @@ out:
 	return ret;
 }
 
+struct mon_config_info {
+	u32 evtid;
+	u32 mon_config;
+};
+
+static void mon_event_config_read(void *info)
+{
+	struct mon_config_info *mon_info = info;
+	u32 h, msr_index;
+
+	switch (mon_info->evtid) {
+	case QOS_L3_MBM_TOTAL_EVENT_ID:
+		msr_index = 0;
+		break;
+	case QOS_L3_MBM_LOCAL_EVENT_ID:
+		msr_index = 1;
+		break;
+	default:
+		/* Not expected to come here */
+		return;
+	}
+
+	rdmsr(MSR_IA32_EVT_CFG_BASE + msr_index, mon_info->mon_config, h);
+}
+
+static void mondata_config_read(struct rdt_domain *d, struct mon_config_info *mon_info)
+{
+	smp_call_function_any(&d->cpu_mask, mon_event_config_read, mon_info, 1);
+}
+
+static int mbm_config_show(struct seq_file *s, struct rdt_resource *r, u32 evtid)
+{
+	struct mon_config_info mon_info = {0};
+	struct rdt_domain *dom;
+	bool sep = false;
+
+	list_for_each_entry(dom, &r->domains, list) {
+		if (sep)
+			seq_puts(s, ";");
+
+		mon_info.evtid = evtid;
+		mondata_config_read(dom, &mon_info);
+
+		seq_printf(s, "%d=0x%02x", dom->id, mon_info.mon_config);
+		sep = true;
+	}
+	seq_puts(s, "\n");
+
+	return 0;
+}
+
+static int mbm_total_config_show(struct kernfs_open_file *of,
+				 struct seq_file *seq, void *v)
+{
+	struct rdt_resource *r = of->kn->parent->priv;
+
+	mbm_config_show(seq, r, QOS_L3_MBM_TOTAL_EVENT_ID);
+
+	return 0;
+}
+
 /* rdtgroup information files for one cache resource. */
 static struct rftype res_common_files[] = {
 	{
@@ -1517,6 +1578,12 @@ static struct rftype res_common_files[] = {
 		.write		= max_threshold_occ_write,
 		.seq_show	= max_threshold_occ_show,
 		.fflags		= RF_MON_INFO | RFTYPE_RES_CACHE,
+	},
+	{
+		.name		= "mbm_total_config",
+		.mode		= 0644,
+		.kf_ops		= &rdtgroup_kf_single_ops,
+		.seq_show	= mbm_total_config_show,
 	},
 	{
 		.name		= "cpus",
@@ -1622,6 +1689,15 @@ void __init thread_throttle_mode_init(void)
 		return;
 
 	rft->fflags = RF_CTRL_INFO | RFTYPE_RES_MB;
+}
+
+void __init mbm_config_rftype_init(void)
+{
+	struct rftype *rft;
+
+	rft = rdtgroup_get_rftype_by_name("mbm_total_config");
+	if (rft)
+		rft->fflags = RF_MON_INFO | RFTYPE_RES_CACHE;
 }
 
 /**

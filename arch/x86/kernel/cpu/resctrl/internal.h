@@ -15,6 +15,7 @@
 #define MSR_IA32_MBA_THRTL_BASE		0xd50
 #define MSR_IA32_MBA_BW_BASE		0xc0000200
 #define MSR_IA32_SMBA_BW_BASE		0xc0000280
+#define MSR_IA32_EVT_CFG_BASE		0xc0000400
 
 #define MSR_IA32_QM_CTR			0x0c8e
 #define MSR_IA32_QM_EVTSEL		0x0c8d
@@ -554,5 +555,6 @@ bool has_busy_rmid(struct rdt_resource *r, struct rdt_domain *d);
 void __check_limbo(struct rdt_domain *d, bool force_free);
 void rdt_domain_reconfigure_cdp(struct rdt_resource *r);
 void __init thread_throttle_mode_init(void);
+void __init mbm_config_rftype_init(void);
 
 #endif /* _ASM_X86_RESCTRL_INTERNAL_H */

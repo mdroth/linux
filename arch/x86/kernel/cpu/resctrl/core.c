@@ -867,6 +867,9 @@ static __init bool get_rdt_mon_resources(void)
 	if (!rdt_mon_features)
 		return false;
 
+	if (mon_configurable)
+		mbm_config_rftype_init();
+
 	return !rdt_get_mon_l3_config(r, mon_configurable);
 }
 
