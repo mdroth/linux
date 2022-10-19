@@ -5153,3 +5153,35 @@ int sev_update_mem_attr(struct kvm_memory_slot *slot, unsigned int attr,
 
 	return 0;
 }
+
+void sev_invalidate_private_range(struct kvm_memory_slot *slot, gfn_t start, gfn_t end,
+				  struct page *page, int order)
+{
+	unsigned long pfn = page_to_pfn(page);
+	gfn_t gfn = start;
+
+	if (!sev_snp_guest(slot->kvm))
+		return;
+
+	if (!kvm_slot_can_be_private(slot)) {
+		pr_warn_ratelimited("%s: memslot for gfn: 0x%llx is not private.\n",
+				   __func__, gfn);
+		return;
+	}
+
+	while (gfn < end) {
+		gpa_t gpa = gfn_to_gpa(gfn);
+		int rc;
+
+		pr_debug("%s: gpa %llx pfn %lx order %d\n",
+			 __func__, gpa, pfn, order);
+		rc = snp_make_page_shared(slot->kvm, gpa, pfn,
+					  PG_LEVEL_4K);
+		if (rc)
+			pr_err("%s: failed gpa %llx pfn %lx order %d rc %d\n",
+				__func__, gpa, pfn, order, rc);
+
+		gfn++;
+		pfn++;
+	}
+}
