@@ -2341,6 +2341,9 @@ static inline bool kvm_mem_is_private(struct kvm *kvm, gfn_t gfn)
 	       kvm_get_memory_attributes(kvm, gfn) & KVM_MEMORY_ATTRIBUTE_PRIVATE;
 
 }
+
+void kvm_arch_invalidate_restricted_mem(struct kvm_memory_slot *slot, gfn_t start, gfn_t end);
+
 #else
 static inline bool kvm_mem_is_private(struct kvm *kvm, gfn_t gfn)
 {
