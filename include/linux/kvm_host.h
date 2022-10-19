@@ -2305,11 +2305,17 @@ static inline void kvm_account_pgtable_pages(void *virt, int nr)
 #ifdef __KVM_HAVE_ARCH_UPDATE_MEM_ATTR
 void kvm_arch_update_mem_attr(struct kvm *kvm, struct kvm_memory_slot *slot,
 			      unsigned int attr, gfn_t start, gfn_t end);
+void kvm_arch_invalidate_restricted_mem(struct kvm_memory_slot *slot, gfn_t start, gfn_t end);
 #else
 static inline void kvm_arch_update_mem_attr(struct kvm *kvm,
 					    struct kvm_memory_slot *slot,
 					    unsigned int attr,
 					    gfn_t start, gfn_t end)
+{
+}
+
+static inline void kvm_arch_invalidate_restricted_mem(struct kvm_memory_slot *slot, gfn_t start,
+						      gfn_t end)
 {
 }
 #endif

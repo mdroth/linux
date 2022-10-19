@@ -14,18 +14,25 @@ struct restrictedmem_data {
 	struct list_head notifiers;
 };
 
-static void restrictedmem_notifier_invalidate(struct restrictedmem_data *data,
-				 pgoff_t start, pgoff_t end, bool notify_start)
+static void restrictedmem_notifier_invalidate_start(struct restrictedmem_data *data,
+						    pgoff_t start, pgoff_t end)
 {
 	struct restrictedmem_notifier *notifier;
 
 	mutex_lock(&data->lock);
-	list_for_each_entry(notifier, &data->notifiers, list) {
-		if (notify_start)
+	list_for_each_entry(notifier, &data->notifiers, list)
 			notifier->ops->invalidate_start(notifier, start, end);
-		else
-			notifier->ops->invalidate_end(notifier, start, end);
-	}
+	mutex_unlock(&data->lock);
+}
+
+static void restrictedmem_notifier_invalidate_end(struct restrictedmem_data *data,
+						  pgoff_t start, pgoff_t end)
+{
+	struct restrictedmem_notifier *notifier;
+
+	mutex_lock(&data->lock);
+	list_for_each_entry(notifier, &data->notifiers, list)
+		notifier->ops->invalidate_end(notifier, start, end);
 	mutex_unlock(&data->lock);
 }
 
@@ -33,9 +40,32 @@ static int restrictedmem_release(struct inode *inode, struct file *file)
 {
 	struct restrictedmem_data *data = inode->i_mapping->private_data;
 
+	pr_debug("%s: releasing memfd, invalidating page offsets 0x0-0x%llx\n",
+		 __func__, inode->i_size >> PAGE_SHIFT);
+	restrictedmem_notifier_invalidate_start(data, 0, inode->i_size >> PAGE_SHIFT);
+	restrictedmem_notifier_invalidate_end(data, 0, inode->i_size >> PAGE_SHIFT);
+
 	fput(data->memfd);
 	kfree(data);
 	return 0;
+}
+
+static long restrictedmem_deallocate(struct restrictedmem_data *data, int mode,
+				     loff_t start, loff_t len)
+{
+	struct file *memfd = data->memfd;
+	pgoff_t pg_start, pg_end;
+	int ret;
+
+	pg_start = start >> PAGE_SHIFT;
+	pg_end = (start + len) >> PAGE_SHIFT;
+	pg_end = min_t(pgoff_t, pg_end, memfd->f_inode->i_size >> PAGE_SHIFT);
+
+	restrictedmem_notifier_invalidate_start(data, pg_start, pg_end);
+	ret = memfd->f_op->fallocate(memfd, mode, start, len);
+	restrictedmem_notifier_invalidate_end(data, pg_start, pg_end);
+
+	return ret;
 }
 
 static long restrictedmem_fallocate(struct file *file, int mode,
@@ -45,14 +75,14 @@ static long restrictedmem_fallocate(struct file *file, int mode,
 	struct file *memfd = data->memfd;
 	int ret;
 
-	if (mode & FALLOC_FL_PUNCH_HOLE) {
-		if (!PAGE_ALIGNED(offset) || !PAGE_ALIGNED(len))
-			return -EINVAL;
-	}
+	if (!PAGE_ALIGNED(offset) || !PAGE_ALIGNED(len))
+		return -EINVAL;
 
-	restrictedmem_notifier_invalidate(data, offset, offset + len, true);
+	if (mode & FALLOC_FL_PUNCH_HOLE)
+		return restrictedmem_deallocate(data, mode, offset, len);
+
 	ret = memfd->f_op->fallocate(memfd, mode, offset, len);
-	restrictedmem_notifier_invalidate(data, offset, offset + len, false);
+
 	return ret;
 }
 
@@ -219,6 +249,17 @@ void restrictedmem_unregister_notifier(struct file *file,
 				       struct restrictedmem_notifier *notifier)
 {
 	struct restrictedmem_data *data = file->f_mapping->private_data;
+	struct inode *inode = file_inode(data->memfd);
+
+	/* TODO: this will issue notifications to all registered notifiers,
+	 * but it's only the one being unregistered that needs to process
+	 * invalidations for any ranges still allocated at this point in
+	 * time. For now this relies on KVM currently being the only notifier.
+	 */
+	pr_debug("%s: unregistering notifier, invalidating page offsets 0x0-0x%llx\n",
+		 __func__, inode->i_size >> PAGE_SHIFT);
+	restrictedmem_notifier_invalidate_start(data, 0, inode->i_size >> PAGE_SHIFT);
+	restrictedmem_notifier_invalidate_end(data, 0, inode->i_size >> PAGE_SHIFT);
 
 	mutex_lock(&data->lock);
 	list_del(&notifier->list);
