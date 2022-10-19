@@ -5174,3 +5174,65 @@ int sev_update_mem_attr(struct kvm_memory_slot *slot, unsigned int attr,
 
 	return 0;
 }
+
+void sev_invalidate_private_range(struct kvm_memory_slot *slot, gfn_t start, gfn_t end)
+{
+	bool huge_directmap_allowed = true;
+	gfn_t gfn = start;
+
+	if (!sev_snp_guest(slot->kvm))
+		return;
+
+	if (!kvm_slot_can_be_private(slot)) {
+		pr_warn_ratelimited("%s: memslot for gfn: 0x%llx is not private.\n",
+				   __func__, gfn);
+		return;
+	}
+
+	while (gfn < end) {
+		gpa_t gpa = gfn_to_gpa(gfn);
+		int level = PG_LEVEL_4K;
+		int order, rc;
+		kvm_pfn_t pfn;
+
+		/*
+		 * TODO: Ideally *get_pfn() would default to SGP_NOALLOC, but use this
+		 * new variant for now to avoid faulting in pages while doing cleanup.
+		 */
+		rc = kvm_restricted_mem_get_pfn_noalloc(slot, gfn, &pfn, &order);
+		if (rc) {
+			gfn++;
+			continue;
+		}
+
+		if (huge_directmap_allowed && order) {
+			int rmp_level;
+
+			if (IS_ALIGNED(gpa, page_level_size(PG_LEVEL_2M)) &&
+			    gpa + page_level_size(PG_LEVEL_2M) <= gfn_to_gpa(end))
+				level = PG_LEVEL_2M;
+			else
+				pr_debug("%s: gpa %llx is not aligned to 2M, skipping 2M directmap restoration\n",
+					 __func__, gpa);
+
+			/* TODO: It may still be possible to restore 2M mapping here, but keep it simple for now. */
+			if (level == PG_LEVEL_2M &&
+			    (!snp_lookup_rmpentry(pfn, &rmp_level) || rmp_level == PG_LEVEL_4K)) {
+				pr_debug("%s: pfn %llx is not mapped as 2M private range, skipping 2M directmap restoration\n",
+					 __func__, pfn);
+				level = PG_LEVEL_4K;
+			}
+		}
+
+		pr_debug("%s: gpa %llx pfn %llx order %d level %d allowed %d\n",
+			 __func__, gpa, pfn, order, level, huge_directmap_allowed);
+		rc = snp_make_page_shared(slot->kvm, gpa, pfn, level);
+		if (rc)
+			pr_err("%s: failed gpa %llx pfn %llx order %d rc %d\n",
+				__func__, gpa, pfn, order, rc);
+
+		gfn += page_level_size(level) >> PAGE_SHIFT;
+		put_page(pfn_to_page(pfn));
+		cond_resched();
+	}
+}
