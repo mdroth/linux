@@ -7183,3 +7183,8 @@ void kvm_arch_set_memory_attributes(struct kvm *kvm,
 		kvm_update_lpage_private_shared_mixed(kvm, slot, attrs,
 						      start, end);
 }
+
+void kvm_arch_invalidate_restricted_mem(struct kvm_memory_slot *slot, gfn_t start, gfn_t end)
+{
+	static_call_cond(kvm_x86_invalidate_restricted_mem)(slot, start, end);
+}

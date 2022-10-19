@@ -54,6 +54,11 @@ static int restrictedmem_release(struct inode *inode, struct file *file)
 {
 	struct restrictedmem_data *data = inode->i_mapping->private_data;
 
+	pr_debug("%s: releasing memfd, invalidating page offsets 0x0-0x%llx\n",
+		 __func__, inode->i_size >> PAGE_SHIFT);
+	restrictedmem_invalidate_start(data, 0, inode->i_size >> PAGE_SHIFT);
+	restrictedmem_invalidate_end(data, 0, inode->i_size >> PAGE_SHIFT);
+
 	fput(data->memfd);
 	kfree(data);
 	return 0;
@@ -258,6 +263,17 @@ void restrictedmem_unregister_notifier(struct file *file,
 				       struct restrictedmem_notifier *notifier)
 {
 	struct restrictedmem_data *data = file->f_mapping->private_data;
+	struct inode *inode = file_inode(data->memfd);
+
+	/* TODO: this will issue notifications to all registered notifiers,
+	 * but it's only the one being unregistered that needs to process
+	 * invalidations for any ranges still allocated at this point in
+	 * time. For now this relies on KVM currently being the only notifier.
+	 */
+	pr_debug("%s: unregistering notifier, invalidating page offsets 0x0-0x%llx\n",
+		 __func__, inode->i_size >> PAGE_SHIFT);
+	restrictedmem_invalidate_start(data, 0, inode->i_size >> PAGE_SHIFT);
+	restrictedmem_invalidate_end(data, 0, inode->i_size >> PAGE_SHIFT);
 
 	mutex_lock(&data->lock);
 	list_del(&notifier->list);

@@ -2327,6 +2327,7 @@ void kvm_arch_set_memory_attributes(struct kvm *kvm,
 				    struct kvm_memory_slot *slot,
 				    unsigned long attrs,
 				    gfn_t start, gfn_t end);
+
 #else
 static inline void kvm_arch_set_memory_attributes(struct kvm *kvm,
 						  struct kvm_memory_slot *slot,
@@ -2366,6 +2367,7 @@ static inline int kvm_restricted_mem_get_pfn(struct kvm_memory_slot *slot,
 }
 
 void kvm_arch_memory_mce(struct kvm *kvm);
+void kvm_arch_invalidate_restricted_mem(struct kvm_memory_slot *slot, gfn_t start, gfn_t end);
 #endif /* CONFIG_HAVE_KVM_RESTRICTED_MEM */
 
 #endif
