@@ -7264,4 +7264,9 @@ void kvm_arch_post_set_memory_attributes(struct kvm *kvm,
 		pr_warn_ratelimited("Failed to update GFN range 0x%llx-0x%llx with attributes 0x%lx. Ret: %d\n",
 				    start, end, attrs, ret);
 }
+
+void kvm_arch_invalidate_restricted_mem(struct kvm_memory_slot *slot, gfn_t start, gfn_t end)
+{
+	static_call_cond(kvm_x86_invalidate_restricted_mem)(slot, start, end);
+}
 #endif
