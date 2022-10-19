@@ -960,6 +960,10 @@ static void kvm_restrictedmem_invalidate_begin(struct restrictedmem_notifier *no
 	if (restrictedmem_get_gfn_range(slot, start, end, &gfn_range))
 		return;
 
+	pr_debug("%s: start: 0x%lx, end: 0x%lx, roffset: 0x%llx, gfn_start: 0x%llx, gfn_end: 0x%llx\n",
+		 __func__, start, end, slot->restricted_offset, gfn_range.start,
+		 gfn_range.end);
+
 	idx = srcu_read_lock(&kvm->srcu);
 	KVM_MMU_LOCK(kvm);
 
@@ -967,6 +971,8 @@ static void kvm_restrictedmem_invalidate_begin(struct restrictedmem_notifier *no
 	kvm_mmu_invalidate_range_add(kvm, gfn_range.start, gfn_range.end);
 	if (kvm_unmap_gfn_range(kvm, &gfn_range))
 		kvm_flush_remote_tlbs(kvm);
+
+	kvm_arch_invalidate_restricted_mem(slot, gfn_start, gfn_end);
 
 	KVM_MMU_UNLOCK(kvm);
 	srcu_read_unlock(&kvm->srcu, idx);
