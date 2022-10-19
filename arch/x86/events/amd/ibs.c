@@ -641,7 +641,7 @@ static const struct attribute_group *op_attr_update[] = {
 
 static struct perf_ibs perf_ibs_fetch = {
 	.pmu = {
-		.task_ctx_nr	= perf_invalid_context,
+		.task_ctx_nr	= perf_hw_context,
 
 		.event_init	= perf_ibs_init,
 		.add		= perf_ibs_add,
@@ -665,7 +665,7 @@ static struct perf_ibs perf_ibs_fetch = {
 
 static struct perf_ibs perf_ibs_op = {
 	.pmu = {
-		.task_ctx_nr	= perf_invalid_context,
+		.task_ctx_nr	= perf_hw_context,
 
 		.event_init	= perf_ibs_init,
 		.add		= perf_ibs_add,
