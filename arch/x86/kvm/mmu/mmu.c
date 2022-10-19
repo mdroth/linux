@@ -6996,7 +6996,7 @@ static bool mem_attr_is_mixed(struct kvm *kvm, unsigned int attr,
 
 		KVM_BUG_ON(gfn != xas.xa_index, kvm);
 
-		if (entry)
+		if (!entry)
 			private = true;
 		else
 			shared = true;
