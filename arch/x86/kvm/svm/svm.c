@@ -4862,6 +4862,7 @@ static struct kvm_x86_ops svm_x86_ops __initdata = {
 	.adjust_mapping_level = sev_adjust_mapping_level,
 	.update_mem_attr = sev_update_mem_attr,
 	.fault_is_private = sev_fault_is_private,
+	.invalidate_restricted_mem = sev_invalidate_private_range,
 };
 
 /*
