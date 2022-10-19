@@ -9,7 +9,7 @@ struct restrictedmem_notifier;
 
 struct restrictedmem_notifier_ops {
 	void (*invalidate_start)(struct restrictedmem_notifier *notifier,
-				 pgoff_t start, pgoff_t end);
+				 pgoff_t start, pgoff_t end, struct page *page, int order);
 	void (*invalidate_end)(struct restrictedmem_notifier *notifier,
 			       pgoff_t start, pgoff_t end);
 };
