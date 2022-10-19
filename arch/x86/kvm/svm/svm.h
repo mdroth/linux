@@ -772,6 +772,7 @@ void handle_rmp_page_fault(struct kvm_vcpu *vcpu, gpa_t gpa, u64 error_code);
 void sev_snp_init_protected_guest_state(struct kvm_vcpu *vcpu);
 int sev_gmem_prepare(struct kvm *kvm, struct kvm_memory_slot *slot,
 		     kvm_pfn_t pfn, gfn_t gfn, u8 *max_level);
+void sev_gmem_invalidate(struct kvm *kvm, kvm_pfn_t start, kvm_pfn_t end);
 
 /* vmenter.S */
 
