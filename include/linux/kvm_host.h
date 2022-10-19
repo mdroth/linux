@@ -2298,9 +2298,16 @@ static inline void kvm_handle_signal_exit(struct kvm_vcpu *vcpu)
 #ifdef __KVM_HAVE_ARCH_UPDATE_MEM_ATTR
 void kvm_arch_update_mem_attr(struct kvm *kvm, unsigned int attr,
 			      gfn_t start, gfn_t end);
+void kvm_arch_invalidate_private_range(struct kvm_memory_slot *slot, gfn_t start, gfn_t end,
+				       struct page *page, int order);
 #else
 static inline void kvm_arch_update_mem_attr(struct kvm *kvm, unsigned int attr,
 					    gfn_t start, gfn_t end)
+{
+}
+
+static inline void kvm_arch_invalidate_private_range(struct kvm_memory_slot *slot, gfn_t start,
+						     gfn_t end, struct page *page, int order)
 {
 }
 #endif

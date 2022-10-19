@@ -1037,7 +1037,8 @@ err:
 }
 
 static void kvm_private_notifier_invalidate(struct inaccessible_notifier *notifier,
-					    pgoff_t start, pgoff_t end)
+					    pgoff_t start, pgoff_t end, struct page *page,
+					    int order)
 {
 	struct kvm_memory_slot *slot = container_of(notifier,
 						    struct kvm_memory_slot,
@@ -1057,6 +1058,7 @@ static void kvm_private_notifier_invalidate(struct inaccessible_notifier *notifi
 		return;
 
 	kvm_zap_gfn_range(slot->kvm, start_gfn, end_gfn);
+	kvm_arch_invalidate_private_range(slot, start_gfn, end_gfn, page, order);
 }
 
 static struct inaccessible_notifier_ops kvm_private_notifier_ops = {

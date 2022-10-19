@@ -14,21 +14,57 @@ struct inaccessible_data {
 };
 
 static void inaccessible_notifier_invalidate(struct inaccessible_data *data,
-				 pgoff_t start, pgoff_t end)
+					     pgoff_t start, pgoff_t end, struct page *page,
+					     int order)
 {
 	struct inaccessible_notifier *notifier;
 
 	mutex_lock(&data->lock);
 	list_for_each_entry(notifier, &data->notifiers, list) {
-		notifier->ops->invalidate(notifier, start, end);
+		notifier->ops->invalidate(notifier, start, end, page, order);
 	}
 	mutex_unlock(&data->lock);
+}
+
+static void inaccessible_invalidate_range(struct inaccessible_data *data,
+					  pgoff_t start, pgoff_t end)
+{
+	struct file *memfd = data->memfd;
+	pgoff_t offset = start;
+	int ret;
+
+	while (offset < end) {
+		pgoff_t npages;
+		struct page *page;
+		int order;
+
+		ret = shmem_getpage(file_inode(memfd), offset, &page, SGP_NOALLOC);
+		if (ret) {
+			pr_debug_ratelimited("%s: ret: %d\n", __func__, ret);
+			offset++;
+			continue;
+		}
+
+		order = thp_order(compound_head(page));
+		npages = (1 << order) - (start - ALIGN(start, (1 << order)));
+		npages = min_t(pgoff_t, end - offset, npages);
+		unlock_page(page);
+
+		inaccessible_notifier_invalidate(data, offset, offset + npages, page, order);
+
+		put_page(page);
+		offset += npages;
+		cond_resched();
+	}
 }
 
 static int inaccessible_release(struct inode *inode, struct file *file)
 {
 	struct inaccessible_data *data = inode->i_mapping->private_data;
 
+	pr_debug("%s: releasing memfd, invalidating page offsets 0x0-0x%llx\n",
+		 __func__, inode->i_size >> PAGE_SHIFT);
+	inaccessible_invalidate_range(data, 0, inode->i_size >> PAGE_SHIFT);
 	fput(data->memfd);
 	kfree(data);
 	return 0;
@@ -44,10 +80,16 @@ static long inaccessible_fallocate(struct file *file, int mode,
 	if (mode & FALLOC_FL_PUNCH_HOLE) {
 		if (!PAGE_ALIGNED(offset) || !PAGE_ALIGNED(len))
 			return -EINVAL;
+
+		inaccessible_invalidate_range(data, offset >> PAGE_SHIFT,
+					      (offset + len) >> PAGE_SHIFT);
 	}
 
 	ret = memfd->f_op->fallocate(memfd, mode, offset, len);
-	inaccessible_notifier_invalidate(data, offset, offset + len);
+	if (ret)
+		pr_warn("%s: fallocate() failed, ret: %d, offset: 0x%llx, mode: %x", __func__,
+			ret, offset, mode);
+
 	return ret;
 }
 
@@ -179,6 +221,16 @@ void inaccessible_unregister_notifier(struct file *file,
 				      struct inaccessible_notifier *notifier)
 {
 	struct inaccessible_data *data = file->f_mapping->private_data;
+	struct inode *inode = file_inode(data->memfd);
+
+	/* TODO: this will issue notifications to all registered notifiers,
+	 * but it's only the one being unregistered that needs to process
+	 * invalidations for any ranges still allocated at this point in
+	 * time. For now this relies on KVM currently being the only notifier.
+	 */
+	pr_debug("%s: unregistering notifier, invalidating page offsets 0x0-0x%llx\n",
+		 __func__, inode->i_size >> PAGE_SHIFT);
+	inaccessible_invalidate_range(data, 0, inode->i_size >> PAGE_SHIFT);
 
 	mutex_lock(&data->lock);
 	list_del(&notifier->list);

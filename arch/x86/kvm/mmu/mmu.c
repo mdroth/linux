@@ -7056,6 +7056,12 @@ static void update_mem_lpage_info(struct kvm *kvm,
 	}
 }
 
+void kvm_arch_invalidate_private_range(struct kvm_memory_slot *slot, gfn_t start, gfn_t end,
+				       struct page *page, int order)
+{
+	static_call_cond(kvm_x86_invalidate_private_range)(slot, start, end, page, order);
+}
+
 void kvm_arch_update_mem_attr(struct kvm *kvm, unsigned int attr,
 			      gfn_t start, gfn_t end)
 {
