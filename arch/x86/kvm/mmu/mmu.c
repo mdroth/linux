@@ -3048,8 +3048,13 @@ int kvm_mmu_max_mapping_level(struct kvm *kvm,
 			break;
 	}
 
-	if (kvm_slot_can_be_private(slot) && is_private)
+	pr_debug("%s: gfn: %llx max_level: %d max_huge_page_level: %d\n",
+		 __func__, gfn, max_level, max_huge_page_level);
+	if (kvm_slot_can_be_private(slot) && is_private) {
+		if (kvm_x86_ops.rmp_page_level_adjust)
+			static_call(kvm_x86_rmp_page_level_adjust)(kvm, gfn, &max_level);
 		return max_level;
+	}
 
 	if (max_level == PG_LEVEL_4K)
 		return PG_LEVEL_4K;

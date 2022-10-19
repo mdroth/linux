@@ -4784,10 +4784,77 @@ static bool is_pfn_range_shared(kvm_pfn_t start, kvm_pfn_t end)
 	return true;
 }
 
+/*
+ * TODO: For UPM the private memslot's xarray should be enough to determine
+ * whether a huge page has mixed shared/private entries or not, but during
+ * initial start it defaults to private, which means it may assume all
+ * pages in a huge page are private when they are in their default shared
+ * state in the RMP table. This will lead to RMP faults if they are mapped
+ * as huge pages in the NPT. For now scan the RMP table directly, but in the
+ * future it may make sense to make the default UPM state shared, or perhaps
+ * introduce some sort of 'uninitialized' state, which should make it
+ * possible to drop this hook.
+ */
+static void sev_rmp_page_level_adjust_upm(struct kvm *kvm, gfn_t gfn, int *level)
+{
+	struct kvm_memory_slot *slot;
+	int ret, order, assigned;
+	int rmp_level = 1;
+	kvm_pfn_t pfn;
+
+	slot = gfn_to_memslot(kvm, gfn);
+	if (!kvm_slot_can_be_private(slot)) {
+		return;
+	}
+
+	ret = kvm_restricted_mem_get_pfn(slot, gfn, &pfn, &order);
+	if (ret) {
+		pr_warn_ratelimited("Failed to adjust RMP page level, unable to obtain private PFN, rc: %d\n",
+				    ret);
+		*level = PG_LEVEL_4K;
+		return;
+	}
+
+	/* If there's an error retrieving RMP entry, stick with 4K mappings */
+	assigned = snp_lookup_rmpentry(pfn, &rmp_level);
+	if (unlikely(assigned < 0))
+		goto out_adjust;
+
+	if (!assigned) {
+		kvm_pfn_t huge_pfn;
+
+		/*
+		 * If all the pages are shared then no need to keep the RMP
+		 * and NPT in sync.
+		 */
+		huge_pfn = pfn & ~(PTRS_PER_PMD - 1);
+		if (is_pfn_range_shared(huge_pfn, huge_pfn + PTRS_PER_PMD))
+			goto out;
+	}
+
+	/*
+	 * The hardware installs 2MB TLB entries to access to 1GB pages,
+	 * therefore allow NPT to use 1GB pages when pfn was added as 2MB
+	 * in the RMP table.
+	 */
+	if (rmp_level == PG_LEVEL_2M && (*level == PG_LEVEL_1G))
+		goto out;
+
+out_adjust:
+	/* Adjust the level to keep the NPT and RMP in sync */
+	*level = min_t(size_t, *level, rmp_level);
+out:
+	put_page(pfn_to_page(pfn));
+	pr_debug("%s: gfn: %llx, level: %d, rmp_level: %d, ret: %d\n", __func__, gfn, *level, rmp_level, ret);
+}
+
 void sev_rmp_page_level_adjust(struct kvm *kvm, gfn_t gfn, int *level)
 {
 	int rmp_level, assigned;
 	kvm_pfn_t pfn;
+
+	if (kvm_is_upm_enabled(kvm))
+		return sev_rmp_page_level_adjust_upm(kvm, gfn, level);
 
 	if (!cpu_feature_enabled(X86_FEATURE_SEV_SNP))
 		return;
