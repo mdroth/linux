@@ -4937,6 +4937,7 @@ static struct kvm_x86_ops svm_x86_ops __initdata = {
 
 	.adjust_mapping_level = sev_adjust_mapping_level,
 	.gmem_prepare = sev_gmem_prepare,
+	.gmem_invalidate = sev_gmem_invalidate,
 };
 
 /*

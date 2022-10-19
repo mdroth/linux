@@ -3250,6 +3250,31 @@ static int snp_rmptable_psmash(struct kvm *kvm, kvm_pfn_t pfn)
 	return psmash(pfn);
 }
 
+static int snp_make_page_shared(struct kvm *kvm, gpa_t gpa, kvm_pfn_t pfn, int level)
+{
+	int rc, rmp_level;
+
+	rc = snp_lookup_rmpentry(pfn, &rmp_level);
+	if (rc < 0)
+		return -EINVAL;
+
+	/* If page is not assigned then do nothing */
+	if (!rc)
+		return 0;
+
+	/*
+	 * Is the page part of an existing 2MB RMP entry ? Split the 2MB into
+	 * multiple of 4K-page before making the memory shared.
+	 */
+	if (level == PG_LEVEL_4K && rmp_level == PG_LEVEL_2M) {
+		rc = snp_rmptable_psmash(kvm, pfn);
+		if (rc)
+			return rc;
+	}
+
+	return rmp_make_shared(pfn, level);
+}
+
 static int snp_complete_psc_msr_protocol(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
@@ -4120,4 +4145,67 @@ int sev_gmem_prepare(struct kvm *kvm, struct kvm_memory_slot *slot,
 	}
 
 	return 0;
+}
+
+void sev_gmem_invalidate(struct kvm *kvm, struct kvm_memory_slot *slot,
+			 gfn_t start, gfn_t end)
+{
+	gfn_t gfn = start;
+
+	if (!sev_snp_guest(kvm))
+		return;
+
+	if (!kvm_slot_can_be_private(slot)) {
+		pr_warn_ratelimited("SEV: Memslot for GFN: 0x%llx is not private.\n",
+				    gfn);
+		return;
+	}
+
+	while (gfn < end) {
+		gpa_t gpa = gfn_to_gpa(gfn);
+		int level = PG_LEVEL_4K;
+		int order, rc;
+		kvm_pfn_t pfn;
+
+		rc = kvm_gmem_get_pfn(kvm, slot, gfn, &pfn, &order);
+		if (rc) {
+			pr_warn_ratelimited("SEV: Failed to retrieve restricted PFN for GFN 0x%llx, rc: %d\n",
+					    gfn, rc);
+			gfn++;
+			continue;
+		}
+
+		if (order) {
+			int rmp_level;
+
+			if (IS_ALIGNED(gpa, page_level_size(PG_LEVEL_2M)) &&
+			    gpa + page_level_size(PG_LEVEL_2M) <= gfn_to_gpa(end))
+				level = PG_LEVEL_2M;
+			else
+				pr_debug("%s: GPA 0x%llx is not aligned to 2M, skipping 2M directmap restoration\n",
+					 __func__, gpa);
+
+			/*
+			 * TODO: It may still be possible to restore 2M mapping here,
+			 * but keep it simple for now.
+			 */
+			if (level == PG_LEVEL_2M &&
+			    (!snp_lookup_rmpentry(pfn, &rmp_level) || rmp_level == PG_LEVEL_4K)) {
+				pr_debug("%s: PFN 0x%llx is not mapped as 2M private range, skipping 2M directmap restoration\n",
+					 __func__, pfn);
+				level = PG_LEVEL_4K;
+			}
+		}
+
+		pr_debug("%s: GPA %llx PFN %llx order %d level %d\n",
+			 __func__, gpa, pfn, order, level);
+		rc = snp_make_page_shared(kvm, gpa, pfn, level);
+		if (rc)
+			pr_err("SEV: Failed to restore page to shared, GPA: 0x%llx PFN: 0x%llx order: %d rc: %d\n",
+			       gpa, pfn, order, rc);
+
+		gfn += page_level_size(level) >> PAGE_SHIFT;
+		put_page(pfn_to_page(pfn));
+		cond_resched();
+	}
 }
