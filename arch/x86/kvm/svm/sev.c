@@ -4184,3 +4184,42 @@ int sev_gmem_prepare(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn, int max_order)
 
 	return 0;
 }
+
+void sev_gmem_invalidate(kvm_pfn_t start, kvm_pfn_t end)
+{
+	kvm_pfn_t pfn;
+
+	pr_debug("%s: PFN start 0x%llx PFN end 0x%llx\n", __func__, start, end);
+
+	for (pfn = start; pfn < end; pfn++) {
+		int rc, rmp_level;
+		bool assigned;
+
+		rc = snp_lookup_rmpentry(pfn, &assigned, &rmp_level);
+		if (rc) {
+			pr_warn_ratelimited("SEV: Failed to retrieve RMP entry for PFN 0x%llx error %d\n",
+					    pfn, rc);
+			continue;
+		}
+
+		if (!assigned)
+			continue;
+
+		/*
+		 * If PFN is currently assigned as a 2M page, PSMASH it into
+		 * individual 4K RMP entries before attempting to convert a
+		 * 4K sub-page.
+		 */
+		if (rmp_level > PG_LEVEL_4K) {
+			rc = snp_rmptable_psmash(pfn);
+			if (rc)
+				pr_warn_ratelimited("SEV: Failed to PSMASH RMP entry for PFN 0x%llx error %d\n",
+						    pfn, rc);
+		}
+
+		rc = rmp_make_shared(pfn, PG_LEVEL_4K);
+		if (rc)
+			pr_warn_ratelimited("SEV: Failed to update RMP entry for PFN 0x%llx error %d\n",
+					    pfn, rc);
+	}
+}
