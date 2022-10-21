@@ -243,4 +243,10 @@ static inline u64 snp_get_unsupported_features(u64 status) { return 0; }
 static inline u64 sev_get_status(void) { return 0; }
 #endif
 
+#ifdef CONFIG_KVM_AMD_SEV
+bool snp_get_rmptable_info(u64 *start, u64 *len);
+#else
+static inline bool snp_get_rmptable_info(u64 *start, u64 *len) { return false; }
+#endif
+
 #endif
