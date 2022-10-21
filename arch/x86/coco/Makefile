@@ -6,3 +6,4 @@ CFLAGS_core.o		+= -fno-stack-protector
 obj-$(CONFIG_ARCH_HAS_CC_PLATFORM) += core.o
 
 obj-$(CONFIG_INTEL_TDX_GUEST)	+= tdx/
+obj-$(CONFIG_KVM_AMD_SEV)	+= sev/
