@@ -855,6 +855,7 @@ static __init bool get_rdt_alloc_resources(void)
 static __init bool get_rdt_mon_resources(void)
 {
 	struct rdt_resource *r = &rdt_resources_all[RDT_RESOURCE_L3].r_resctrl;
+	bool mon_configurable = rdt_cpu_has(X86_FEATURE_BMEC);
 
 	if (rdt_cpu_has(X86_FEATURE_CQM_OCCUP_LLC))
 		rdt_mon_features |= (1 << QOS_L3_OCCUP_EVENT_ID);
@@ -866,7 +867,7 @@ static __init bool get_rdt_mon_resources(void)
 	if (!rdt_mon_features)
 		return false;
 
-	return !rdt_get_mon_l3_config(r);
+	return !rdt_get_mon_l3_config(r, mon_configurable);
 }
 
 static __init void __check_quirks_intel(void)
