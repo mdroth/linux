@@ -20,6 +20,7 @@
 #include <asm/delay.h>
 #include <asm/debugreg.h>
 #include <asm/resctrl.h>
+#include <asm/sev.h>
 
 #ifdef CONFIG_X86_64
 # include <asm/mmconfig.h>
@@ -618,6 +619,20 @@ static void bsp_init_amd(struct cpuinfo_x86 *c)
 	resctrl_cpu_detect(c);
 }
 
+static bool early_rmptable_check(void)
+{
+	u64 rmp_base, rmp_size;
+
+	/*
+	 * For early BSP initialization, max_pfn won't be set up yet, wait until
+	 * it is set before performing the RMP table calculations.
+	 */
+	if (!max_pfn)
+		return true;
+
+	return snp_get_rmptable_info(&rmp_base, &rmp_size);
+}
+
 static void early_detect_mem_encrypt(struct cpuinfo_x86 *c)
 {
 	u64 msr;
@@ -659,6 +674,9 @@ static void early_detect_mem_encrypt(struct cpuinfo_x86 *c)
 		if (!(msr & MSR_K7_HWCR_SMMLOCK))
 			goto clear_sev;
 
+		if (cpu_has(c, X86_FEATURE_SEV_SNP) && !early_rmptable_check())
+			goto clear_snp;
+
 		return;
 
 clear_all:
@@ -666,6 +684,7 @@ clear_all:
 clear_sev:
 		setup_clear_cpu_cap(X86_FEATURE_SEV);
 		setup_clear_cpu_cap(X86_FEATURE_SEV_ES);
+clear_snp:
 		setup_clear_cpu_cap(X86_FEATURE_SEV_SNP);
 	}
 }
