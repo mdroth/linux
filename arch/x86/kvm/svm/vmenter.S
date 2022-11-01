@@ -84,8 +84,10 @@ SYM_FUNC_START(__svm_vcpu_run)
 
 2:	cli
 
+#ifdef CONFIG_RETPOLINE
 	/* IMPORTANT: Stuff the RSB immediately after VM-Exit, before RET! */
-	FILL_RETURN_BUFFER %_ASM_AX, RSB_CLEAR_LOOPS, X86_FEATURE_RSB_VMEXIT
+	FILL_RETURN_BUFFER %_ASM_AX, RSB_CLEAR_LOOPS, X86_FEATURE_RETPOLINE
+#endif
 
 	/* "POP" @regs to RAX. */
 	pop %_ASM_AX
@@ -192,8 +194,10 @@ SYM_FUNC_START(__svm_sev_es_vcpu_run)
 
 2:	cli
 
+#ifdef CONFIG_RETPOLINE
 	/* IMPORTANT: Stuff the RSB immediately after VM-Exit, before RET! */
-	FILL_RETURN_BUFFER %_ASM_AX, RSB_CLEAR_LOOPS, X86_FEATURE_RSB_VMEXIT
+	FILL_RETURN_BUFFER %_ASM_AX, RSB_CLEAR_LOOPS, X86_FEATURE_RETPOLINE
+#endif
 
 	/*
 	 * Mitigate RETBleed for AMD/Hygon Zen uarch. RET should be
