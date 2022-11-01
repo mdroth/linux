@@ -1206,7 +1206,7 @@ static const char * const spectre_v2_strings[] = {
 	[SPECTRE_V2_EIBRS_LFENCE]		= "Mitigation: Enhanced IBRS + LFENCE",
 	[SPECTRE_V2_EIBRS_RETPOLINE]		= "Mitigation: Enhanced IBRS + Retpolines",
 	[SPECTRE_V2_IBRS]			= "Mitigation: IBRS",
-	[SPECTRE_V2_AUTO_IBRS]			= "Mitigation: Automatic IBRS",
+	[SPECTRE_V2_AUTOIBRS]			= "Mitigation: Automatic IBRS",
 };
 
 static const struct {
@@ -1374,7 +1374,7 @@ static void __init spectre_v2_determine_rsb_fill_type_at_vmexit(enum spectre_v2_
 	 */
 	switch (mode) {
 	case SPECTRE_V2_NONE:
-	case SPECTRE_V2_AUTO_IBRS:
+	case SPECTRE_V2_AUTOIBRS:
 		return;
 
 	case SPECTRE_V2_EIBRS_LFENCE:
@@ -1419,7 +1419,7 @@ static void __init spectre_v2_select_mitigation(void)
 	case SPECTRE_V2_CMD_FORCE:
 	case SPECTRE_V2_CMD_AUTO:
 		if (boot_cpu_has(X86_FEATURE_AUTOIBRS)) {
-			mode = SPECTRE_V2_AUTO_IBRS;
+			mode = SPECTRE_V2_AUTOIBRS;
 			break;
 		}
 
@@ -1470,7 +1470,7 @@ static void __init spectre_v2_select_mitigation(void)
 		break;
 
 	case SPECTRE_V2_CMD_AUTOIBRS:
-		mode = SPECTRE_V2_AUTO_IBRS;
+		mode = SPECTRE_V2_AUTOIBRS;
 		break;
 	}
 
@@ -1487,7 +1487,7 @@ static void __init spectre_v2_select_mitigation(void)
 	case SPECTRE_V2_EIBRS:
 		break;
 
-	case SPECTRE_V2_AUTO_IBRS:
+	case SPECTRE_V2_AUTOIBRS:
 		rdmsrl(MSR_EFER, efer);
 		wrmsrl(MSR_EFER, efer | EFER_AUTOIBRS);
 		break;
@@ -1587,7 +1587,7 @@ static void __init spectre_v2_select_mitigation(void)
 		}
 
 	} else if (boot_cpu_has(X86_FEATURE_IBRS) && !spectre_v2_in_ibrs_mode(mode) &&
-		   mode != SPECTRE_V2_AUTO_IBRS) {
+		   mode != SPECTRE_V2_AUTOIBRS) {
 		setup_force_cpu_cap(X86_FEATURE_USE_IBRS_FW);
 		pr_info("Enabling Restricted Speculation for firmware calls\n");
 	}
