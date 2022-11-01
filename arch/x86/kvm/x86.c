@@ -4414,7 +4414,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_EXIT_HYPERCALL:
 		r = KVM_EXIT_HYPERCALL_VALID_MASK;
 		break;
-#ifdef CONFIG_HAVE_KVM_PRIVATE_MEM
+#ifdef CONFIG_KVM_GENERIC_PRIVATE_MEM
 	case KVM_CAP_UNMAPPED_PRIVATE_MEM:
 		r = 1;
 		break;
