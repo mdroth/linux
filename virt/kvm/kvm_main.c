@@ -1916,7 +1916,6 @@ static int kvm_prepare_memory_region(struct kvm *kvm,
 	int r;
 
 	if (change == KVM_MR_CREATE && new->flags & KVM_MEM_PRIVATE) {
-		kvm_restrictedmem_register(new);
 #ifdef CONFIG_HAVE_KVM_GUEST_PRIVATE_ACCESS_TRACKING
 		r = kvm_alloc_shared_bitmap(new);
 		if (r)
