@@ -728,6 +728,8 @@ void sev_snp_init_protected_guest_state(struct kvm_vcpu *vcpu);
 int sev_update_mem_attr(struct kvm_memory_slot *slot, unsigned int attr,
 			gfn_t start, gfn_t end);
 
+bool sev_fault_is_private(struct kvm *kvm, gpa_t gpa, u64 error_code, bool *private_fault);
+
 /* vmenter.S */
 
 void __svm_sev_es_vcpu_run(struct vcpu_svm *svm, bool spec_ctrl_intercepted);

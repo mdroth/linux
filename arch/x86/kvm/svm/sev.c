@@ -4497,3 +4497,13 @@ int sev_update_mem_attr(struct kvm_memory_slot *slot, unsigned int attr,
 
 	return 0;
 }
+
+bool sev_fault_is_private(struct kvm *kvm, gpa_t gpa, u64 error_code, bool *private_fault)
+{
+	if (!sev_snp_guest(kvm))
+		return false;
+
+	*private_fault = (error_code & PFERR_GUEST_ENC_MASK) ? true : false;
+
+	return true;
+}
