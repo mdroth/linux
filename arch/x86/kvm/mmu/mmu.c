@@ -4271,24 +4271,6 @@ static bool is_page_fault_stale(struct kvm_vcpu *vcpu,
 	       mmu_invalidate_retry_gfn(vcpu->kvm, mmu_seq, fault->gfn);
 }
 
-static bool kvm_is_fault_private(struct kvm *kvm, struct kvm_page_fault *fault)
-{
-	struct kvm_memory_slot *slot = fault->slot;
-	bool is_private;
-
-	if (!kvm_slot_can_be_private(slot))
-		return false;
-
-	mutex_lock(&kvm->slots_lock);
-	if (slot->shared_bitmap)
-		is_private = !test_bit(fault->gfn - slot->base_gfn, slot->shared_bitmap);
-	else
-		is_private = false;
-	mutex_unlock(&kvm->slots_lock);
-
-	return is_private;
-}
-
 static int direct_page_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 {
 	bool is_tdp_mmu_fault = is_tdp_mmu(vcpu->arch.mmu);
@@ -4298,7 +4280,6 @@ static int direct_page_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 
 	fault->gfn = fault->addr >> PAGE_SHIFT;
 	fault->slot = kvm_vcpu_gfn_to_memslot(vcpu, fault->gfn);
-	fault->is_private = kvm_is_fault_private(vcpu->kvm, fault);
 
 	if (page_fault_handle_page_track(vcpu, fault))
 		return RET_PF_EMULATE;
