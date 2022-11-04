@@ -3180,3 +3180,36 @@ void sev_vcpu_deliver_sipi_vector(struct kvm_vcpu *vcpu, u8 vector)
 
 	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb, 1);
 }
+
+int sev_fault_is_private(struct kvm *kvm, gpa_t gpa, u64 error_code, bool *private_fault)
+{
+	gfn_t gfn = gpa_to_gfn(gpa);
+
+	if (!kvm_is_upm_enabled(kvm) || !sev_guest(kvm))
+		goto out_unhandled;
+
+	/*
+	 * For SEV, the hypervisor is not aware of implicit conversions in the
+	 * guest, so it relies purely on explicit conversions via
+	 * KVM_EXIT_HYPERCALL, so the resulting handling by userspace should
+	 * update the backing memory source accordingly. Therefore, the backing
+	 * source is the only indicator of whether the fault should be treated
+	 * as private or not.
+	 *
+	 * TODO: What happens if userspace doesn't honor this and leaves the
+	 * page state unchanged? Guest might end up with a private mapping for
+	 * a non-private backing page. Might be worth tracking the request in
+	 * KVM and generating KVM_EXIT_MEMORY_FAULTs until userspace complies.
+	 * The shared bitmap used for access-tracking for UPM selftests could
+	 * potentially be re-used here (and the KVM_EXIT_HYPERCALL conflicts
+	 * with SEV so it doesn't seem like a good idea to run the selftests
+	 * via SEV guests anyway, leaving the shared bitmap free for other this
+	 * other use).
+	 */
+	*private_fault = kvm_mem_is_private(kvm, gfn);
+
+	return 1;
+
+out_unhandled:
+	return 0;
+}
