@@ -19,7 +19,20 @@
  * MCE events are rare, so a fixed size memory pool should be enough. Use
  * 2 pages to save MCE events for now (~80 MCE records at most).
  */
-#define MCE_POOLSZ	(2 * PAGE_SIZE)
+#define MCE_POOLSZ	4456448 //(2 * PAGE_SIZE)
+
+// NOTE: The MCE genpool holds instances of struct mce_evt_llist which is 136 bytes at the moment.
+// Let's assume we want enough space to save all MCA errors that the HW can hold at a single time.
+// Each MCA bank can hold only 1 error at a time if we disregard duplicates like MCA_DESTAT.
+//
+// Space needed = size of mce_evt_llist * number of CPUs * number of MCA banks
+// 4456448 = 136 * 512 * 64
+//
+// Our largest theoretical system has 512 CPUs (2P Bergamo).
+// The maximum architecturally possible number of MCA banks per CPU is 64.
+//
+// Of course, this is overkill. Most systems won't have 512 CPUs, and most CPUs don't have 64 MCA
+// banks. This value should really be calculated dynamically...
 
 static struct gen_pool *mce_evt_pool;
 static LLIST_HEAD(mce_event_llist);
