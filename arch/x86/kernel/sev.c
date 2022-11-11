@@ -2614,6 +2614,8 @@ static int rmpupdate(u64 pfn, struct rmp_state *val)
 	level = RMP_TO_X86_PG_LEVEL(val->pagesize);
 	npages = page_level_size(level) / PAGE_SIZE;
 
+	pr_debug("%s: gpa: 0x%llx, pfn: 0x%llx, pagesize: %d, npages: %d, assigned: %d\n", __func__, val->gpa, pfn, val->pagesize, npages, val->assigned);
+
 	/*
 	 * If page is getting assigned in the RMP table then unmap it from the
 	 * direct map.
