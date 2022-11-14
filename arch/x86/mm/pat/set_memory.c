@@ -1516,6 +1516,9 @@ static int __change_page_attr(struct cpa_data *cpa, int primary)
 	address = __cpa_addr(cpa, cpa->curpage);
 repeat:
 	kpte = _lookup_address_cpa(cpa, address, &level);
+	pr_debug("%s: address: 0x%lx, level: %d, kpte: %px\n", __func__,
+		 address, level, kpte);
+
 	if (!kpte)
 		return __cpa_process_fault(cpa, address, primary);
 
@@ -2251,6 +2254,16 @@ int set_direct_map_invalid_noflush(struct page *page)
 int set_direct_map_default_noflush(struct page *page)
 {
 	return __set_pages_p(page, 1);
+}
+
+/*
+ * FIXME: this doesn't seem to actually restore 2M mapping,
+ * __change_page_attr_set_clr() has logic to maintain 2M
+ * mappings, but not to re-promote to 2M after a split.
+ */
+int set_direct_map_default_noflush_2M(struct page *page)
+{
+	return __set_pages_p(page, 512);
 }
 
 #ifdef CONFIG_DEBUG_PAGEALLOC
