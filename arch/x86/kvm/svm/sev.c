@@ -5159,6 +5159,7 @@ void sev_invalidate_private_range(struct kvm_memory_slot *slot, gfn_t start, gfn
 {
 	unsigned long pfn = page_to_pfn(page);
 	gfn_t gfn = start;
+	int rmp_level;
 
 	if (!sev_snp_guest(slot->kvm))
 		return;
@@ -5169,19 +5170,36 @@ void sev_invalidate_private_range(struct kvm_memory_slot *slot, gfn_t start, gfn
 		return;
 	}
 
+	if (order && !IS_ALIGNED(slot->base_gfn, (1 << order))) {
+		pr_debug("%s: slot base GFN is not aligned to page order, skipping 2M directmap restoration\n",
+			 __func__);
+		order = 0;
+	}
+
+	/* TODO: It may still be possible to restore 2M mapping here, but keep it simple for now. */
+	if (order && (!snp_lookup_rmpentry(pfn, &rmp_level) || rmp_level == PG_LEVEL_4K)) {
+		pr_debug("%s: PFN is not mapped as 2M private range, skipping 2M directmap restoration\n",
+			 __func__);
+		order = 0;
+	}
+
 	while (gfn < end) {
 		gpa_t gpa = gfn_to_gpa(gfn);
+		int level = PG_LEVEL_4K;
 		int rc;
 
-		pr_debug("%s: gpa %llx pfn %lx order %d\n",
-			 __func__, gpa, pfn, order);
-		rc = snp_make_page_shared(slot->kvm, gpa, pfn,
-					  PG_LEVEL_4K);
+		if (order && IS_ALIGNED(gpa, page_level_size(PG_LEVEL_2M)) &&
+		    gpa + page_level_size(PG_LEVEL_2M) <= gfn_to_gpa(end))
+			level = PG_LEVEL_2M;
+
+		pr_debug("%s: gpa %llx pfn %lx order %d level %d\n",
+			 __func__, gpa, pfn, order, level);
+		rc = snp_make_page_shared(slot->kvm, gpa, pfn, level);
 		if (rc)
 			pr_err("%s: failed gpa %llx pfn %lx order %d rc %d\n",
 				__func__, gpa, pfn, order, rc);
 
-		gfn++;
-		pfn++;
+		gfn += page_level_size(level) >> PAGE_SHIFT;
+		pfn += page_level_size(level) >> PAGE_SHIFT;
 	}
 }
