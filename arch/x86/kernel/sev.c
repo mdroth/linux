@@ -2553,6 +2553,15 @@ static int restore_direct_map(u64 pfn, int npages)
 {
 	int i, ret = 0;
 
+	if (npages == 512) {
+		ret = set_direct_map_default_noflush_2M(pfn_to_page(pfn));
+		if (!ret)
+			goto cleanup;
+
+		WARN(1, "Failed to restore 2M direct map for pfn 0x%llx, falling back to split restoration.\n",
+		     pfn);
+	}
+
 	for (i = 0; i < npages; i++) {
 		ret = set_direct_map_default_noflush(pfn_to_page(pfn + i));
 		if (ret)
