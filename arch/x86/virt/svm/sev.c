@@ -59,6 +59,12 @@ struct rmpentry {
 static struct rmpentry *rmptable_start __ro_after_init;
 static u64 rmptable_max_pfn __ro_after_init;
 
+/* list of pages which are leaked and cannot be reclaimed */
+static LIST_HEAD(snp_leaked_pages_list);
+static DEFINE_SPINLOCK(snp_leaked_pages_list_lock);
+
+static atomic_long_t snp_nr_leaked_pages = ATOMIC_LONG_INIT(0);
+
 #undef pr_fmt
 #define pr_fmt(fmt)	"SEV-SNP: " fmt
 
@@ -518,3 +524,25 @@ int rmp_make_shared(u64 pfn, enum pg_level level)
 	return rmpupdate(pfn, &val);
 }
 EXPORT_SYMBOL_GPL(rmp_make_shared);
+
+void snp_leak_pages(u64 pfn, unsigned int npages)
+{
+	struct page *page = pfn_to_page(pfn);
+
+	pr_debug("%s: leaking PFN range 0x%llx-0x%llx\n", __func__, pfn, pfn + npages);
+
+	spin_lock(&snp_leaked_pages_list_lock);
+	while (npages--) {
+		/*
+		 * Reuse the page's buddy list for chaining into the leaked
+		 * pages list. This page should not be on a free list currently
+		 * and is also unsafe to be added to a free list.
+		 */
+		list_add_tail(&page->buddy_list, &snp_leaked_pages_list);
+		sev_dump_rmpentry(pfn);
+		pfn++;
+	}
+	spin_unlock(&snp_leaked_pages_list_lock);
+	atomic_long_inc(&snp_nr_leaked_pages);
+}
+EXPORT_SYMBOL_GPL(snp_leak_pages);
