@@ -908,6 +908,12 @@ int sev_do_cmd(int cmd, void *data, int *psp_ret);
 
 void *psp_copy_user_blob(u64 uaddr, u32 len);
 
+/**
+ * sev_mark_pages_offline - insert non-reclaimed firmware/guest pages
+ * into a leaked pages list.
+ */
+void snp_mark_pages_offline(unsigned long pfn, unsigned int npages);
+
 #else	/* !CONFIG_CRYPTO_DEV_SP_PSP */
 
 static inline int
@@ -933,6 +939,8 @@ static inline int
 sev_issue_cmd_external_user(struct file *filep, unsigned int id, void *data, int *error) { return -ENODEV; }
 
 static inline void *psp_copy_user_blob(u64 __user uaddr, u32 len) { return ERR_PTR(-EINVAL); }
+
+void snp_mark_pages_offline(unsigned long pfn, unsigned int npages) {}
 
 #endif	/* CONFIG_CRYPTO_DEV_SP_PSP */
 

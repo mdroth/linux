@@ -43,6 +43,12 @@
 static DEFINE_MUTEX(sev_cmd_mutex);
 static struct sev_misc_dev *misc_dev;
 
+/* list of pages which are leaked and cannot be reclaimed */
+static LIST_HEAD(snp_leaked_pages_list);
+static DEFINE_SPINLOCK(snp_leaked_pages_list_lock);
+
+static atomic_long_t snp_nr_leaked_pages = ATOMIC_LONG_INIT(0);
+
 static int psp_cmd_timeout = 100;
 module_param(psp_cmd_timeout, int, 0644);
 MODULE_PARM_DESC(psp_cmd_timeout, " default timeout value, in seconds, for PSP commands");
@@ -190,6 +196,28 @@ static int sev_cmd_buffer_len(int cmd)
 
 	return 0;
 }
+
+void snp_mark_pages_offline(unsigned long pfn, unsigned int npages)
+{
+	struct page *page = pfn_to_page(pfn);
+
+	WARN(1, "psc failed, pfn 0x%lx pages %d (marked offline)\n", pfn, npages);
+
+	spin_lock(&snp_leaked_pages_list_lock);
+	while (npages--) {
+		/*
+		 * Reuse the page's buddy list for chaining into the leaked
+		 * pages list. This page should not be on a free list currently
+		 * and is also unsafe to be added to a free list.
+		 */
+		list_add_tail(&page->buddy_list, &snp_leaked_pages_list);
+		sev_dump_rmpentry(pfn);
+		pfn++;
+	}
+	spin_unlock(&snp_leaked_pages_list_lock);
+	atomic_long_inc(&snp_nr_leaked_pages);
+}
+EXPORT_SYMBOL_GPL(snp_mark_pages_offline);
 
 static void *sev_fw_alloc(unsigned long len)
 {
