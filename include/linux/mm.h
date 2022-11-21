@@ -1203,6 +1203,10 @@ static inline void put_page(struct page *page)
 {
 	struct folio *folio = page_folio(page);
 
+	if (page->restricted)
+		pr_debug("%s: page: %px, PFN: 0x%lx, ref_count: %d\n",
+			__func__, page, page_to_pfn(page), page_ref_count(page));
+
 	/*
 	 * For some devmap managed pages we need to catch refcount transition
 	 * from 2 to 1:
