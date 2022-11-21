@@ -2376,6 +2376,9 @@ static inline int kvm_restricted_mem_get_pfn(struct kvm_memory_slot *slot,
 	ret = restrictedmem_get_page(slot->restricted_file, index,
 				     &page, order);
 	*pfn = page_to_pfn(page);
+	page->restricted = true;
+	pr_debug("%s: GFN: 0x%llx, PFN: 0x%llx, page: %px, ref_count: %d\n",
+		__func__, gfn, *pfn, page, page_ref_count(page));
 	return ret;
 }
 
@@ -2394,6 +2397,7 @@ static inline int kvm_restricted_mem_get_pfn_noalloc(struct kvm_memory_slot *slo
 		return ret;
 	}
 	*pfn = page_to_pfn(page);
+	page->restricted = true;
 	pr_debug("%s: GFN: 0x%llx, PFN: 0x%llx, ref_count: %d\n",
 		 __func__, gfn, *pfn, page_ref_count(page));
 	return ret;
