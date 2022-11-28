@@ -365,6 +365,13 @@ static inline int kvm_restricted_mem_get_pfn(struct kvm_memory_slot *slot,
 	WARN_ON_ONCE(1);
 	return -EOPNOTSUPP;
 }
+
+static inline int kvm_restricted_mem_get_pfn_noalloc(struct kvm_memory_slot *slot,
+						     gfn_t gfn, kvm_pfn_t *pfn, int *order)
+{
+	WARN_ON_ONCE(1);
+	return -EOPNOTSUPP;
+}
 #endif /* CONFIG_HAVE_KVM_RESTRICTED_MEM */
 
 #endif /* __KVM_X86_MMU_INTERNAL_H */

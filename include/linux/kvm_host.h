@@ -2362,6 +2362,26 @@ static inline int kvm_restricted_mem_get_pfn(struct kvm_memory_slot *slot,
 	*pfn = page_to_pfn(page);
 	return ret;
 }
+
+static inline int kvm_restricted_mem_get_pfn_noalloc(struct kvm_memory_slot *slot,
+						     gfn_t gfn, kvm_pfn_t *pfn, int *order)
+{
+	int ret;
+	struct page *page;
+	pgoff_t index = gfn - slot->base_gfn +
+			(slot->restricted_offset >> PAGE_SHIFT);
+
+	ret = restrictedmem_get_page_noalloc(slot->restricted_file, index,
+					     &page, order);
+	if (ret) {
+		pr_debug("%s: marker 0b: ret: %d\n", __func__, ret);
+		return ret;
+	}
+	*pfn = page_to_pfn(page);
+	pr_debug("%s: GFN: 0x%llx, PFN: 0x%llx, ref_count: %d\n",
+		 __func__, gfn, *pfn, page_ref_count(page));
+	return ret;
+}
 #endif /* CONFIG_HAVE_KVM_RESTRICTED_MEM */
 
 #endif

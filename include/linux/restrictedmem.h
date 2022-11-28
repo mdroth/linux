@@ -29,6 +29,9 @@ void restrictedmem_unregister_notifier(struct file *file,
 int restrictedmem_get_page(struct file *file, pgoff_t offset,
 			   struct page **pagep, int *order);
 
+int restrictedmem_get_page_noalloc(struct file *file, pgoff_t offset,
+				   struct page **pagep, int *order);
+
 static inline bool file_is_restrictedmem(struct file *file)
 {
 	return file->f_inode->i_sb->s_magic == RESTRICTEDMEM_MAGIC;
@@ -48,6 +51,12 @@ static inline void restrictedmem_unregister_notifier(struct file *file,
 
 static inline int restrictedmem_get_page(struct file *file, pgoff_t offset,
 					 struct page **pagep, int *order)
+{
+	return -1;
+}
+
+static inline int restrictedmem_get_page_noalloc(struct file *file, pgoff_t offset,
+						 struct page **pagep, int *order)
 {
 	return -1;
 }

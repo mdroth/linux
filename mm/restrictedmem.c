@@ -289,3 +289,26 @@ int restrictedmem_get_page(struct file *file, pgoff_t offset,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(restrictedmem_get_page);
+
+int restrictedmem_get_page_noalloc(struct file *file, pgoff_t offset,
+				   struct page **pagep, int *order)
+{
+	struct restrictedmem_data *data = file->f_mapping->private_data;
+	struct file *memfd = data->memfd;
+	struct page *page;
+	int ret;
+
+	ret = shmem_getpage(file_inode(memfd), offset, &page, SGP_NOALLOC);
+	if (ret)
+		return ret;
+
+	*pagep = page;
+	if (order)
+		*order = thp_order(compound_head(page));
+
+	SetPageUptodate(page);
+	unlock_page(page);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(restrictedmem_get_page_noalloc);
