@@ -632,6 +632,14 @@ int migrate_folio_extra(struct address_space *mapping, struct folio *dst,
 
 	BUG_ON(folio_test_writeback(src));	/* Writeback must be complete */
 
+	if (src->page.restricted)
+		pr_warn("Migrating restricted page, SRC pfn: 0x%lx, folio_ref_count: %d, folio_order: %d\n",
+			page_to_pfn(&src->page), folio_ref_count(src), folio_order(src));
+
+	if (dst->page.restricted)
+		pr_warn("Migrating restricted page, DST pfn: 0x%lx, folio_ref_count: %d, folio_order: %d\n",
+			page_to_pfn(&dst->page), folio_ref_count(dst), folio_order(dst));
+
 	rc = folio_migrate_mapping(mapping, dst, src, extra_count);
 
 	if (rc != MIGRATEPAGE_SUCCESS)
