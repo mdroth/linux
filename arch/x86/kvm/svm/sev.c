@@ -2087,6 +2087,7 @@ static void *snp_context_create(struct kvm *kvm, struct kvm_sev_cmd *argp)
 		goto e_free;
 
 	sev->snp_certs_data = certs_data;
+	sev->snp_certs_len = 0;
 
 	return context;
 
@@ -2402,6 +2403,86 @@ e_free:
 	return ret;
 }
 
+static int snp_get_instance_certs(struct kvm *kvm, struct kvm_sev_cmd *argp)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	struct kvm_sev_snp_get_certs params;
+
+	if (!sev_snp_guest(kvm))
+		return -ENOTTY;
+
+	if (!sev->snp_context)
+		return -EINVAL;
+
+	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data,
+			   sizeof(params)))
+		return -EFAULT;
+
+	/* No instance certs set. */
+	if (!sev->snp_certs_len)
+		return -ENOENT;
+
+	if (params.certs_len < sev->snp_certs_len) {
+		/* Output buffer too small. Return the required size. */
+		params.certs_len = sev->snp_certs_len;
+
+		if (copy_to_user((void __user *)(uintptr_t)argp->data, &params,
+				 sizeof(params)))
+			return -EFAULT;
+
+		return -EINVAL;
+	}
+
+	if (copy_to_user((void __user *)(uintptr_t)params.certs_uaddr,
+			 sev->snp_certs_data, sev->snp_certs_len))
+		return -EFAULT;
+
+	return 0;
+}
+
+static int snp_set_instance_certs(struct kvm *kvm, struct kvm_sev_cmd *argp)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	unsigned long length = SEV_FW_BLOB_MAX_SIZE;
+	void *to_certs = sev->snp_certs_data;
+	struct kvm_sev_snp_set_certs params;
+
+	if (!sev_snp_guest(kvm))
+		return -ENOTTY;
+
+	if (!sev->snp_context)
+		return -EINVAL;
+
+	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data,
+			   sizeof(params)))
+		return -EFAULT;
+
+	if (params.certs_len > SEV_FW_BLOB_MAX_SIZE)
+		return -EINVAL;
+
+	/*
+	 * Setting a length of 0 is the same as "uninstalling" instance-
+	 * specific certificates.
+	 */
+	if (params.certs_len == 0) {
+		sev->snp_certs_len = 0;
+		return 0;
+	}
+
+	/* Page-align the length */
+	length = (params.certs_len + PAGE_SIZE - 1) & PAGE_MASK;
+
+	if (copy_from_user(to_certs,
+			   (void __user *)(uintptr_t)params.certs_uaddr,
+			   params.certs_len)) {
+		return -EFAULT;
+	}
+
+	sev->snp_certs_len = length;
+
+	return 0;
+}
+
 int sev_mem_enc_ioctl(struct kvm *kvm, void __user *argp)
 {
 	struct kvm_sev_cmd sev_cmd;
@@ -2500,6 +2581,12 @@ int sev_mem_enc_ioctl(struct kvm *kvm, void __user *argp)
 		break;
 	case KVM_SEV_SNP_LAUNCH_FINISH:
 		r = snp_launch_finish(kvm, &sev_cmd);
+		break;
+	case KVM_SEV_SNP_GET_CERTS:
+		r = snp_get_instance_certs(kvm, &sev_cmd);
+		break;
+	case KVM_SEV_SNP_SET_CERTS:
+		r = snp_set_instance_certs(kvm, &sev_cmd);
 		break;
 	default:
 		r = -EINVAL;
@@ -3548,8 +3635,28 @@ static void snp_handle_ext_guest_request(struct vcpu_svm *svm, gpa_t req_gpa, gp
 	if (rc)
 		goto unlock;
 
-	rc = snp_guest_ext_guest_request(&req, (unsigned long)sev->snp_certs_data,
-					 &data_npages, &err);
+	/*
+	 * If the VMM has overridden the certs, then change the error message
+	 * if the size is inappropriate for the override. Otherwise, use a
+	 * regular guest request and copy back the instance certs.
+	 */
+	if (sev->snp_certs_len) {
+		if ((data_npages << PAGE_SHIFT) < sev->snp_certs_len) {
+			rc = -EINVAL;
+			err = SNP_GUEST_REQ_INVALID_LEN;
+			goto datalen;
+		}
+		rc = sev_issue_cmd(kvm, SEV_CMD_SNP_GUEST_REQUEST, &req,
+				   (int *)&err);
+	} else {
+		rc = snp_guest_ext_guest_request(&req,
+						 (unsigned long)sev->snp_certs_data,
+						 &data_npages, &err);
+	}
+datalen:
+	if (sev->snp_certs_len)
+		data_npages = sev->snp_certs_len >> PAGE_SHIFT;
+
 	if (rc) {
 		/*
 		 * If buffer length is small then return the expected
