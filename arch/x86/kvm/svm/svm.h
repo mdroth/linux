@@ -95,6 +95,7 @@ struct kvm_sev_info {
 	void *snp_context;      /* SNP guest context page */
 	spinlock_t psc_lock;
 	void *snp_certs_data;
+	unsigned int snp_certs_len; /* Size of instance override for certs */
 	struct mutex guest_req_lock;
 
 	u64 sev_features;	/* Features set at VMSA creation */
