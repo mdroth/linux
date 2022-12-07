@@ -24,6 +24,7 @@
 #include <linux/io.h>
 #include <linux/cpumask.h>
 #include <linux/iommu.h>
+#include <linux/amd-iommu.h>
 
 #include <asm/cpu_entry_area.h>
 #include <asm/stacktrace.h>
@@ -2421,7 +2422,7 @@ static int __init snp_rmptable_init(void)
 	if (family != 0x19 || model > 0xaf)
 		goto nosnp;
 
-	if (!iommu_sev_snp_supported())
+	if (amd_iommu_snp_enable())
 		goto nosnp;
 
 	if (__snp_rmptable_init())
