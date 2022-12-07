@@ -957,12 +957,15 @@ static void __init kvm_init_platform(void)
 
 		for (i = 0; i < e820_table->nr_entries; i++) {
 			struct e820_entry *entry = &e820_table->entries[i];
+			void *stack = NULL;
 
 			if (entry->type != E820_TYPE_RAM)
 				continue;
 
 			nr_pages = DIV_ROUND_UP(entry->size, PAGE_SIZE);
 
+			pr_info("hc_map_range: GPA: 0x%llx, nr_pages: 0x%lx, stack GPA: 0x%lx\n",
+				entry->addr, nr_pages, __pa((unsigned long)&stack));
 			kvm_sev_hypercall3(KVM_HC_MAP_GPA_RANGE, entry->addr,
 				       nr_pages,
 				       KVM_MAP_GPA_RANGE_ENCRYPTED | KVM_MAP_GPA_RANGE_PAGE_SZ_4K);
