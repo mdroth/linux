@@ -313,6 +313,8 @@ static void enc_dec_hypercall(unsigned long vaddr, int npages, bool enc)
 		pmask = page_level_mask(level);
 
 		notify_page_enc_status_changed(pfn, psize >> PAGE_SHIFT, enc);
+		pr_info("enc_dec_hypercall: GFN: 0x%lx, nr_pages: 0x%x, enc: %d\n",
+			pfn, psize >> PAGE_SHIFT, enc);
 
 		vaddr = (vaddr & pmask) + psize;
 	}
