@@ -2301,6 +2301,27 @@ device_initcall(snp_init_platform_device);
 #undef pr_fmt
 #define pr_fmt(fmt)	"SEV-SNP: " fmt
 
+static int __mfd_enable(unsigned int cpu)
+{
+	u64 val;
+
+	if (!cpu_feature_enabled(X86_FEATURE_SEV_SNP))
+		return 0;
+
+	rdmsrl(MSR_AMD64_SYSCFG, val);
+
+	val |= MSR_AMD64_SYSCFG_MFDM;
+
+	wrmsrl(MSR_AMD64_SYSCFG, val);
+
+	return 0;
+}
+
+static __init void mfd_enable(void *arg)
+{
+	__mfd_enable(smp_processor_id());
+}
+
 static int __snp_enable(unsigned int cpu)
 {
 	u64 val;
@@ -2308,15 +2329,7 @@ static int __snp_enable(unsigned int cpu)
 	if (!cpu_feature_enabled(X86_FEATURE_SEV_SNP))
 		return 0;
 
-	/*
-	 * Need to enable MDFM before setting SNPEn
-	 * as SNPEn=1 will lock MFDM for that core.
-	 */
 	rdmsrl(MSR_AMD64_SYSCFG, val);
-
-	val |= MSR_AMD64_SYSCFG_MFDM;
-
-	wrmsrl(MSR_AMD64_SYSCFG, val);
 
 	val |= MSR_AMD64_SYSCFG_SNP_EN;
 	val |= MSR_AMD64_SYSCFG_SNP_VMPL_EN;
@@ -2394,6 +2407,9 @@ static __init int __snp_rmptable_init(void)
 
 	/* Flush the caches to ensure that data is written before SNP is enabled. */
 	wbinvd_on_all_cpus();
+
+	/* MFDM must be enabled on all the CPUs prior to enabling SNP. */
+	on_each_cpu(mfd_enable, NULL, 1);
 
 	/* Enable SNP on all CPUs. */
 	on_each_cpu(snp_enable, NULL, 1);
