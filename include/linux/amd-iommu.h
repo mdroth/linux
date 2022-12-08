@@ -87,6 +87,9 @@ struct amd_iommu *get_amd_iommu(unsigned int idx);
 
 #ifdef CONFIG_KVM_AMD_SEV
 int amd_iommu_snp_enable(void);
+int amd_iommu_snp_disable(void);
+#else
+static inline int amd_iommu_snp_disable(void) { return 0; }
 #endif
 
 #endif /* _ASM_X86_AMD_IOMMU_H */
