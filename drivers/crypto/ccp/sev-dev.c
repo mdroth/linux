@@ -230,6 +230,11 @@ static int snp_reclaim_pages(unsigned long pfn, unsigned int npages, bool locked
 	int ret, err, i, n = 0;
 	u64 paddr;
 
+	if (!pfn_valid(pfn)) {
+		pr_err("%s: Invalid PFN %lx\n", __func__, pfn);
+		return 0;
+	}
+
 	for (i = 0; i < npages; i++, pfn++, n++) {
 		paddr = pfn << PAGE_SHIFT;
 
@@ -277,7 +282,7 @@ cleanup:
 	 * reclaiming the pages which were already changed to the
 	 * firmware state.
 	 */
-	snp_reclaim_pages(paddr >> PAGE_SHIFT, n, locked);
+	snp_reclaim_pages(__sme_clr(paddr) >> PAGE_SHIFT, n, locked);
 
 	return rc;
 }
