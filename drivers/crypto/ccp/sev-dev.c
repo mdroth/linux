@@ -2063,7 +2063,7 @@ int snp_guest_dbg_decrypt_page(u64 gctx_pfn, u64 src_pfn, u64 dst_pfn, int *erro
 	ret = sev_do_cmd(SEV_CMD_SNP_DBG_DECRYPT, &data, error);
 
 	/* Restore the page state */
-	if (snp_reclaim_pages(data.dst_addr >> PAGE_SHIFT, 1, false))
+	if (snp_reclaim_pages(__sme_clr(data.dst_addr) >> PAGE_SHIFT, 1, false))
 		ret = -EIO;
 
 	return ret;
