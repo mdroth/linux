@@ -594,7 +594,8 @@ static int unmap_firmware_writeable(u64 *paddr, u32 len, bool guest, struct snp_
 
 	/* If paddr points to a guest memory then restore the page state to hypervisor. */
 	if (guest) {
-		if (snp_reclaim_pages(*paddr >> PAGE_SHIFT, npages, true))
+		if (snp_reclaim_pages(__sme_clr(*paddr) >> PAGE_SHIFT,
+				      npages, true))
 			return -EFAULT;
 
 		goto done;
@@ -607,7 +608,7 @@ static int unmap_firmware_writeable(u64 *paddr, u32 len, bool guest, struct snp_
 	 * the pages from the direct map, and to restore the direct map the pages must
 	 * be transitioned back to the shared state.
 	 */
-	if (snp_reclaim_pages(*paddr >> PAGE_SHIFT, npages, true))
+	if (snp_reclaim_pages(__pa(map->host) >> PAGE_SHIFT, npages, true))
 		return -EFAULT;
 
 	/* Copy the response data firmware buffer to the callers buffer. */
