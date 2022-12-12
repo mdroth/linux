@@ -225,10 +225,11 @@ void snp_mark_pages_offline(unsigned long pfn, unsigned int npages)
 }
 EXPORT_SYMBOL_GPL(snp_mark_pages_offline);
 
-static int snp_reclaim_pages(unsigned long pfn, unsigned int npages, bool locked)
+static int snp_reclaim_pages(unsigned long paddr, unsigned int npages, bool locked)
 {
+	/* Cbit maybe set in the paddr */
+	unsigned long pfn = __sme_clr(paddr) >> PAGE_SHIFT;
 	int ret, err, i, n = 0;
-	u64 paddr;
 
 	if (!pfn_valid(pfn)) {
 		pr_err("%s: Invalid PFN %lx\n", __func__, pfn);
@@ -282,7 +283,7 @@ cleanup:
 	 * reclaiming the pages which were already changed to the
 	 * firmware state.
 	 */
-	snp_reclaim_pages(__sme_clr(paddr) >> PAGE_SHIFT, n, locked);
+	snp_reclaim_pages(paddr, n, locked);
 
 	return rc;
 }
@@ -356,7 +357,7 @@ static void __snp_free_firmware_pages(struct page *page, int order, bool locked)
 
 	paddr = __pa((unsigned long)page_address(page));
 	if (sev->snp_initialized &&
-	    snp_reclaim_pages(paddr >> PAGE_SHIFT, npages, locked))
+	    snp_reclaim_pages(paddr, npages, locked))
 		return;
 
 	__free_pages(page, order);
