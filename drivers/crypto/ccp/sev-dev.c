@@ -1800,7 +1800,7 @@ static int sev_ioctl_snp_platform_status(struct sev_issue_cmd *argp)
 	ret = __sev_do_cmd_locked(SEV_CMD_SNP_PLATFORM_STATUS, &buf, &argp->error);
 
 	/* Change the page state before accessing it */
-	if (snp_reclaim_pages(__pa(data) >> PAGE_SHIFT, 1, true)) {
+	if (snp_reclaim_pages(__pa(data), 1, true)) {
 		snp_mark_pages_offline(__pa(data) >> PAGE_SHIFT, 1);
 		return -EFAULT;
 	}
