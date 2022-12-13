@@ -326,6 +326,8 @@ static int sev_guest_init(struct kvm *kvm, struct kvm_sev_cmd *argp)
 		ret = verify_snp_init_flags(kvm, argp);
 		if (ret)
 			goto e_free;
+
+		mutex_init(&sev->guest_req_lock);
 	}
 
 	ret = sev_platform_init(&argp->error);
@@ -383,6 +385,23 @@ static int sev_issue_cmd(struct kvm *kvm, int id, void *data, int *error)
 	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
 
 	return __sev_issue_cmd(sev->fd, id, data, error);
+}
+
+static int sev_issue_cmd_cert(struct kvm *kvm, int id, void *data,
+			      struct sev_snp_certs **snp_certs, int *error)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	struct fd f;
+	int ret;
+
+	f = fdget(sev->fd);
+	if (!f.file)
+		return -EBADF;
+
+	ret = sev_issue_cmd_external_user_cert(f.file, id, data, snp_certs, error);
+
+	fdput(f);
+	return ret;
 }
 
 static int sev_launch_start(struct kvm *kvm, struct kvm_sev_cmd *argp)
@@ -2063,16 +2082,18 @@ static void *snp_context_create(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	/* Allocate memory for context page */
 	context = snp_alloc_firmware_page(GFP_KERNEL_ACCOUNT);
 	if (!context)
-		return NULL;
+		goto e_free;
 
 	data.gctx_paddr = __psp_pa(context);
 	rc = __sev_issue_cmd(argp->sev_fd, SEV_CMD_SNP_GCTX_CREATE, &data, &argp->error);
-	if (rc) {
-		snp_free_firmware_page(context);
-		return NULL;
-	}
+	if (rc)
+		goto e_free;
 
 	return context;
+
+e_free:
+	snp_free_firmware_page(context);
+	return NULL;
 }
 
 static int snp_bind_asid(struct kvm *kvm, int *error)
@@ -2690,6 +2711,8 @@ static int snp_decommission_context(struct kvm *kvm)
 	snp_free_firmware_page(sev->snp_context);
 	sev->snp_context = NULL;
 
+	sev_snp_certs_put(sev->snp_certs);
+
 	return 0;
 }
 
@@ -3150,6 +3173,8 @@ static int sev_es_validate_vmgexit(struct vcpu_svm *svm)
 	case SVM_VMGEXIT_UNSUPPORTED_EVENT:
 	case SVM_VMGEXIT_HV_FEATURES:
 	case SVM_VMGEXIT_PSC:
+	case SVM_VMGEXIT_GUEST_REQUEST:
+	case SVM_VMGEXIT_EXT_GUEST_REQUEST:
 		break;
 	default:
 		reason = GHCB_ERR_INVALID_EVENT;
@@ -3379,6 +3404,166 @@ static int snp_complete_psc(struct kvm_vcpu *vcpu)
 	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb, 0);
 
 	return 1;
+}
+
+static unsigned long snp_setup_guest_buf(struct vcpu_svm *svm,
+					 struct sev_data_snp_guest_request *data,
+					 gpa_t req_gpa, gpa_t resp_gpa)
+{
+	struct kvm_vcpu *vcpu = &svm->vcpu;
+	struct kvm *kvm = vcpu->kvm;
+	kvm_pfn_t req_pfn, resp_pfn;
+	struct kvm_sev_info *sev;
+
+	sev = &to_kvm_svm(kvm)->sev_info;
+
+	if (!IS_ALIGNED(req_gpa, PAGE_SIZE) || !IS_ALIGNED(resp_gpa, PAGE_SIZE))
+		return SEV_RET_INVALID_PARAM;
+
+	req_pfn = gfn_to_pfn(kvm, gpa_to_gfn(req_gpa));
+	if (is_error_noslot_pfn(req_pfn))
+		return SEV_RET_INVALID_ADDRESS;
+
+	resp_pfn = gfn_to_pfn(kvm, gpa_to_gfn(resp_gpa));
+	if (is_error_noslot_pfn(resp_pfn))
+		return SEV_RET_INVALID_ADDRESS;
+
+	if (rmp_make_private(resp_pfn, 0, PG_LEVEL_4K, 0, true))
+		return SEV_RET_INVALID_ADDRESS;
+
+	data->gctx_paddr = __psp_pa(sev->snp_context);
+	data->req_paddr = __sme_set(req_pfn << PAGE_SHIFT);
+	data->res_paddr = __sme_set(resp_pfn << PAGE_SHIFT);
+
+	return 0;
+}
+
+static void snp_cleanup_guest_buf(struct sev_data_snp_guest_request *data, unsigned long *rc)
+{
+	u64 pfn = __sme_clr(data->res_paddr) >> PAGE_SHIFT;
+	int ret;
+
+	ret = snp_page_reclaim(pfn);
+	if (ret)
+		*rc = SEV_RET_INVALID_ADDRESS;
+
+	ret = rmp_make_shared(pfn, PG_LEVEL_4K);
+	if (ret)
+		*rc = SEV_RET_INVALID_ADDRESS;
+}
+
+static void snp_handle_guest_request(struct vcpu_svm *svm, gpa_t req_gpa, gpa_t resp_gpa)
+{
+	struct sev_data_snp_guest_request data = {0};
+	struct kvm_vcpu *vcpu = &svm->vcpu;
+	struct kvm *kvm = vcpu->kvm;
+	struct kvm_sev_info *sev;
+	unsigned long rc;
+	int err;
+
+	if (!sev_snp_guest(vcpu->kvm)) {
+		rc = SEV_RET_INVALID_GUEST;
+		goto e_fail;
+	}
+
+	sev = &to_kvm_svm(kvm)->sev_info;
+
+	mutex_lock(&sev->guest_req_lock);
+
+	rc = snp_setup_guest_buf(svm, &data, req_gpa, resp_gpa);
+	if (rc)
+		goto unlock;
+
+	rc = sev_issue_cmd(kvm, SEV_CMD_SNP_GUEST_REQUEST, &data, &err);
+	if (rc)
+		/* use the firmware error code */
+		rc = err;
+
+	snp_cleanup_guest_buf(&data, &rc);
+
+unlock:
+	mutex_unlock(&sev->guest_req_lock);
+
+e_fail:
+	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb, rc);
+}
+
+static void snp_handle_ext_guest_request(struct vcpu_svm *svm, gpa_t req_gpa, gpa_t resp_gpa)
+{
+	struct sev_data_snp_guest_request req = {0};
+	struct sev_snp_certs *snp_certs = NULL;
+	struct kvm_vcpu *vcpu = &svm->vcpu;
+	struct kvm *kvm = vcpu->kvm;
+	unsigned long data_npages;
+	struct kvm_sev_info *sev;
+	unsigned long exitcode;
+	u64 data_gpa;
+	int err, rc;
+
+	if (!sev_snp_guest(vcpu->kvm)) {
+		rc = SEV_RET_INVALID_GUEST;
+		goto e_fail;
+	}
+
+	sev = &to_kvm_svm(kvm)->sev_info;
+
+	data_gpa = vcpu->arch.regs[VCPU_REGS_RAX];
+	data_npages = vcpu->arch.regs[VCPU_REGS_RBX];
+
+	if (!IS_ALIGNED(data_gpa, PAGE_SIZE)) {
+		rc = SEV_RET_INVALID_ADDRESS;
+		goto e_fail;
+	}
+
+	mutex_lock(&sev->guest_req_lock);
+
+	rc = snp_setup_guest_buf(svm, &req, req_gpa, resp_gpa);
+	if (rc)
+		goto unlock;
+
+	/*
+	 * If the VMM has overridden the certs, then change the error message
+	 * if the size is inappropriate for the override. Otherwise, use a
+	 * regular guest request and copy back the instance certs.
+	 */
+	if (sev->snp_certs) {
+		if ((data_npages << PAGE_SHIFT) < sev->snp_certs->len) {
+			/*
+			 * If buffer length is small then return the expected
+			 * length in rbx.
+			 */
+			vcpu->arch.regs[VCPU_REGS_RBX] = sev->snp_certs->len >> PAGE_SHIFT;
+			exitcode = SNP_GUEST_REQ_INVALID_LEN;
+			goto cleanup;
+		}
+		rc = sev_issue_cmd(kvm, SEV_CMD_SNP_GUEST_REQUEST, &req, &err);
+	} else {
+		rc = sev_issue_cmd_cert(kvm, SEV_CMD_SNP_GUEST_REQUEST, &req, &snp_certs, &err);
+		if (!rc && snp_certs) {
+			sev_snp_certs_put(sev->snp_certs);
+			sev->snp_certs = snp_certs;
+		}
+	}
+
+	if (rc) {
+		/* pass the firmware error code */
+		exitcode = err;
+		goto cleanup;
+	}
+
+	/* Copy the certificate blob in the guest memory */
+	if (sev->snp_certs &&
+	    kvm_write_guest(kvm, data_gpa, sev->snp_certs->data, sev->snp_certs->len))
+		exitcode = SEV_RET_INVALID_ADDRESS;
+
+cleanup:
+	snp_cleanup_guest_buf(&req, &exitcode);
+
+unlock:
+	mutex_unlock(&sev->guest_req_lock);
+
+e_fail:
+	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb, exitcode);
 }
 
 static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
@@ -3630,6 +3815,20 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 		vcpu->run->vmgexit.ghcb_msr = ghcb_gpa;
 		vcpu->arch.complete_userspace_io = snp_complete_psc;
 		break;
+	case SVM_VMGEXIT_GUEST_REQUEST: {
+		snp_handle_guest_request(svm, control->exit_info_1, control->exit_info_2);
+
+		ret = 1;
+		break;
+	}
+	case SVM_VMGEXIT_EXT_GUEST_REQUEST: {
+		snp_handle_ext_guest_request(svm,
+					     control->exit_info_1,
+					     control->exit_info_2);
+
+		ret = 1;
+		break;
+	}
 	case SVM_VMGEXIT_UNSUPPORTED_EVENT:
 		vcpu_unimpl(vcpu,
 			    "vmgexit: unsupported event - exit_info_1=%#llx, exit_info_2=%#llx\n",
