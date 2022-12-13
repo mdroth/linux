@@ -33,6 +33,7 @@ struct sev_snp_certs {
 struct sev_snp_certs *sev_snp_certs_new(void *data, u32 len);
 struct sev_snp_certs *sev_snp_certs_get(struct sev_snp_certs *certs);
 void sev_snp_certs_put(struct sev_snp_certs *certs);
+struct sev_snp_certs *sev_snp_global_certs_get(void);
 
 /**
  * SEV platform state

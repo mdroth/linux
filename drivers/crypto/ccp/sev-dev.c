@@ -2140,6 +2140,21 @@ void sev_snp_certs_put(struct sev_snp_certs *certs)
 }
 EXPORT_SYMBOL_GPL(sev_snp_certs_put);
 
+struct sev_snp_certs *sev_snp_global_certs_get(void)
+{
+	struct sev_device *sev;
+
+	if (!psp_master || !psp_master->sev_data)
+		return NULL;
+
+	sev = psp_master->sev_data;
+	if (!sev->snp_initialized)
+		return NULL;
+
+	return sev_snp_certs_get(sev->snp_certs);
+}
+EXPORT_SYMBOL_GPL(sev_snp_global_certs_get);
+
 static void sev_exit(struct kref *ref)
 {
 	misc_deregister(&misc_dev->misc);
