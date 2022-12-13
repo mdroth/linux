@@ -1507,7 +1507,12 @@ static void __init spectre_v2_select_mitigation(void)
 
 	if (spectre_v2_in_ibrs_mode(mode)) {
 		if (boot_cpu_has(X86_FEATURE_AUTOIBRS)) {
-			msr_set_bit(MSR_EFER, _EFER_AUTOIBRS);
+			if (!cpu_feature_enabled(X86_FEATURE_SEV_SNP)) {
+				msr_set_bit(MSR_EFER, _EFER_AUTOIBRS);
+			} else {
+				pr_err("SNP feature available, not enabling AutoIBRS on the host.\n");
+				mode = spectre_v2_select_retpoline();
+			}
 		} else {
 			x86_spec_ctrl_base |= SPEC_CTRL_IBRS;
 			update_spec_ctrl(x86_spec_ctrl_base);
