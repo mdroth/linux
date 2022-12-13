@@ -7065,6 +7065,7 @@ values in kvm_run even if the corresponding bit in kvm_dirty_regs is not set.
 		/* KVM_EXIT_VMGEXIT */
 		struct kvm_user_vmgexit {
 		#define KVM_USER_VMGEXIT_PSC_MSR	1
+		#define KVM_USER_VMGEXIT_PSC		2
 			__u32 type; /* KVM_USER_VMGEXIT_* type */
 			union {
 				struct {
@@ -7074,8 +7075,13 @@ values in kvm_run even if the corresponding bit in kvm_dirty_regs is not set.
 					__u8 op;
 					__u32 ret;
 				} psc_msr;
+				struct {
+					__u64 shared_gpa;
+					__u64 ret;
+				} psc;
 			};
 		};
+
 
 If exit reason is KVM_EXIT_VMGEXIT then it indicates that an SEV-SNP guest
 has issued a VMGEXIT instruction (as documented by the AMD Architecture
@@ -7093,6 +7099,14 @@ kernel will supply the 'gpa' and 'op' fields, and userspace is expected to
 update the private/shared state of the GPA using the corresponding
 KVM_SET_MEMORY_ATTRIBUTES ioctl. The 'ret' field is to be set to 0 by
 userpace on success, or some non-zero value on failure.
+
+For the KVM_USER_VMGEXIT_PSC type, the psc union type is used. The kernel
+will supply the GPA of the Page State Structure defined in the GHCB spec.
+Userspace will process this structure as defined by the GHCB, and issue
+KVM_SET_MEMORY_ATTRIBUTES ioctls to set the GPAs therein to the expected
+private/shared state. Userspace will return a value in 'ret' that is in
+agreement with the GHCB-defined return values that the guest will expect
+in the SW_EXITINFO2 field of the GHCB in response to these requests.
 
 6. Capabilities that can be enabled on vCPUs
 ============================================
