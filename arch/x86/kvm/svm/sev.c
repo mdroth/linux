@@ -3087,6 +3087,7 @@ static int sev_es_validate_vmgexit(struct vcpu_svm *svm)
 	case SVM_VMGEXIT_AP_JUMP_TABLE:
 	case SVM_VMGEXIT_UNSUPPORTED_EVENT:
 	case SVM_VMGEXIT_HV_FEATURES:
+	case SVM_VMGEXIT_PSC:
 		break;
 	default:
 		reason = GHCB_ERR_INVALID_EVENT;
@@ -3303,6 +3304,15 @@ static int snp_begin_psc_msr(struct kvm_vcpu *vcpu, u64 ghcb_msr)
 	vcpu->arch.complete_userspace_io = snp_complete_psc_msr;
 
 	return 0; /* forward request to userspace */
+}
+
+static int snp_complete_psc(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+
+	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb, vcpu->run->vmgexit.psc.ret);
+
+	return 1; /* resume guest */
 }
 
 static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
@@ -3541,6 +3551,12 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 		ghcb_set_sw_exit_info_2(svm->sev_es.ghcb, GHCB_HV_FT_SUPPORTED);
 
 		ret = 1;
+		break;
+	case SVM_VMGEXIT_PSC:
+		vcpu->run->exit_reason = KVM_EXIT_VMGEXIT;
+		vcpu->run->vmgexit.type = KVM_USER_VMGEXIT_PSC;
+		vcpu->run->vmgexit.psc.shared_gpa = svm->sev_es.sw_scratch;
+		vcpu->arch.complete_userspace_io = snp_complete_psc;
 		break;
 	case SVM_VMGEXIT_UNSUPPORTED_EVENT:
 		vcpu_unimpl(vcpu,
