@@ -96,6 +96,7 @@ struct kvm_sev_info {
 	void *snp_context;      /* SNP guest context page */
 	u64 sev_features;	/* Features set at VMSA creation */
 	struct sev_snp_certs *snp_certs;
+	struct mutex guest_req_lock; /* Lock for guest request handling */
 };
 
 struct kvm_svm {
