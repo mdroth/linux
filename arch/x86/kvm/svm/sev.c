@@ -2921,11 +2921,17 @@ static inline int svm_map_ghcb(struct vcpu_svm *svm, struct kvm_host_map *map)
 {
 	struct vmcb_control_area *control = &svm->vmcb->control;
 	u64 gfn = gpa_to_gfn(control->ghcb_gpa);
+	struct kvm_vcpu *vcpu = &svm->vcpu;
 
-	if (kvm_vcpu_map(&svm->vcpu, gfn, map)) {
+	if (kvm_vcpu_map(vcpu, gfn, map)) {
 		/* Unable to map GHCB from guest */
 		pr_err("error mapping GHCB GFN [%#llx] from guest\n", gfn);
 		return -EFAULT;
+	}
+
+	if (sev_post_map_gfn(vcpu->kvm, map->gfn, map->pfn)) {
+		kvm_vcpu_unmap(vcpu, map, false);
+		return -EBUSY;
 	}
 
 	return 0;
@@ -2933,7 +2939,10 @@ static inline int svm_map_ghcb(struct vcpu_svm *svm, struct kvm_host_map *map)
 
 static inline void svm_unmap_ghcb(struct vcpu_svm *svm, struct kvm_host_map *map)
 {
-	kvm_vcpu_unmap(&svm->vcpu, map, true);
+	struct kvm_vcpu *vcpu = &svm->vcpu;
+
+	kvm_vcpu_unmap(vcpu, map, true);
+	sev_post_unmap_gfn(vcpu->kvm, map->gfn, map->pfn);
 }
 
 static void dump_ghcb(struct vcpu_svm *svm)
@@ -3853,6 +3862,33 @@ out_adjust:
 out:
 	pr_debug("%s: GFN: 0x%llx, PFN: 0x%llx, level: %d, rmp_level: %d, level_orig: %d, assigned: %d\n",
 		 __func__, gfn, pfn, *level, rmp_level, level_orig, assigned);
+}
+
+int sev_post_map_gfn(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn)
+{
+	int level;
+
+	if (!sev_snp_guest(kvm))
+		return 0;
+
+	read_lock(&(kvm)->mmu_lock);
+
+	/* If pfn is not added as private then fail */
+	if (snp_lookup_rmpentry(pfn, &level) == 1) {
+		read_unlock(&(kvm)->mmu_lock);
+		pr_err_ratelimited("failed to map private gfn 0x%llx pfn 0x%llx\n", gfn, pfn);
+		return -EBUSY;
+	}
+
+	return 0;
+}
+
+void sev_post_unmap_gfn(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn)
+{
+	if (!sev_snp_guest(kvm))
+		return;
+
+	read_unlock(&(kvm)->mmu_lock);
 }
 
 int sev_fault_is_private(struct kvm *kvm, gpa_t gpa, u64 error_code, bool *private_fault)
