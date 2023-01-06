@@ -2592,14 +2592,47 @@ int psmash(u64 pfn)
 }
 EXPORT_SYMBOL_GPL(psmash);
 
+#if 0
 static int restore_direct_map(u64 pfn, int npages)
 {
 	return set_memory_p((unsigned long)pfn_to_kaddr(pfn), npages);
 }
+#endif
+static int restore_direct_map(u64 pfn, int npages)
+{
+	int i, ret = 0;
 
+	for (i = 0; i < npages; i++) {
+		ret = set_direct_map_default_noflush(pfn_to_page(pfn + i));
+		if (ret)
+			goto cleanup;
+	}
+
+cleanup:
+	WARN(ret > 0, "Failed to restore direct map for pfn 0x%llx\n", pfn + i);
+	return ret;
+}
+
+#if 0
 static int invalidate_direct_map(unsigned long pfn, int npages)
 {
 	return set_memory_np((unsigned long)pfn_to_kaddr(pfn), npages);
+}
+#endif
+static int invalidate_direct_map(u64 pfn, int npages)
+{
+	int i, ret = 0;
+
+	for (i = 0; i < npages; i++) {
+		ret = set_direct_map_invalid_noflush(pfn_to_page(pfn + i));
+		if (ret)
+			goto cleanup;
+	}
+
+cleanup:
+	WARN(ret > 0, "Failed to invalidate direct map for pfn 0x%llx\n", pfn + i);
+	restore_direct_map(pfn, i);
+	return ret;
 }
 
 static int rmpupdate(u64 pfn, struct rmp_state *val)
