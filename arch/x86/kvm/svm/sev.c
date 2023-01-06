@@ -4070,6 +4070,49 @@ static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
 	return ret;
 }
 
+static void snp_psc_dump(struct kvm_vcpu *vcpu, u64 ghcb_gpa)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+	struct snp_psc_desc *info;
+	struct psc_entry *entry;
+	struct kvm_host_map map;
+	unsigned long sa_offset;
+	struct ghcb *ghcb;
+	u16 cur, end;
+
+	if (svm_map_ghcb(svm, &map)) {
+		pr_err("%s: Failed to map GHCB GPA: 0x%llx", __func__, ghcb_gpa);
+		return;
+	}
+
+	ghcb = map.hva;
+
+	sa_offset = svm->sev_es.ghcb_sa_gpa - ghcb_gpa;
+	info = (struct snp_psc_desc *)(void *)((unsigned long)ghcb + sa_offset);
+	cur = info->hdr.cur_entry;
+	end = info->hdr.end_entry;
+
+	if (cur >= VMGEXIT_PSC_MAX_ENTRY ||
+	    end >= VMGEXIT_PSC_MAX_ENTRY || cur > end) {
+		pr_err("%s: index out of bounds, cur: %d end: %d\n", __func__, cur, end);
+		return;
+	}
+
+	for (; cur <= end; cur++) {
+		int level, op;
+		gpa_t gpa;
+
+		entry = &info->entries[cur];
+		gpa = gfn_to_gpa(entry->gfn);
+		level = RMP_TO_X86_PG_LEVEL(entry->pagesize);
+		op = entry->operation;
+
+		trace_kvm_snp_psc(vcpu->vcpu_id, 0, gpa, op, level);
+	}
+
+	svm_unmap_ghcb(svm, &map);
+}
+
 int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
@@ -4160,12 +4203,16 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 		ret = 1;
 		break;
 	}
-	case SVM_VMGEXIT_PSC:
+	case SVM_VMGEXIT_PSC: {
 		/* Let userspace handling allocating/deallocating backing pages. */
 		vcpu->run->exit_reason = KVM_EXIT_VMGEXIT;
 		vcpu->run->vmgexit.ghcb_msr = ghcb_gpa;
 		vcpu->arch.complete_userspace_io = snp_complete_psc;
+
+		snp_psc_dump(vcpu, ghcb_gpa);
+
 		break;
+	}
 	case SVM_VMGEXIT_GUEST_REQUEST: {
 		snp_handle_guest_request(svm, control->exit_info_1, control->exit_info_2);
 
@@ -4462,11 +4509,11 @@ int sev_post_map_gfn(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn)
 	if (!sev_snp_guest(kvm))
 		return 0;
 
-	read_lock(&(kvm)->mmu_lock);
+	//read_lock(&(kvm)->mmu_lock);
 
 	/* If pfn is not added as private then fail */
 	if (snp_lookup_rmpentry(pfn, &level) == 1) {
-		read_unlock(&(kvm)->mmu_lock);
+		//read_unlock(&(kvm)->mmu_lock);
 		pr_err_ratelimited("failed to map private gfn 0x%llx pfn 0x%llx\n", gfn, pfn);
 		return -EBUSY;
 	}
@@ -4479,7 +4526,7 @@ void sev_post_unmap_gfn(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn)
 	if (!sev_snp_guest(kvm))
 		return;
 
-	read_unlock(&(kvm)->mmu_lock);
+	//read_unlock(&(kvm)->mmu_lock);
 }
 
 void handle_rmp_page_fault(struct kvm_vcpu *vcpu, gpa_t gpa, u64 error_code)
@@ -4601,6 +4648,7 @@ int sev_update_mem_attr(struct kvm_memory_slot *slot, unsigned int attr,
 	gfn_t gfn = start;
 
 	pr_debug("%s: GFN 0x%llx - 0x%llx, op: %d\n", __func__, start, end, op);
+	trace_kvm_snp_psc(0xFF, 0xF0000001, gfn_to_gpa(gfn), op, 0);
 
 	if (!sev_snp_guest(slot->kvm))
 		return 0;
@@ -4677,6 +4725,7 @@ int sev_update_mem_attr(struct kvm_memory_slot *slot, unsigned int attr,
 		gfn += npages;
 	}
 
+	trace_kvm_snp_psc(0xFF, 0xF0000002, gfn_to_gpa(gfn), op, 0);
 	return 0;
 }
 
