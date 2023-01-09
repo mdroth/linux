@@ -710,7 +710,6 @@ struct sev_data_snp_dbg {
 	u64 gctx_paddr;				/* In */
 	u64 src_addr;				/* In */
 	u64 dst_addr;				/* In */
-	u32 len;				/* In */
 } __packed;
 
 /**

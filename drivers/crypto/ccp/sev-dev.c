@@ -2054,7 +2054,6 @@ int snp_guest_dbg_decrypt_page(u64 gctx_pfn, u64 src_pfn, u64 dst_pfn, int *erro
 	data.gctx_paddr = sme_me_mask | (gctx_pfn << PAGE_SHIFT);
 	data.src_addr = sme_me_mask | (src_pfn << PAGE_SHIFT);
 	data.dst_addr = sme_me_mask | (dst_pfn << PAGE_SHIFT);
-	data.len = PAGE_SIZE;
 
 	/* The destination page must be in the firmware state. */
 	if (rmp_mark_pages_firmware(data.dst_addr, 1, false))
