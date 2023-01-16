@@ -101,7 +101,7 @@ static struct smca_bank_name smca_names[] = {
 	[SMCA_EX]			= { "execution_unit",	"Execution Unit" },
 	[SMCA_FP]			= { "floating_point",	"Floating Point Unit" },
 	[SMCA_L3_CACHE]			= { "l3_cache",		"L3 Cache" },
-	[SMCA_CS ... SMCA_CS_V2]	= { "coherent_slave",	"Coherent Slave" },
+	[SMCA_CS ... SMCA_CS_V2_QUIRK]	= { "coherent_slave",	"Coherent Slave" },
 	[SMCA_PIE]			= { "pie",		"Power, Interrupts, etc." },
 
 	/* UMC v2 is separate because both of them can exist in a single system. */
@@ -178,6 +178,8 @@ static const struct smca_hwid smca_hwid_mcatypes[] = {
 	{ SMCA_CS,	 HWID_MCATYPE(0x2E, 0x0)	},
 	{ SMCA_PIE,	 HWID_MCATYPE(0x2E, 0x1)	},
 	{ SMCA_CS_V2,	 HWID_MCATYPE(0x2E, 0x2)	},
+	/* Software defined SMCA bank type to handle erratum 1384*/
+	{ SMCA_CS_V2_QUIRK, HWID_MCATYPE(0x0, 0x1)  },
 
 	/* Unified Memory Controller MCA type */
 	{ SMCA_UMC,	 HWID_MCATYPE(0x96, 0x0)	},
@@ -260,12 +262,32 @@ static inline void fixup_hwid(unsigned int *hwid_mcatype)
 	if (c->x86 == 0x19) {
 		switch (c->x86_model) {
 		/*
+		 * Per Genoa's revision guide, erratum 1384, some SMCA Extended
+		 * Error Codes and SMCA Control bits are incorrect for SMCA CS
+		 * bank type.
+		 */
+		case 0x10 ... 0x1F:
+		case 0x60 ... 0x7B:
+		case 0xA0 ... 0xAF:
+			if (*hwid_mcatype == HWID_MCATYPE(0x2E, 0x2))
+				*hwid_mcatype = HWID_MCATYPE(0x0, 0x1);
+			break;
+		/*
 		 * Handle discrepancy in HWID of kernel and MCA_IPID register
 		 * for XGMI Controller SMCA bank type
 		 */
 		case 0x30 ... 0x3F:
 			if (*hwid_mcatype == HWID_MCATYPE(0x80, 0x0))
 				*hwid_mcatype = HWID_MCATYPE(0x50, 0x0);
+			break;
+		default:
+			break;
+		}
+	} else if (c->x86 == 0x1A) {
+		switch (c->x86_model) {
+		case 0x40 ... 0x4F:
+			if (*hwid_mcatype == HWID_MCATYPE(0x2E, 0x2))
+				*hwid_mcatype = HWID_MCATYPE(0x0, 0x1);
 			break;
 		default:
 			break;

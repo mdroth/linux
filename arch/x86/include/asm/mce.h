@@ -310,6 +310,7 @@ enum smca_bank_types {
 	SMCA_L3_CACHE,	/* L3 Cache */
 	SMCA_CS,	/* Coherent Slave */
 	SMCA_CS_V2,
+	SMCA_CS_V2_QUIRK,
 	SMCA_PIE,	/* Power, Interrupts, etc. */
 	SMCA_UMC,	/* Unified Memory Controller */
 	SMCA_UMC_V2,
