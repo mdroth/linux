@@ -192,24 +192,24 @@ static const char * const smca_ls2_mce_desc[] = {
 	"A SystemReadDataError error was reported on read data returned from L2 for an SCB store",
 	"A SystemReadDataError error was reported on read data returned from L2 for a WCB store",
 	"A hardware assertion error was reported",
-	"A parity error was detected in an STLF, SCB EMEM entry or SRB store data by any access",
+	"A parity error was detected in an STLF, SCB EMEM entry, store data mask or SRB store data by any access",
 };
 
 static const char * const smca_if_mce_desc[] = {
-	"Op Cache Microtag Probe Port Parity Error",
+	"Op Cache Microtag Parity Error",
 	"IC Microtag or Full Tag Multi-hit Error",
 	"IC Full Tag Parity Error",
 	"IC Data Array Parity Error",
-	"Decoupling Queue PhysAddr Parity Error",
+	"PRQ Parity Error",
 	"L0 ITLB Parity Error",
-	"L1 ITLB Parity Error",
-	"L2 ITLB Parity Error",
+	"L1-TLB Parity Error",
+	"L2-TLB Parity Error",
 	"BPQ Thread 0 Snoop Parity Error",
 	"BPQ Thread 1 Snoop Parity Error",
-	"L1 BTB Multi-Match Error",
-	"L2 BTB Multi-Match Error",
+	"BP L1-BTB Multi-Hit Error",
+	"BP L2-BTB Multi-Hit Error",
 	"L2 Cache Response Poison Error",
-	"System Read Data Error",
+	"L2 Cache Error Response",
 	"Hardware Assertion Error",
 	"L1-TLB Multi-Hit",
 	"L2-TLB Multi-Hit",
@@ -222,12 +222,13 @@ static const char * const smca_l2_mce_desc[] = {
 	"L2M Tag or State Array ECC Error",
 	"L2M Data Array ECC Error",
 	"Hardware Assert Error",
+	"SDP Read Response Parity Error",
 };
 
 static const char * const smca_de_mce_desc[] = {
-	"Micro-op cache tag parity error",
-	"Micro-op cache data parity error",
-	"Instruction buffer parity error",
+	"Micro-op cache tag array parity error",
+	"Micro-op cache data array parity error",
+	"IBB Register File parity error",
 	"Micro-op queue parity error",
 	"Instruction dispatch queue parity error",
 	"Fetch address FIFO parity error",
@@ -247,7 +248,7 @@ static const char * const smca_ex_mce_desc[] = {
 	"Checkpoint queue parity error",
 	"Retire dispatch queue parity error",
 	"Retire status queue parity error",
-	"Scheduling queue parity error",
+	"Scheduler queue parity error",
 	"Branch buffer queue parity error",
 	"Hardware Assertion error",
 	"Spec Map parity error",
@@ -262,6 +263,7 @@ static const char * const smca_fp_mce_desc[] = {
 	"Retire queue (RQ) parity error",
 	"Status register file (SRF) parity error",
 	"Hardware assertion",
+	"Physical K mask register file (KRF) parity error",
 };
 
 static const char * const smca_l3_mce_desc[] = {
@@ -270,9 +272,10 @@ static const char * const smca_l3_mce_desc[] = {
 	"L3M Tag ECC Error",
 	"L3M Tag Multi-way-hit Error",
 	"L3M Data ECC Error",
-	"SDP Parity Error or SystemReadDataError from XI",
-	"L3 Victim Queue Parity Error",
+	"SDP Parity Error from XI",
+	"L3 Victim Queue Data Fabric Error",
 	"L3 Hardware Assertion",
+	"XI WCB Parity Poison Creation Event",
 };
 
 static const char * const smca_cs_mce_desc[] = {
@@ -302,6 +305,10 @@ static const char * const smca_cs2_mce_desc[] = {
 	"SDP read response had an unexpected RETRY error",
 	"Counter overflow error",
 	"Counter underflow error",
+	"Illegal Request on the no data channel",
+	"Address Violation on the no data channel",
+	"Security Violation on the no data channel",
+	"Hardware Assert Error",
 };
 
 static const char * const smca_pie_mce_desc[] = {
@@ -309,7 +316,9 @@ static const char * const smca_pie_mce_desc[] = {
 	"Register security violation",
 	"Link Error",
 	"Poison data consumption",
-	"A deferred error was detected in the DF"
+	"A deferred error was detected in the DF",
+	"Watch Dog Timer",
+	"An SRAM ECC error was detected in the CNLI block",
 };
 
 static const char * const smca_umc_mce_desc[] = {
@@ -321,6 +330,10 @@ static const char * const smca_umc_mce_desc[] = {
 	"Write data CRC error",
 	"DCQ SRAM ECC error",
 	"AES SRAM ECC error",
+	"ECS Row Error",
+	"ECS Error",
+	"UMC Throttling Error",
+	"Read CRC Error",
 };
 
 static const char * const smca_umc2_mce_desc[] = {
@@ -443,17 +456,12 @@ static const char * const smca_mpdma_mce_desc[] = {
 	"MPDMA TVF SDP Master Memory 4 ECC or parity error",
 	"MPDMA TVF SDP Master Memory 5 ECC or parity error",
 	"MPDMA TVF SDP Master Memory 6 ECC or parity error",
+	"SDP Watchdog Timer expired",
 	"MPDMA PTE Command FIFO ECC or parity error",
 	"MPDMA PTE Hub Data FIFO ECC or parity error",
 	"MPDMA PTE Internal Data FIFO ECC or parity error",
 	"MPDMA PTE Command Memory DMA ECC or parity error",
 	"MPDMA PTE Command Memory Internal ECC or parity error",
-	"MPDMA PTE DMA Completion FIFO ECC or parity error",
-	"MPDMA PTE Tablewalk Completion FIFO ECC or parity error",
-	"MPDMA PTE Descriptor Completion FIFO ECC or parity error",
-	"MPDMA PTE ReadOnly Completion FIFO ECC or parity error",
-	"MPDMA PTE DirectWrite Completion FIFO ECC or parity error",
-	"SDP Watchdog Timer expired",
 };
 
 static const char * const smca_nbio_mce_desc[] = {
@@ -461,7 +469,8 @@ static const char * const smca_nbio_mce_desc[] = {
 	"PCIE error",
 	"SDP ErrEvent error",
 	"SDP Egress Poison Error",
-	"IOHC Internal Poison Error",
+	"Internal Poison Error",
+	"Internal system fatal error event",
 };
 
 static const char * const smca_pcie_mce_desc[] = {
