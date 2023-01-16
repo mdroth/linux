@@ -249,6 +249,30 @@ static void default_deferred_error_interrupt(void)
 }
 void (*deferred_error_int_vector)(void) = default_deferred_error_interrupt;
 
+/*
+ * Errata encountered on AMD CPUs for some SMCA bank types requires fixup
+ * of HWID, read from MCA_IPID register, for accurate SMCA error decoding.
+ */
+static inline void fixup_hwid(unsigned int *hwid_mcatype)
+{
+	struct cpuinfo_x86 *c = &boot_cpu_data;
+
+	if (c->x86 == 0x19) {
+		switch (c->x86_model) {
+		/*
+		 * Handle discrepancy in HWID of kernel and MCA_IPID register
+		 * for XGMI Controller SMCA bank type
+		 */
+		case 0x30 ... 0x3F:
+			if (*hwid_mcatype == HWID_MCATYPE(0x80, 0x0))
+				*hwid_mcatype = HWID_MCATYPE(0x50, 0x0);
+			break;
+		default:
+			break;
+		}
+	}
+}
+
 static void smca_set_misc_banks_map(unsigned int bank, unsigned int cpu)
 {
 	u32 low, high;
@@ -318,6 +342,8 @@ static void smca_configure(unsigned int bank, unsigned int cpu)
 
 	hwid_mcatype = HWID_MCATYPE(high & MCI_IPID_HWID,
 				    (high & MCI_IPID_MCATYPE) >> 16);
+
+	fixup_hwid(&hwid_mcatype);
 
 	for (i = 0; i < ARRAY_SIZE(smca_hwid_mcatypes); i++) {
 		s_hwid = &smca_hwid_mcatypes[i];
