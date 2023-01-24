@@ -941,8 +941,6 @@ static int me_pagecache_clean(struct page_state *ps, struct page *p)
 		goto out;
 	}
 
-	restrictedmem_error_page(p, mapping);
-
 	/*
 	 * The shmem page is kept in page cache instead of truncating
 	 * so is expected to have an extra refcount after error-handling.
