@@ -7273,3 +7273,4 @@ void kvm_arch_invalidate_restricted_mem(struct kvm_memory_slot *slot, gfn_t star
 {
 	static_call_cond(kvm_x86_invalidate_restricted_mem)(slot, start, end);
 }
+#endif
