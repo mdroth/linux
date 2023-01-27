@@ -3731,7 +3731,7 @@ static kvm_pfn_t gfn_to_pfn_restricted(struct kvm *kvm, gfn_t gfn)
 		return INVALID_PAGE;
 	}
 
-	if (kvm_restricted_mem_get_pfn(slot, gfn, &pfn, &order)) {
+	if (kvm_restrictedmem_get_pfn(slot, gfn, &pfn, &order)) {
 		pr_err("SEV: Failure retrieving restricted PFN for GFN 0x%llx\n", gfn);
 		return INVALID_PAGE;
 	}
