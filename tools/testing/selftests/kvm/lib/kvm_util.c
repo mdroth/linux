@@ -988,10 +988,10 @@ void vm_userspace_mem_region_add(struct kvm_vm *vm,
 	region->backing_src_type = src_type;
 
 	if (flags & KVM_MEM_PRIVATE) {
-		region->region.restricted_fd = memfd_restricted(0);
-		region->region.restricted_offset = 0;
+		region->region.restrictedmem_fd = memfd_restricted(0);
+		region->region.restrictedmem_offset = 0;
 
-		TEST_ASSERT(region->region.restricted_fd >= 0,
+		TEST_ASSERT(region->region.restrictedmem_fd >= 0,
 			    "Failed to create restricted memfd");
 	}
 
@@ -1010,7 +1010,7 @@ void vm_userspace_mem_region_add(struct kvm_vm *vm,
 		"  guest_phys_addr: 0x%lx size: 0x%lx restricted fd: %d\n",
 		ret, errno, slot, flags,
 		guest_paddr, (uint64_t) region->region.memory_size,
-		region->region.restricted_fd);
+		region->region.restrictedmem_fd);
 
 	/* Add to quick lookup data structures */
 	vm_userspace_mem_region_gpa_insert(&vm->regions.gpa_tree, region);
@@ -1158,16 +1158,16 @@ void vm_mem_map_shared_or_private(struct kvm_vm *vm, uint64_t gpa,
 	TEST_ASSERT(region == userspace_mem_region_find(vm, end, end),
 		    "Private/Shared conversions must act on a single memslot");
 
-	fd_offset = region->region.restricted_offset +
+	fd_offset = region->region.restrictedmem_offset +
 		    (gpa - region->region.guest_phys_addr);
 
 	/* To map shared, punch a hole.  To map private, allocate (no flags). */
 	mode = map_shared ? (FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE) : 0;
 
-	ret = fallocate(region->region.restricted_fd, mode, fd_offset, size);
+	ret = fallocate(region->region.restrictedmem_fd, mode, fd_offset, size);
 	TEST_ASSERT(!ret, "fallocate() failed to map %lx[%lu] %s, fd = %d, mode = %x, offset = %lx\n",
 		     gpa, size, map_shared ? "shared" : "private",
-		     region->region.restricted_fd, mode, fd_offset);
+		     region->region.restrictedmem_fd, mode, fd_offset);
 
 	vm_set_memory_attributes(vm, gpa, size,
 				 map_shared ? 0 : KVM_MEMORY_ATTRIBUTE_PRIVATE);

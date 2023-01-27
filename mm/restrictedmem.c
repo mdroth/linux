@@ -17,7 +17,7 @@ struct restrictedmem {
 
 static int restrictedmem_release(struct inode *inode, struct file *file)
 {
-	struct restrictedmem_notifier *notifier;
+	struct restrictedmem *rm = file->f_mapping->private_data;
 
 	xa_destroy(&rm->bindings);
 	fput(rm->memfd);
@@ -303,11 +303,9 @@ void restrictedmem_unbind(struct file *file, pgoff_t start, pgoff_t end,
 			  struct restrictedmem_notifier *notifier)
 {
 	struct restrictedmem *rm = file->f_mapping->private_data;
-	struct inode *inode = file_inode(rm->memfd);
-	struct restrictedmem_notifier *notifier;
 	unsigned long index;
 
-	pr_debug("%s: unregistering notifier, invalidating page offsets 0x%llx-0x%llx\n",
+	pr_debug("%s: unregistering notifier, invalidating page offsets 0x%lx-0x%lx\n",
 		 __func__, start, end);
 	down_write(&rm->lock);
 

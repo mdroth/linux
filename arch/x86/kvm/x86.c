@@ -12335,6 +12335,7 @@ void __user * __x86_set_memory_region(struct kvm *kvm, int id, gpa_t gpa,
 }
 EXPORT_SYMBOL_GPL(__x86_set_memory_region);
 
+#if 0
 bool kvm_arch_has_private_mem(struct kvm *kvm)
 {
 	if (static_call(kvm_x86_private_mem_enabled)(kvm))
@@ -12342,6 +12343,7 @@ bool kvm_arch_has_private_mem(struct kvm *kvm)
 
 	return false;
 }
+#endif
 
 void kvm_arch_pre_destroy_vm(struct kvm *kvm)
 {

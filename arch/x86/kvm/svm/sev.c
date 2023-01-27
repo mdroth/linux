@@ -2178,7 +2178,7 @@ static int snp_launch_update_gfn_handler(struct kvm *kvm,
 		int order, level;
 		void *kvaddr;
 
-		ret = kvm_restricted_mem_get_pfn(memslot, gfn, &pfns[i], &order);
+		ret = kvm_restrictedmem_get_pfn(memslot, gfn, &pfns[i], &order);
 		if (ret)
 			goto e_release;
 
@@ -4456,11 +4456,14 @@ void sev_rmp_page_level_adjust(struct kvm *kvm, gfn_t gfn, int *level)
 	int rmp_level = 1;
 	kvm_pfn_t pfn;
 
+	if (!sev_snp_guest(kvm))
+		return
+
 	slot = gfn_to_memslot(kvm, gfn);
 	if (!kvm_slot_can_be_private(slot))
 		return;
 
-	ret = kvm_restricted_mem_get_pfn(slot, gfn, &pfn, &order);
+	ret = kvm_restrictedmem_get_pfn(slot, gfn, &pfn, &order);
 	if (ret) {
 		pr_warn_ratelimited("Failed to adjust RMP page level, unable to obtain private PFN, rc: %d\n",
 				    ret);
@@ -4578,7 +4581,7 @@ void handle_rmp_page_fault(struct kvm_vcpu *vcpu, gpa_t gpa, u64 error_code)
 		return;
 	}
 
-	ret = kvm_restricted_mem_get_pfn(slot, gfn, &pfn, &order);
+	ret = kvm_restrictedmem_get_pfn(slot, gfn, &pfn, &order);
 	if (ret) {
 		pr_warn("Unexpected RMP fault, no private backing page for GPA 0x%llx", gpa);
 		return;
@@ -4673,7 +4676,7 @@ int sev_update_mem_attr(struct kvm_memory_slot *slot, unsigned int attr,
 		 * the invalidation notifier should have restored the page to
 		 * shared.
 		 */
-		rc = kvm_restricted_mem_get_pfn(slot, gfn, &pfn, &order);
+		rc = kvm_restrictedmem_get_pfn(slot, gfn, &pfn, &order);
 		if (rc) {
 			pr_warn_ratelimited("%s: failed to retrieve gfn 0x%llx from private FD\n",
 					    __func__, gfn);
@@ -4753,7 +4756,7 @@ void sev_invalidate_private_range(struct kvm_memory_slot *slot, gfn_t start, gfn
 			continue;
 		}
 
-		rc = kvm_restricted_mem_get_pfn(slot, gfn, &pfn, &order);
+		rc = kvm_restrictedmem_get_pfn(slot, gfn, &pfn, &order);
 		if (rc) {
 			pr_warn_ratelimited("SEV: Failed to retrieve restricted PFN for GFN 0x%llx, rc: %d\n",
 					    gfn, rc);
