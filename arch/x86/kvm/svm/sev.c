@@ -478,7 +478,7 @@ static int sev_get_memfile_pfn_handler(struct kvm *kvm, struct kvm_gfn_range *ra
 	for (gfn = range->start; gfn < range->end; gfn++) {
 		int order;
 
-		ret = kvm_restricted_mem_get_pfn(memslot, gfn, &pfn, &order);
+		ret = kvm_restrictedmem_get_pfn(memslot, gfn, &pfn, &order);
 		if (ret)
 			return ret;
 
