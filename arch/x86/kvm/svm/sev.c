@@ -712,7 +712,7 @@ static int sev_launch_update_priv_gfn_handler(struct kvm *kvm,
 		int order;
 		void *kvaddr;
 
-		ret = kvm_restricted_mem_get_pfn(memslot, gfn, &pfn, &order);
+		ret = kvm_restrictedmem_get_pfn(memslot, gfn, &pfn, &order);
 		if (ret)
 			return ret;
 
