@@ -276,6 +276,9 @@ int restrictedmem_bind(struct file *file, pgoff_t start, pgoff_t end,
 	struct restrictedmem *rm = file->f_mapping->private_data;
 	int ret = -EINVAL;
 
+	pr_debug("%s: registering notifier, page offsets 0x%lx-0x%lx\n",
+		 __func__, start, end);
+
 	down_write(&rm->lock);
 
 	/* Non-exclusive mappings are not yet implemented. */
@@ -283,11 +286,16 @@ int restrictedmem_bind(struct file *file, pgoff_t start, pgoff_t end,
 		goto out_unlock;
 
 	if (!xa_empty(&rm->bindings)) {
-		if (exclusive != rm->exclusive)
+		if (exclusive != rm->exclusive) {
+			pr_warn("%s, marker 0\n", __func__);
 			goto out_unlock;
+		}
 
-		if (exclusive && xa_find(&rm->bindings, &start, end, XA_PRESENT))
-			goto out_unlock;
+		pr_warn("%s, marker 1, start (before): 0x%lx, end: 0x%lx\n", __func__, start, end);
+		if (exclusive && xa_find(&rm->bindings, &start, end, XA_PRESENT)) {
+			pr_warn("%s, marker 1b, start (after): 0x%lx\n", __func__, start);
+			//goto out_unlock;
+		}
 	}
 
 	xa_store_range(&rm->bindings, start, end, notifier, GFP_KERNEL);
@@ -330,6 +338,7 @@ int restrictedmem_get_page(struct file *file, pgoff_t offset,
 	struct page *page;
 	int ret;
 
+	pr_debug("%s: offset: 0x%lx\n", __func__, offset);
 	/* Sanity check that _someone_ bound the target offset. */
 	if (WARN_ON_ONCE(!xa_load(&rm->bindings, offset)))
 		return -EINVAL;

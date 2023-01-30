@@ -780,6 +780,7 @@ static int sev_es_sync_vmsa(struct vcpu_svm *svm)
 	if (svm->vcpu.guest_debug || (svm->vmcb->save.dr7 & ~DR7_FIXED_1))
 		return -EINVAL;
 
+	pr_debug("%s: marker 0, vmsa->vintr_ctrl: 0x%llx", __func__, save->vintr_ctrl);
 	/*
 	 * SEV-ES will use a VMSA that is pointed to by the VMCB, not
 	 * the traditional VMSA that is part of the VMCB. Copy the
@@ -787,6 +788,7 @@ static int sev_es_sync_vmsa(struct vcpu_svm *svm)
 	 * for LAUNCH_UPDATE_VMSA) to be the initial SEV-ES state.
 	 */
 	memcpy(save, &svm->vmcb->save, sizeof(svm->vmcb->save));
+	pr_debug("%s: marker 1, vmsa->vintr_ctrl: 0x%llx", __func__, save->vintr_ctrl);
 
 	/* Sync registgers */
 	save->rax = svm->vcpu.arch.regs[VCPU_REGS_RAX];
@@ -4457,7 +4459,7 @@ void sev_rmp_page_level_adjust(struct kvm *kvm, gfn_t gfn, int *level)
 	kvm_pfn_t pfn;
 
 	if (!sev_snp_guest(kvm))
-		return
+		return;
 
 	slot = gfn_to_memslot(kvm, gfn);
 	if (!kvm_slot_can_be_private(slot))
@@ -4695,6 +4697,7 @@ int sev_update_mem_attr(struct kvm_memory_slot *slot, unsigned int attr,
 			level = order_to_level(order);
 			npages = 1 << order;
 		}
+		pr_debug("%s: marker 0: GFN 0x%llx - 0x%llx, op: %d, PFN: 0x%llx\n", __func__, start, end, op, pfn);
 
 		/*
 		 * Grab the PFN from private memslot and update the RMP entry.
@@ -4745,7 +4748,7 @@ void sev_invalidate_private_range(struct kvm_memory_slot *slot, gfn_t start, gfn
 		return;
 	}
 
-	while (gfn < end) {
+	while (gfn <= end) {
 		gpa_t gpa = gfn_to_gpa(gfn);
 		int level = PG_LEVEL_4K;
 		int order, rc;
