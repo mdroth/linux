@@ -985,8 +985,8 @@ static int restrictedmem_get_gfn_range(struct kvm_memory_slot *slot,
 		//return -EINVAL;
 	}
 
-	range->start = slot->base_gfn + start;
-	range->end = slot->base_gfn + end;
+	range->start = slot->base_gfn + start - slot->restrictedmem.index;
+	range->end = slot->base_gfn + end - slot->restrictedmem.index;
 	range->slot = slot;
 	range->pte = __pte(0);
 	range->may_block = true;
@@ -1021,10 +1021,11 @@ static void kvm_restrictedmem_invalidate_begin(struct restrictedmem_notifier *no
 	if (kvm_unmap_gfn_range(kvm, &gfn_range))
 		kvm_flush_remote_tlbs(kvm);
 
-	kvm_arch_invalidate_restricted_mem(slot, gfn_range.start, gfn_range.end);
-
 	KVM_MMU_UNLOCK(kvm);
+
 	srcu_read_unlock(&kvm->srcu, idx);
+
+	kvm_arch_invalidate_restricted_mem(slot, gfn_range.start, gfn_range.end);
 }
 
 static void kvm_restrictedmem_invalidate_end(struct restrictedmem_notifier *notifier,
@@ -2636,6 +2637,33 @@ static void kvm_mem_attrs_changed(struct kvm *kvm, unsigned long attrs,
 		kvm_flush_remote_tlbs(kvm);
 }
 
+static void kvm_post_mem_attrs_changed(struct kvm *kvm, unsigned long attrs,
+				       gfn_t start_orig, gfn_t end_orig)
+{
+	struct kvm_memory_slot *slot;
+	struct kvm_memslots *slots;
+	struct kvm_memslot_iter iter;
+	int i;
+
+	for (i = 0; i < kvm_arch_nr_memslot_as_ids(kvm); i++) {
+		slots = __kvm_memslots(kvm, i);
+
+		kvm_for_each_memslot_in_gfn_range(&iter, slots, start_orig, end_orig) {
+			gfn_t start, end;
+
+			slot = iter.slot;
+			start = max(start_orig, slot->base_gfn);
+			end = min(end_orig, slot->base_gfn + slot->npages);
+
+			if (start >= end)
+				continue;
+
+			kvm_arch_post_set_memory_attributes(kvm, slot, attrs, start, end);
+		}
+	}
+}
+
+
 int kvm_vm_set_region_attr(struct kvm *kvm, gfn_t start, gfn_t end,
 			   u64 attributes)
 {
@@ -2686,6 +2714,9 @@ static int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
 		kvm_mem_attrs_changed(kvm, attrs->attributes, start, i);
 	kvm_mmu_invalidate_end(kvm);
 	KVM_MMU_UNLOCK(kvm);
+
+	if (i > start)
+		kvm_post_mem_attrs_changed(kvm, attrs->attributes, start, i);
 
 	mutex_unlock(&kvm->slots_lock);
 

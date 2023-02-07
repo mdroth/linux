@@ -7218,7 +7218,7 @@ void kvm_arch_set_memory_attributes(struct kvm *kvm,
 {
 	unsigned long pages, mask;
 	gfn_t gfn, gfn_end, first, last;
-	int level, ret;
+	int level;
 	bool mixed;
 
 	lockdep_assert_held_write(&kvm->mmu_lock);
@@ -7251,7 +7251,7 @@ void kvm_arch_set_memory_attributes(struct kvm *kvm,
 		linfo_update_mixed(gfn, slot, level, mixed);
 
 		if (first == last)
-			goto out;
+			return;
 
 		for (gfn = first + pages; gfn < last; gfn += pages)
 			linfo_update_mixed(gfn, slot, level, false);
@@ -7261,8 +7261,15 @@ void kvm_arch_set_memory_attributes(struct kvm *kvm,
 		mixed = has_mixed_attrs(kvm, slot, level, attrs, gfn, gfn_end);
 		linfo_update_mixed(gfn, slot, level, mixed);
 	}
+}
 
-out:
+void kvm_arch_post_set_memory_attributes(struct kvm *kvm,
+					 struct kvm_memory_slot *slot,
+					 unsigned long attrs,
+					 gfn_t start, gfn_t end)
+{
+	int ret;
+
 	ret = static_call(kvm_x86_update_mem_attr)(slot, attrs, start, end);
 	if (ret)
 		pr_warn_ratelimited("Failed to update GFN range 0x%llx-0x%llx with attributes 0x%lx. Ret: %d\n",
