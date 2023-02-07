@@ -43,11 +43,11 @@ static int cxl_port_probe(struct device *dev)
 			return rc;
 		if (rc == 1)
 			return devm_cxl_add_passthrough_decoder(port);
-	}
 
-	cxlhdm = devm_cxl_setup_hdm(port);
-	if (IS_ERR(cxlhdm))
-		return PTR_ERR(cxlhdm);
+		cxlhdm = devm_cxl_setup_hdm(port);
+		if (IS_ERR(cxlhdm))
+			return PTR_ERR(cxlhdm);
+	}
 
 	if (is_cxl_endpoint(port)) {
 		struct cxl_memdev *cxlmd = to_cxl_memdev(port->uport);
@@ -60,6 +60,19 @@ static int cxl_port_probe(struct device *dev)
 		rc = devm_add_action_or_reset(dev, schedule_detach, cxlmd);
 		if (rc)
 			return rc;
+
+		/*
+		 * The HDM decoder capability may not exist. Do not
+		 * use decoders in RCD mode, instead rely on firmware
+		 * to setup the range or decoder registers and to
+		 * enable memory.
+		 */
+		if (cxlds->rcd)
+			return cxl_await_media_ready(cxlds);
+
+		cxlhdm = devm_cxl_setup_hdm(port);
+		if (IS_ERR(cxlhdm))
+			return PTR_ERR(cxlhdm);
 
 		rc = cxl_hdm_decode_init(cxlds, cxlhdm);
 		if (rc)
