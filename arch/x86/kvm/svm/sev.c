@@ -4457,6 +4457,7 @@ void sev_rmp_page_level_adjust(struct kvm *kvm, gfn_t gfn, int *level)
 	int ret, order, assigned;
 	int rmp_level = 1;
 	kvm_pfn_t pfn;
+	int level_orig = *level;
 
 	if (!sev_snp_guest(kvm))
 		return;
@@ -4505,6 +4506,9 @@ out:
 	put_page(pfn_to_page(pfn));
 	pr_debug("%s: GFN: 0x%llx, level: %d, rmp_level: %d, ret: %d\n",
 		 __func__, gfn, *level, rmp_level, ret);
+	if (*level != level_orig)
+		pr_warn("%s: level adjustment needed: GFN: 0x%llx, level: %d, rmp_level: %d, level_orig: %d\n",
+			__func__, gfn, *level, rmp_level, level_orig);
 }
 
 int sev_post_map_gfn(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn)
