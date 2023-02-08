@@ -89,7 +89,16 @@ static void amd_uncore_read(struct perf_event *event)
 	 */
 
 	prev = local64_read(&hwc->prev_count);
-	rdpmcl(hwc->event_base_rdpmc, new);
+
+	/*
+	 * Some uncore PMUs do not have RDPMC assignments. In such cases,
+	 * read counts directly from the corresponding PERF_CTR.
+	 */
+	if (hwc->event_base_rdpmc < 0)
+		rdmsrl(hwc->event_base, new);
+	else
+		rdpmcl(hwc->event_base_rdpmc, new);
+
 	local64_set(&hwc->prev_count, new);
 	delta = (new << COUNTER_SHIFT) - (prev << COUNTER_SHIFT);
 	delta >>= COUNTER_SHIFT;
@@ -156,6 +165,10 @@ out:
 	hwc->event_base = unit->msr_base + 1 + (2 * hwc->idx);
 	hwc->event_base_rdpmc = unit->rdpmc_base + hwc->idx;
 	hwc->state = PERF_HES_UPTODATE | PERF_HES_STOPPED;
+
+	/* Some uncore PMUs do not have RDPMC assignments */
+	if (unit->rdpmc_base < 0)
+		hwc->event_base_rdpmc = -1;
 
 	if (flags & PERF_EF_START)
 		amd_uncore_start(event, PERF_EF_RELOAD);
@@ -654,7 +667,7 @@ static int amd_uncore_nb_add(struct perf_event *event, int flags)
 		hwc->event_base = unit->dbg_msr_base + (2 * (hwc->idx -
 				  (unit->num_counters - NUM_COUNTERS_DFDBG))) + 1;
 		/* debug MSRs don't have rdpmc assignments */
-		hwc->event_base_rdpmc = 0;
+		hwc->event_base_rdpmc = -1;
 	}
 
 	/* Delayed start after rdpmc base update */
