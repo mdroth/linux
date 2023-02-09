@@ -4602,7 +4602,7 @@ int sev_fault_is_private(struct kvm *kvm, gpa_t gpa, u64 error_code, bool *priva
 {
 	gfn_t gfn = gpa_to_gfn(gpa);
 
-	if (!kvm_is_upm_enabled(kvm) || !sev_guest(kvm))
+	if (!kvm_arch_has_private_mem(kvm) || !sev_guest(kvm))
 		goto out_unhandled;
 
 	/*
