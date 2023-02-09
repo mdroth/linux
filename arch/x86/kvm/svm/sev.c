@@ -4451,11 +4451,14 @@ void sev_rmp_page_level_adjust(struct kvm *kvm, gfn_t gfn, int *level)
 	int rmp_level = 1;
 	kvm_pfn_t pfn;
 
+	if (!sev_snp_guest(kvm))
+		return;
+
 	slot = gfn_to_memslot(kvm, gfn);
 	if (!kvm_slot_can_be_private(slot))
 		return;
 
-	ret = kvm_restricted_mem_get_pfn(slot, gfn, &pfn, &order);
+	ret = kvm_restrictedmem_get_pfn(slot, gfn, &pfn, &order);
 	if (ret) {
 		pr_warn_ratelimited("Failed to adjust RMP page level, unable to obtain private PFN, rc: %d\n",
 				    ret);
