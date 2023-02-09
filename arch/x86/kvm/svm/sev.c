@@ -4671,7 +4671,7 @@ int sev_update_mem_attr(struct kvm_memory_slot *slot, unsigned int attr,
 		 * the invalidation notifier should have restored the page to
 		 * shared.
 		 */
-		rc = kvm_restricted_mem_get_pfn(slot, gfn, &pfn, &order);
+		rc = kvm_restrictedmem_get_pfn(slot, gfn, &pfn, &order);
 		if (rc) {
 			pr_warn_ratelimited("%s: failed to retrieve gfn 0x%llx from private FD\n",
 					    __func__, gfn);
