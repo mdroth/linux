@@ -4433,41 +4433,23 @@ struct page *snp_safe_alloc_page(struct kvm_vcpu *vcpu)
 	return p;
 }
 
-static bool is_pfn_range_shared(kvm_pfn_t start, kvm_pfn_t end)
+static bool is_gfn_range_shared(struct kvm *kvm, gfn_t start, gfn_t end)
 {
-	int level;
-
-	while (end > start) {
-		if (snp_lookup_rmpentry(start, &level) != 0)
+	while (start++ < end)
+		if (kvm_mem_is_private(kvm, start))
 			return false;
-		start++;
-	}
 
 	return true;
 }
 
-void sev_rmp_page_level_adjust(struct kvm *kvm, gfn_t gfn, int *level)
+void sev_adjust_mapping_level(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn, int *level)
 {
-	struct kvm_memory_slot *slot;
-	int ret, order, assigned;
+	int assigned;
 	int rmp_level = 1;
-	kvm_pfn_t pfn;
 	int level_orig = *level;
 
 	if (!sev_snp_guest(kvm))
 		return;
-
-	slot = gfn_to_memslot(kvm, gfn);
-	if (!kvm_slot_can_be_private(slot))
-		return;
-
-	ret = kvm_restrictedmem_get_pfn(slot, gfn, &pfn, &order);
-	if (ret) {
-		pr_warn_ratelimited("Failed to adjust RMP page level, unable to obtain private PFN, rc: %d\n",
-				    ret);
-		*level = PG_LEVEL_4K;
-		return;
-	}
 
 	/* If there's an error retrieving RMP entry, stick with 4K mappings */
 	assigned = snp_lookup_rmpentry(pfn, &rmp_level);
@@ -4475,14 +4457,14 @@ void sev_rmp_page_level_adjust(struct kvm *kvm, gfn_t gfn, int *level)
 		goto out_adjust;
 
 	if (!assigned) {
-		kvm_pfn_t huge_pfn;
+		gfn_t huge_gfn;
 
 		/*
 		 * If all the pages are shared then no need to keep the RMP
 		 * and NPT in sync.
 		 */
-		huge_pfn = pfn & ~(PTRS_PER_PMD - 1);
-		if (is_pfn_range_shared(huge_pfn, huge_pfn + PTRS_PER_PMD))
+		huge_gfn = gfn & ~(PTRS_PER_PMD - 1);
+		if (is_gfn_range_shared(kvm, huge_gfn, huge_gfn + PTRS_PER_PMD))
 			goto out;
 	}
 
@@ -4498,12 +4480,8 @@ out_adjust:
 	/* Adjust the level to keep the NPT and RMP in sync */
 	*level = min_t(size_t, *level, rmp_level);
 out:
-	put_page(pfn_to_page(pfn));
-	pr_debug("%s: GFN: 0x%llx, level: %d, rmp_level: %d, ret: %d\n",
-		 __func__, gfn, *level, rmp_level, ret);
-	if (*level != level_orig)
-		pr_warn("%s: level adjustment needed: GFN: 0x%llx, level: %d, rmp_level: %d, level_orig: %d\n",
-			__func__, gfn, *level, rmp_level, level_orig);
+	pr_debug("%s: GFN: 0x%llx, PFN: 0x%llx, level: %d, rmp_level: %d, level_orig: %d, assigned: %d\n",
+		 __func__, gfn, pfn, *level, rmp_level, level_orig, assigned);
 }
 
 int sev_post_map_gfn(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn)
