@@ -2700,6 +2700,8 @@ int rmp_make_private(u64 pfn, u64 gpa, enum pg_level level, int asid, bool immut
 {
 	struct rmp_state val;
 
+	pr_debug("%s: GPA: 0x%llx, PFN: 0x%llx, level: %d, immutable: %d\n", __func__, gpa, pfn, level, immutable);
+
 	if (!pfn_valid(pfn))
 		return -EINVAL;
 
@@ -2720,6 +2722,8 @@ EXPORT_SYMBOL_GPL(rmp_make_private);
 int rmp_make_shared(u64 pfn, enum pg_level level)
 {
 	struct rmp_state val;
+
+	pr_debug("%s: PFN: 0x%llx, level: %d\n", __func__, pfn, level);
 
 	if (!pfn_valid(pfn))
 		return -EINVAL;
