@@ -4740,7 +4740,7 @@ void sev_invalidate_private_range(struct kvm_memory_slot *slot, gfn_t start, gfn
 		return;
 	}
 
-	while (gfn < end) {
+	while (gfn <= end) {
 		gpa_t gpa = gfn_to_gpa(gfn);
 		int level = PG_LEVEL_4K;
 		int order, rc;
@@ -4751,7 +4751,7 @@ void sev_invalidate_private_range(struct kvm_memory_slot *slot, gfn_t start, gfn
 			continue;
 		}
 
-		rc = kvm_restricted_mem_get_pfn(slot, gfn, &pfn, &order);
+		rc = kvm_restrictedmem_get_pfn(slot, gfn, &pfn, &order);
 		if (rc) {
 			pr_warn_ratelimited("SEV: Failed to retrieve restricted PFN for GFN 0x%llx, rc: %d\n",
 					    gfn, rc);
