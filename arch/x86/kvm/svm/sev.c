@@ -2173,7 +2173,7 @@ static int snp_launch_update_gfn_handler(struct kvm *kvm,
 		int order, level;
 		void *kvaddr;
 
-		ret = kvm_restricted_mem_get_pfn(memslot, gfn, &pfns[i], &order);
+		ret = kvm_restrictedmem_get_pfn(memslot, gfn, &pfns[i], &order);
 		if (ret)
 			goto e_release;
 
