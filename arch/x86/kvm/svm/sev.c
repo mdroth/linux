@@ -4674,7 +4674,8 @@ int sev_update_mem_attr(struct kvm_memory_slot *slot, unsigned int attr,
 			level = order_to_level(order);
 			npages = 1 << order;
 		}
-		pr_debug("%s: marker 0: GFN 0x%llx - 0x%llx, op: %d, PFN: 0x%llx\n", __func__, start, end, op, pfn);
+		pr_debug("%s: marker 0: GFN 0x%llx - 0x%llx, op: %d, PFN: 0x%llx, order: %d, level: %d\n",
+			 __func__, start, end, op, pfn, order, level);
 
 		/*
 		 * Grab the PFN from private memslot and update the RMP entry.
