@@ -2576,6 +2576,8 @@ int psmash(u64 pfn)
 	unsigned long paddr = pfn << PAGE_SHIFT;
 	int ret;
 
+	pr_debug("%s: PFN: 0x%llx\n", __func__, pfn);
+
 	if (!pfn_valid(pfn))
 		return -EINVAL;
 
