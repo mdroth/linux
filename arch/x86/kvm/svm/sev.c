@@ -4576,7 +4576,7 @@ void handle_rmp_page_fault(struct kvm_vcpu *vcpu, gpa_t gpa, u64 error_code)
 		return;
 	}
 
-	ret = kvm_restricted_mem_get_pfn(slot, gfn, &pfn, &order);
+	ret = kvm_restrictedmem_get_pfn(slot, gfn, &pfn, &order);
 	if (ret) {
 		pr_warn("Unexpected RMP fault, no private backing page for GPA 0x%llx", gpa);
 		return;
