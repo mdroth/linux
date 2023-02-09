@@ -3151,8 +3151,8 @@ void kvm_mmu_hugepage_adjust(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	if (kvm_slot_can_be_private(slot)) {
 		int req_level = fault->req_level;
 
-		static_call_cond(kvm_x86_rmp_page_level_adjust)(vcpu->kvm, fault->gfn, fault->pfn,
-								&req_level);
+		static_call_cond(kvm_x86_adjust_mapping_level)(vcpu->kvm, fault->gfn, fault->pfn,
+							       &req_level);
 		pr_debug("%s GFN: 0x%llx PFN 0x%llx max_level %d req_level (original) %d req_level %d\n",
 			 __func__, fault->gfn, fault->pfn, fault->max_level, fault->req_level, req_level);
 		fault->req_level = req_level;
