@@ -1000,11 +1000,14 @@ static void kvm_restrictedmem_invalidate_begin(struct restrictedmem_notifier *no
 	struct kvm *kvm = slot->kvm;
 	int idx;
 
-	if (restrictedmem_get_gfn_range(slot, start, end, &gfn_range))
+	if (restrictedmem_get_gfn_range(slot, start, end, &gfn_range)) {
+		pr_debug("%s: slot: %d, file: %px, start: 0x%lx, end: 0x%lx, restrictedmem.index: 0x%lx\n",
+			 __func__, slot->id, slot->restrictedmem.file, start, end, slot->restrictedmem.index);
 		return;
+	}
 
-	pr_debug("%s: start: 0x%lx, end: 0x%lx, roffset: 0x%llx, gfn_start: 0x%llx, gfn_end: 0x%llx\n",
-		 __func__, start, end, slot->restricted_offset, gfn_range.start,
+	pr_debug("%s: slot: %d, file: %px, start: 0x%lx, end: 0x%lx, restrictedmem.index: 0x%lx, gfn_start: 0x%llx, gfn_end: 0x%llx\n",
+		 __func__, slot->id, slot->restrictedmem.file, start, end, slot->restrictedmem.index, gfn_range.start,
 		 gfn_range.end);
 
 	idx = srcu_read_lock(&kvm->srcu);
@@ -1015,10 +1018,11 @@ static void kvm_restrictedmem_invalidate_begin(struct restrictedmem_notifier *no
 	if (kvm_unmap_gfn_range(kvm, &gfn_range))
 		kvm_flush_remote_tlbs(kvm);
 
-	kvm_arch_invalidate_restricted_mem(slot, gfn_start, gfn_end);
-
 	KVM_MMU_UNLOCK(kvm);
+
 	srcu_read_unlock(&kvm->srcu, idx);
+
+	kvm_arch_invalidate_restricted_mem(slot, gfn_range.start, gfn_range.end);
 }
 
 static void kvm_restrictedmem_invalidate_end(struct restrictedmem_notifier *notifier,
