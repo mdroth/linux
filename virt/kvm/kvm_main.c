@@ -1070,15 +1070,18 @@ static int kvm_restrictedmem_bind(struct kvm_memory_slot *slot,
 
 	BUILD_BUG_ON(sizeof(gfn_t) != sizeof(slot->restrictedmem.index));
 
+	pr_warn("%s, marker 0, slot id: %d, fd: %d, base_gfn: 0x%llx, restrictedmem.index: 0x%llx", __func__, slot->id, fd, slot->base_gfn, offset >> PAGE_SHIFT);
 	if (offset < 0)
 		return -EINVAL;
 
 	slot->restrictedmem.file = fget(fd);
+	pr_warn("%s, marker 1, fd: %d -> file: %px", __func__, fd, slot->restrictedmem.file);
 	if (!slot->restrictedmem.file)
 		return -EINVAL;
 
 	if (!file_is_restrictedmem(slot->restrictedmem.file)) {
 		r = -EINVAL;
+		pr_warn("%s, marker 2", __func__);
 		goto err;
 	}
 
@@ -1087,8 +1090,9 @@ static int kvm_restrictedmem_bind(struct kvm_memory_slot *slot,
 
 	r = restrictedmem_bind(slot->restrictedmem.file,
 			       slot->restrictedmem.index,
-			       slot->restrictedmem.index + slot->npages,
+			       slot->restrictedmem.index + slot->npages - 1,
 			       &slot->restrictedmem.notifier, true);
+	pr_warn("%s, marker 3, r: %d", __func__, r);
 	if (r)
 		goto err;
 
@@ -1101,12 +1105,14 @@ err:
 
 static void kvm_restrictedmem_unbind(struct kvm_memory_slot *slot)
 {
+	pr_warn("%s, marker 0, slot id: %d, file: %px, base_gfn: 0x%llx, restrictedmem.index: 0x%lx", __func__, slot->id, slot->restrictedmem.file, slot->base_gfn, slot->restrictedmem.index);
+
 	if (WARN_ON_ONCE(!slot->restrictedmem.file))
 		return;
 
 	restrictedmem_unbind(slot->restrictedmem.file,
 			     slot->restrictedmem.index,
-			     slot->restrictedmem.index + slot->npages,
+			     slot->restrictedmem.index + slot->npages - 1,
 			     &slot->restrictedmem.notifier);
 
 	fput(slot->restrictedmem.file);
@@ -1758,6 +1764,8 @@ static int check_memory_region_flags(struct kvm *kvm,
 	valid_flags |= KVM_MEM_READONLY;
 #endif
 
+	pr_warn("%s: new->flags: 0x%x, valid_flags: 0x%x\n", __func__, mem->flags, valid_flags);
+
 	if (mem->flags & ~valid_flags)
 		return -EINVAL;
 
@@ -2169,29 +2177,36 @@ int __kvm_set_memory_region(struct kvm *kvm,
 	as_id = mem->slot >> 16;
 	id = (u16)mem->slot;
 
+	pr_warn("%s: marker 0, slot id: %d, gpa: 0x%llx, size: 0x%llx, \n", __func__, id, mem->guest_phys_addr, mem->memory_size);
+
 	/* General sanity checks */
 	if ((mem->memory_size & (PAGE_SIZE - 1)) ||
 	    (mem->memory_size != (unsigned long)mem->memory_size))
-		return -EINVAL;
+		return 100;
 	if (mem->guest_phys_addr & (PAGE_SIZE - 1))
-		return -EINVAL;
+		return 101;
 	/* We can read the guest memory with __xxx_user() later on. */
 	if ((mem->userspace_addr & (PAGE_SIZE - 1)) ||
 	    (mem->userspace_addr != untagged_addr(mem->userspace_addr)) ||
 	     !access_ok((void __user *)(unsigned long)mem->userspace_addr,
 			mem->memory_size))
-		return -EINVAL;
+		return 102;
 	if (mem->flags & KVM_MEM_PRIVATE &&
+	    (mem->restrictedmem_offset & (PAGE_SIZE - 1)))
+#if 0
 	    (mem->restrictedmem_offset & (PAGE_SIZE - 1) ||
 	     mem->restrictedmem_offset + mem->memory_size < mem->restrictedmem_offset ||
 	     0 /* TODO: require gfn be aligned with restricted offset */))
-		return -EINVAL;
+#endif
+		return 103;
 	if (as_id >= kvm_arch_nr_memslot_as_ids(kvm) || id >= KVM_MEM_SLOTS_NUM)
-		return -EINVAL;
+		return 104;
 	if (mem->guest_phys_addr + mem->memory_size < mem->guest_phys_addr)
-		return -EINVAL;
+		return 105;
 	if ((mem->memory_size >> PAGE_SHIFT) > KVM_MEM_MAX_NR_PAGES)
-		return -EINVAL;
+		return 106;
+
+	pr_warn("%s: marker 1\n", __func__);
 
 	slots = __kvm_memslots(kvm, as_id);
 
@@ -2205,6 +2220,7 @@ int __kvm_set_memory_region(struct kvm *kvm,
 		if (!old || !old->npages)
 			return -EINVAL;
 
+		pr_warn("%s: marker 1b\n", __func__);
 		if (WARN_ON_ONCE(kvm->nr_memslot_pages < old->npages))
 			return -EIO;
 
@@ -2223,15 +2239,18 @@ int __kvm_set_memory_region(struct kvm *kvm,
 		 */
 		if ((kvm->nr_memslot_pages + npages) < kvm->nr_memslot_pages)
 			return -EINVAL;
+		pr_warn("%s: marker 2\n", __func__);
 	} else { /* Modify an existing slot. */
 		/* Private memslots are immutable, they can only be deleted. */
 		if (mem->flags & KVM_MEM_PRIVATE)
 			return -EINVAL;
+		pr_warn("%s: marker 3\n", __func__);
 		if ((mem->userspace_addr != old->userspace_addr) ||
 		    (npages != old->npages) ||
 		    ((mem->flags ^ old->flags) & KVM_MEM_READONLY))
 			return -EINVAL;
 
+		pr_warn("%s: marker 4\n", __func__);
 		if (base_gfn != old->base_gfn)
 			change = KVM_MR_MOVE;
 		else if (mem->flags != old->flags)
@@ -2257,6 +2276,8 @@ int __kvm_set_memory_region(struct kvm *kvm,
 	new->flags = mem->flags;
 	new->userspace_addr = mem->userspace_addr;
 	if (mem->flags & KVM_MEM_PRIVATE) {
+		pr_warn("%s: fd: %d, base_gfn: 0x%llx, nr_pages: 0x%lx, restrictedmem_offset: 0x%llx\n",
+			__func__, mem->restrictedmem_fd, base_gfn, npages, mem->restrictedmem_offset);
 		r = kvm_restrictedmem_bind(new, mem->restrictedmem_fd,
 					   mem->restrictedmem_offset);
 		if (r)
@@ -2267,6 +2288,7 @@ int __kvm_set_memory_region(struct kvm *kvm,
 	if (r)
 		goto out_restricted;
 
+	pr_warn("%s: marker 5\n", __func__);
 	return 0;
 
 out_restricted:
@@ -2274,6 +2296,7 @@ out_restricted:
 		kvm_restrictedmem_unbind(new);
 out:
 	kfree(new);
+	pr_warn("%s: marker 6, ret: %d\n", __func__, r);
 	return r;
 }
 EXPORT_SYMBOL_GPL(__kvm_set_memory_region);
