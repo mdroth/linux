@@ -125,11 +125,6 @@ static inline bool is_mirroring_enc_context(struct kvm *kvm)
 	return !!to_kvm_svm(kvm)->sev_info.enc_context_owner;
 }
 
-static bool kvm_is_upm_enabled(struct kvm *kvm)
-{
-	return kvm->arch.upm_mode;
-}
-
 /* Must be called with the sev_bitmap_lock held */
 static bool __sev_recycle_asids(int min_asid, int max_asid)
 {
@@ -541,7 +536,7 @@ static struct page **sev_pin_memory(struct kvm *kvm, unsigned long uaddr,
 	if (!pages)
 		return ERR_PTR(-ENOMEM);
 
-	if (kvm_is_upm_enabled(kvm)) {
+	if (kvm_arch_has_private_mem(kvm)) {
 		/* Get the PFN from memfile */
 		if (sev_get_memfile_pfn(kvm, uaddr, ulen, npages, pages)) {
 			pr_err("%s: ERROR: unable to find slot for uaddr %lx", __func__, uaddr);
@@ -681,7 +676,7 @@ static int sev_launch_update_shared_gfn_handler(struct kvm *kvm,
 	}
 
 e_unpin:
-	if (!kvm_is_upm_enabled(kvm)) {
+	if (!kvm_arch_has_private_mem(kvm)) {
 		/* content of memory is updated, mark pages dirty */
 		for (i = 0; i < npages; i++) {
 			set_page_dirty_lock(inpages[i]);
