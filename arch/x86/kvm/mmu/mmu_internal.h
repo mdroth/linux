@@ -251,6 +251,24 @@ struct kvm_page_fault {
 
 int kvm_tdp_page_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault);
 
+static bool kvm_mmu_fault_is_private(struct kvm *kvm, gpa_t gpa, u64 err)
+{
+	bool private_fault = false;
+
+	if (kvm_is_vm_type(kvm, KVM_X86_SNP_VM)) {
+		private_fault = !!(err & PFERR_GUEST_ENC_MASK);
+	} else if (kvm_is_vm_type(kvm, KVM_X86_SW_PROTECTED_VM)) {
+		/*
+		 * This handling is for gmem self-tests and guests that treat
+		 * userspace as the authority on whether a fault should be
+		 * private or not.
+		 */
+		private_fault = kvm_mem_is_private(kvm, gpa >> PAGE_SHIFT);
+	}
+
+	return private_fault;
+}
+
 /*
  * Return values of handle_mmio_page_fault(), mmu.page_fault(), fast_page_fault(),
  * and of course kvm_mmu_do_page_fault().
@@ -298,7 +316,7 @@ static inline int kvm_mmu_do_page_fault(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa,
 		.max_level = KVM_MAX_HUGEPAGE_LEVEL,
 		.req_level = PG_LEVEL_4K,
 		.goal_level = PG_LEVEL_4K,
-		.is_private = kvm_mem_is_private(vcpu->kvm, cr2_or_gpa >> PAGE_SHIFT),
+		.is_private = kvm_mmu_fault_is_private(vcpu->kvm, cr2_or_gpa, err),
 	};
 	int r;
 
