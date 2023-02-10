@@ -231,6 +231,37 @@ struct kvm_page_fault {
 
 int kvm_tdp_page_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault);
 
+static bool kvm_mmu_fault_is_private(struct kvm *kvm, gpa_t gpa, u64 err)
+{
+	struct kvm_memory_slot *slot;
+	bool private_fault = false;
+	gfn_t gfn = gpa_to_gfn(gpa);
+
+	slot = gfn_to_memslot(kvm, gfn);
+	if (!slot) {
+		pr_debug("%s: no slot, GFN: 0x%llx\n", __func__, gfn);
+		goto out;
+	}
+
+	if (!kvm_slot_can_be_private(slot)) {
+		pr_debug("%s: slot is not private, GFN: 0x%llx\n", __func__, gfn);
+		goto out;
+	}
+
+	if (static_call(kvm_x86_fault_is_private)(kvm, gpa, err, &private_fault) == 1)
+		goto out;
+
+	/*
+	 * Handling below is for UPM self-tests and guests that use
+	 * slot->shared_bitmap for encrypted access tracking.
+	 */
+	private_fault = kvm_mem_is_private(kvm, gpa >> PAGE_SHIFT);
+
+out:
+	pr_debug("%s: GFN: 0x%llx, private: %d\n", __func__, gfn, private_fault);
+	return private_fault;
+}
+
 /*
  * Return values of handle_mmio_page_fault(), mmu.page_fault(), fast_page_fault(),
  * and of course kvm_mmu_do_page_fault().
@@ -262,11 +293,11 @@ enum {
 };
 
 static inline int kvm_mmu_do_page_fault(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa,
-					u32 err, bool prefetch)
+					u64 err, bool prefetch)
 {
 	struct kvm_page_fault fault = {
 		.addr = cr2_or_gpa,
-		.error_code = err,
+		.error_code = lower_32_bits(err),
 		.exec = err & PFERR_FETCH_MASK,
 		.write = err & PFERR_WRITE_MASK,
 		.present = err & PFERR_PRESENT_MASK,
@@ -280,7 +311,7 @@ static inline int kvm_mmu_do_page_fault(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa,
 		.max_level = KVM_MAX_HUGEPAGE_LEVEL,
 		.req_level = PG_LEVEL_4K,
 		.goal_level = PG_LEVEL_4K,
-		.is_private = kvm_mem_is_private(vcpu->kvm, cr2_or_gpa >> PAGE_SHIFT),
+		.is_private = kvm_mmu_fault_is_private(vcpu->kvm, cr2_or_gpa, err),
 	};
 	int r;
 
