@@ -4728,11 +4728,6 @@ void sev_invalidate_private_range(struct kvm_memory_slot *slot, gfn_t start, gfn
 		int order, rc;
 		kvm_pfn_t pfn;
 
-		if (!kvm_mem_is_private(slot->kvm, gfn)) {
-			gfn++;
-			continue;
-		}
-
 		rc = kvm_restrictedmem_get_pfn(slot, gfn, &pfn, &order);
 		if (rc) {
 			pr_warn_ratelimited("SEV: Failed to retrieve restricted PFN for GFN 0x%llx, rc: %d\n",
