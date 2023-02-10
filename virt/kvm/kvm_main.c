@@ -2175,6 +2175,11 @@ int __kvm_set_memory_region(struct kvm *kvm,
 	as_id = mem->slot >> 16;
 	id = (u16)mem->slot;
 
+	pr_debug("%s: as_id %d id %d guest_phys_addr 0x%llx memory_size 0x%llx restrictedmem_offset 0x%llx restrictedmem_fd %d userspace_addr 0x%llx\n",
+		 __func__, as_id, id, mem->guest_phys_addr, mem->memory_size,
+		 mem->restrictedmem_offset, mem->restrictedmem_fd,
+		 mem->userspace_addr);
+
 	/* General sanity checks */
 	if ((mem->memory_size & (PAGE_SIZE - 1)) ||
 	    (mem->memory_size != (unsigned long)mem->memory_size))
