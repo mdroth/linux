@@ -4332,6 +4332,7 @@ static int kvm_faultin_pfn_private(struct kvm_vcpu *vcpu,
 static int __kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 {
 	struct kvm_memory_slot *slot = fault->slot;
+	bool private_fault = fault->is_private;
 	bool async;
 
 	/*
@@ -4361,12 +4362,19 @@ static int __kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 			return RET_PF_EMULATE;
 	}
 
-	if (fault->is_private != kvm_mem_is_private(vcpu->kvm, fault->gfn)) {
+	/*
+	 * In some cases SNP guests will make MMIO accesses with the encryption
+	 * bit set. Handle these via the normal MMIO fault path.
+	 */
+	if (!slot && private_fault && kvm_is_vm_type(vcpu->kvm, KVM_X86_SNP_VM))
+		private_fault = false;
+
+	if (private_fault != kvm_mem_is_private(vcpu->kvm, fault->gfn)) {
 		kvm_mmu_prepare_memory_fault_exit(vcpu, fault);
 		return -EFAULT;
 	}
 
-	if (fault->is_private)
+	if (private_fault)
 		return kvm_faultin_pfn_private(vcpu, fault);
 
 	async = false;
