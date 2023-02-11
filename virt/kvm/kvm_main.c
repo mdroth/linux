@@ -1091,6 +1091,8 @@ static int kvm_restrictedmem_bind(struct kvm_memory_slot *slot,
 	slot->restrictedmem.index = offset >> PAGE_SHIFT;
 	slot->restrictedmem.notifier.ops = &kvm_restrictedmem_notifier_ops;
 
+	pr_debug("%s: slot %d file %px base_gfn 0x%llx restrictedmem.index 0x%lx\n",
+		 __func__, slot->id, slot->restrictedmem.file, slot->base_gfn, slot->restrictedmem.index);
 	r = restrictedmem_bind(slot->restrictedmem.file,
 			       slot->restrictedmem.index,
 			       slot->restrictedmem.index + slot->npages - 1,
@@ -1110,6 +1112,8 @@ static void kvm_restrictedmem_unbind(struct kvm_memory_slot *slot)
 	if (WARN_ON_ONCE(!slot->restrictedmem.file))
 		return;
 
+	pr_debug("%s: slot %d file %px base_gfn 0x%llx restrictedmem.index 0x%lx\n",
+		 __func__, slot->id, slot->restrictedmem.file, slot->base_gfn, slot->restrictedmem.index);
 	restrictedmem_unbind(slot->restrictedmem.file,
 			     slot->restrictedmem.index,
 			     slot->restrictedmem.index + slot->npages - 1,
