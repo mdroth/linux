@@ -241,7 +241,8 @@ int restrictedmem_bind(struct file *file, pgoff_t start, pgoff_t end,
 			goto out_unlock;
 
 		if (exclusive && xa_find(&rm->bindings, &start, end, XA_PRESENT))
-			goto out_unlock;
+			pr_warn("%s: range already bound, exclusive %d start 0x%lx end 0x%lx\n",
+				__func__, exclusive, start, end);
 	}
 
 	xa_store_range(&rm->bindings, start, end, notifier, GFP_KERNEL);
