@@ -277,6 +277,9 @@ int restrictedmem_bind(struct file *file, pgoff_t start, pgoff_t end,
 	struct restrictedmem *rm = file->f_mapping->private_data;
 	int ret = -EINVAL;
 
+	pr_debug("%s: registering notifier %px file %px exclusive %d rm->exclusive %d start 0x%lx end 0x%lx\n",
+		 __func__, notifier, file, exclusive, rm->exclusive, start, end);
+
 	down_write(&rm->lock);
 
 	/* Non-exclusive mappings are not yet implemented. */
@@ -307,8 +310,8 @@ void restrictedmem_unbind(struct file *file, pgoff_t start, pgoff_t end,
 	struct restrictedmem *rm = file->f_mapping->private_data;
 	unsigned long index;
 
-	pr_debug("%s: unregistering notifier, invalidating page offsets 0x%lx-0x%lx\n",
-		 __func__, start, end);
+	pr_debug("%s: unregistering notifier %px file %px invalidating page offsets 0x%lx-0x%lx\n",
+		 __func__, notifier, file, start, end);
 	down_write(&rm->lock);
 
 	xa_for_each_range(&rm->bindings, index, notifier, start, end)
