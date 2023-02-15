@@ -150,6 +150,20 @@ static __always_inline bool cpuid_function_is_indexed(u32 function)
 	return false;
 }
 
+#ifdef CONFIG_SMP
+int cpuid_on_cpu(unsigned int cpu, unsigned int op,
+		 unsigned int *eax, unsigned int *ebx,
+		 unsigned int *ecx, unsigned int *edx);
+#else	/* CONFIG_SMP */
+static inline int cpuid_on_cpu(unsigned int cpu, unsigned int op,
+			       unsigned int *eax, unsigned int *ebx,
+			       unsigned int *ecx, unsigned int *edx)
+{
+	cpuid(op, eax, ebx, ecx, edx);
+	return 0;
+}
+#endif	/* CONFIG_SMP */
+
 #define for_each_possible_hypervisor_cpuid_base(function) \
 	for (function = 0x40000000; function < 0x40010000; function += 0x100)
 
