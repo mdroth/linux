@@ -248,12 +248,12 @@ static bool kvm_mmu_fault_is_private(struct kvm *kvm, gpa_t gpa, u64 err)
 		goto out;
 	}
 
-	if (static_call(kvm_x86_fault_is_private)(kvm, gpa, err, &private_fault) == 1)
+	if (static_call(kvm_x86_fault_is_private)(kvm, gpa, err, &private_fault))
 		goto out;
 
 	/*
-	 * Handling below is for UPM self-tests and guests that use
-	 * slot->shared_bitmap for encrypted access tracking.
+	 * Handling below is for UPM self-tests and guests that treat userspace
+	 * as the authority on whether a fault should be private or not.
 	 */
 	private_fault = kvm_mem_is_private(kvm, gpa >> PAGE_SHIFT);
 
