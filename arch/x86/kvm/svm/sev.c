@@ -4464,12 +4464,12 @@ out:
 	put_page(pfn_to_page(pfn));
 }
 
-int sev_fault_is_private(struct kvm *kvm, gpa_t gpa, u64 error_code, bool *private_fault)
+bool sev_fault_is_private(struct kvm *kvm, gpa_t gpa, u64 error_code, bool *private_fault)
 {
 	gfn_t gfn = gpa_to_gfn(gpa);
 
 	if (!kvm_arch_has_private_mem(kvm) || !sev_guest(kvm))
-		goto out_unhandled;
+		return false;
 
 	/*
 	 * For SEV, the hypervisor is not aware of implicit conversions in the
@@ -4484,10 +4484,7 @@ int sev_fault_is_private(struct kvm *kvm, gpa_t gpa, u64 error_code, bool *priva
 	else
 		*private_fault = kvm_mem_is_private(kvm, gfn);
 
-	return 1;
-
-out_unhandled:
-	return 0;
+	return true;
 }
 
 static inline u8 order_to_level(int order)
