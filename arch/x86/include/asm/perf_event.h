@@ -219,6 +219,8 @@ union cpuid_0x80000022_ebx {
 		unsigned int	lbr_v2_stack_sz:6;
 		/* Number of Data Fabric Counters */
 		unsigned int	num_df_pmc:6;
+		/* Number of Unified Memory Controller Counters */
+		unsigned int	num_umc_pmc:6;
 	} split;
 	unsigned int		full;
 };

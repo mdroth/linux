@@ -28,6 +28,16 @@
 
 #define COUNTER_SHIFT		16
 
+#define UNIT_NAME_LEN		16
+#define UNIT_OWNER_NONE		-1
+
+/*
+ * The highest possible configuration as of now is a 2P system with all memory
+ * controllers active. The maximum number of memory controllers in each channel
+ * group is 32.
+ */
+#define NUM_UNITS_UMC_MAX	64
+
 #undef pr_fmt
 #define pr_fmt(fmt)	"amd_uncore: " fmt
 
@@ -44,6 +54,7 @@ struct amd_uncore_context {
 };
 
 struct amd_uncore_unit {
+	char name[UNIT_NAME_LEN];
 	struct amd_uncore_context * __percpu *ctx;
 	struct pmu pmu;
 	cpumask_t active_mask;
@@ -51,6 +62,7 @@ struct amd_uncore_unit {
 	int rdpmc_base;
 	u32 msr_base;
 	u32 dbg_msr_base;
+	int owner;
 	int (*id)(unsigned int cpu);
 };
 
@@ -65,6 +77,7 @@ enum amd_uncore_type {
 	UNCORE_TYPE_LLC	= 1,
 	UNCORE_TYPE_L2	= UNCORE_TYPE_LLC,
 	UNCORE_TYPE_L3	= UNCORE_TYPE_LLC,
+	UNCORE_TYPE_UMC	= 2,
 
 	UNCORE_TYPE_MAX
 };
@@ -171,7 +184,7 @@ out:
 		hwc->event_base_rdpmc = -1;
 
 	if (flags & PERF_EF_START)
-		amd_uncore_start(event, PERF_EF_RELOAD);
+		event->pmu->start(event, PERF_EF_RELOAD);
 
 	return 0;
 }
@@ -183,7 +196,7 @@ static void amd_uncore_del(struct perf_event *event, int flags)
 	struct amd_uncore_context *ctx = *per_cpu_ptr(unit->ctx, event->cpu);
 	struct hw_perf_event *hwc = &event->hw;
 
-	amd_uncore_stop(event, PERF_EF_UPDATE);
+	event->pmu->stop(event, PERF_EF_UPDATE);
 
 	for (i = 0; i < unit->num_counters; i++) {
 		if (cmpxchg(&ctx->events[i], event, NULL) == event)
@@ -277,7 +290,7 @@ static struct device_attribute format_attr_##_var =			\
 DEFINE_UNCORE_FORMAT_ATTR(event12,	event,		"config:0-7,32-35");
 DEFINE_UNCORE_FORMAT_ATTR(event14,	event,		"config:0-7,32-35,59-60"); /* F17h+ DF */
 DEFINE_UNCORE_FORMAT_ATTR(event14v2,	event,		"config:0-7,32-37");	   /* PerfMonV2 DF */
-DEFINE_UNCORE_FORMAT_ATTR(event8,	event,		"config:0-7");		   /* F17h+ L3 */
+DEFINE_UNCORE_FORMAT_ATTR(event8,	event,		"config:0-7");		   /* F17h+ L3, PerfMonV2 UMC */
 DEFINE_UNCORE_FORMAT_ATTR(umask8,	umask,		"config:8-15");
 DEFINE_UNCORE_FORMAT_ATTR(umask12,	umask,		"config:8-15,24-27");	   /* PerfMonV2 DF */
 DEFINE_UNCORE_FORMAT_ATTR(coreid,	coreid,		"config:42-44");	   /* F19h L3 */
@@ -287,6 +300,7 @@ DEFINE_UNCORE_FORMAT_ATTR(threadmask2,	threadmask,	"config:56-57");	   /* F19h L
 DEFINE_UNCORE_FORMAT_ATTR(enallslices,	enallslices,	"config:46");		   /* F19h L3 */
 DEFINE_UNCORE_FORMAT_ATTR(enallcores,	enallcores,	"config:47");		   /* F19h L3 */
 DEFINE_UNCORE_FORMAT_ATTR(sliceid,	sliceid,	"config:48-50");	   /* F19h L3 */
+DEFINE_UNCORE_FORMAT_ATTR(rdwrmask,    rdwrmask,       "config:8-9");		   /* PerfMonV2 UMC */
 
 /* Common DF and NB attributes */
 static struct attribute *amd_uncore_df_format_attr[] = {
@@ -300,6 +314,13 @@ static struct attribute *amd_uncore_l3_format_attr[] = {
 	&format_attr_event12.attr,	/* event */
 	&format_attr_umask8.attr,	/* umask */
 	NULL,				/* threadmask */
+	NULL,
+};
+
+/* Common UMC attributes */
+static struct attribute *amd_uncore_umc_format_attr[] = {
+	&format_attr_event8.attr,       /* event */
+	&format_attr_rdwrmask.attr,     /* rdwrmask */
 	NULL,
 };
 
@@ -326,6 +347,11 @@ static struct attribute_group amd_uncore_df_format_group = {
 static struct attribute_group amd_uncore_l3_format_group = {
 	.name = "format",
 	.attrs = amd_uncore_l3_format_attr,
+};
+
+static struct attribute_group amd_uncore_umc_format_group = {
+	.name = "format",
+	.attrs = amd_uncore_umc_format_attr,
 };
 
 static struct attribute_group amd_f17h_uncore_l3_format_group = {
@@ -355,6 +381,12 @@ static const struct attribute_group *amd_uncore_l3_attr_groups[] = {
 static const struct attribute_group *amd_uncore_l3_attr_update[] = {
 	&amd_f17h_uncore_l3_format_group,
 	&amd_f19h_uncore_l3_format_group,
+	NULL,
+};
+
+static const struct attribute_group *amd_uncore_umc_attr_groups[] = {
+	&amd_uncore_attr_group,
+	&amd_uncore_umc_format_group,
 	NULL,
 };
 
@@ -446,6 +478,12 @@ static void uncore_cpu_starting(unsigned int cpu, unsigned int type)
 		this = *per_cpu_ptr(unit->ctx, cpu);
 		this->id = unit->id(cpu);
 
+		if (unit->owner != UNIT_OWNER_NONE && this->id != unit->owner) {
+			hlist_add_head(&this->node, &uncore_unused_list);
+			*per_cpu_ptr(unit->ctx, cpu) = NULL;
+			continue;
+		}
+
 		/* try to find a shared sibling */
 		for_each_online_cpu(j) {
 			that = *per_cpu_ptr(unit->ctx, j);
@@ -501,6 +539,9 @@ static void uncore_cpu_online(unsigned int cpu, unsigned int type)
 		unit = &uncore->units[i];
 		ctx = *per_cpu_ptr(unit->ctx, cpu);
 
+		if (unit->owner != UNIT_OWNER_NONE && !ctx)
+			continue;
+
 		if (cpu == ctx->cpu)
 			cpumask_set_cpu(cpu, &unit->active_mask);
 	}
@@ -527,6 +568,9 @@ static void uncore_cpu_down_prepare(unsigned int cpu, unsigned int type)
 	for (i = 0; i < uncore->num_units; i++) {
 		unit = &uncore->units[i];
 		this = *per_cpu_ptr(unit->ctx, cpu);
+
+		if (unit->owner != UNIT_OWNER_NONE && !this)
+			continue;
 
 		if (this->cpu != cpu)
 			continue;
@@ -572,6 +616,9 @@ static void uncore_cpu_dead(unsigned int cpu, unsigned int type)
 	for (i = 0; i < uncore->num_units; i++) {
 		unit = &uncore->units[i];
 		ctx = *per_cpu_ptr(unit->ctx, cpu);
+
+		if (unit->owner != UNIT_OWNER_NONE && !ctx)
+			continue;
 
 		if (cpu == ctx->cpu)
 			cpumask_clear_cpu(cpu, &unit->active_mask);
@@ -704,6 +751,7 @@ static int amd_uncore_nb_init(void)
 	}
 
 	unit = &uncore->units[0];
+	strncpy(unit->name, "amd_nb", sizeof(unit->name));
 	unit->num_counters = NUM_COUNTERS_NB + NUM_COUNTERS_DFDBG;
 	unit->msr_base = MSR_F15H_NB_PERF_CTL;
 	unit->dbg_msr_base = MSR_DFDBG_PERF_CTL;
@@ -711,7 +759,7 @@ static int amd_uncore_nb_init(void)
 	unit->pmu = (struct pmu) {
 		.task_ctx_nr	= perf_invalid_context,
 		.attr_groups	= amd_uncore_df_attr_groups,
-		.name		= "amd_nb",
+		.name		= unit->name,
 		.event_init	= amd_uncore_nb_event_init,
 		.add		= amd_uncore_nb_add,
 		.del		= amd_uncore_del,
@@ -728,11 +776,12 @@ static int amd_uncore_nb_init(void)
 	 * family as either NB or DF.
 	 */
 	if (boot_cpu_data.x86 >= 0x17)
-		unit->pmu.name = "amd_df";
+		strncpy(unit->name, "amd_df", sizeof(unit->name));
 
 	if (pmu_version >= 2)
 		unit->num_counters = ebx.split.num_df_pmc;
 
+	unit->owner = UNIT_OWNER_NONE;
 	unit->id = amd_uncore_nb_id;
 	ret = amd_uncore_unit_init(unit);
 	if (ret)
@@ -821,6 +870,7 @@ static int amd_uncore_llc_init(void)
 	}
 
 	unit = &uncore->units[0];
+	strncpy(unit->name, "amd_l2", sizeof(unit->name));
 	unit->num_counters = NUM_COUNTERS_L2;
 	unit->msr_base = MSR_F16H_L2I_PERF_CTL;
 	unit->rdpmc_base = RDPMC_BASE_LLC;
@@ -828,7 +878,7 @@ static int amd_uncore_llc_init(void)
 		.task_ctx_nr	= perf_invalid_context,
 		.attr_groups	= amd_uncore_l3_attr_groups,
 		.attr_update	= amd_uncore_l3_attr_update,
-		.name		= "amd_l2",
+		.name		= unit->name,
 		.event_init	= amd_uncore_llc_event_init,
 		.add		= amd_uncore_add,
 		.del		= amd_uncore_del,
@@ -845,9 +895,10 @@ static int amd_uncore_llc_init(void)
 	 */
 	if (boot_cpu_data.x86 >= 0x17) {
 		unit->num_counters = NUM_COUNTERS_L3;
-		unit->pmu.name = "amd_l3";
+		strncpy(unit->name, "amd_l3", sizeof(unit->name));
 	}
 
+	unit->owner = UNIT_OWNER_NONE;
 	unit->id = amd_uncore_llc_id;
 	ret = amd_uncore_unit_init(unit);
 	if (ret)
@@ -856,6 +907,142 @@ static int amd_uncore_llc_init(void)
 	return 0;
 
 fail:
+	kfree(uncore->units);
+	uncore->num_units = 0;
+
+	return ret;
+}
+
+static int amd_uncore_umc_id(unsigned int cpu)
+{
+	/*
+	 * Return the corresponding Socket ID. This is available from CPUID
+	 * leaf 0x8000001e ECX bits 7:0 and represent the Node ID.
+	 */
+	return topology_die_id(cpu);
+}
+
+static int amd_uncore_umc_event_init(struct perf_event *event)
+{
+	struct hw_perf_event *hwc = &event->hw;
+	int ret = amd_uncore_event_init(event);
+
+	if (ret)
+		return ret;
+
+	/* FIXME */
+	hwc->config = event->attr.config & GENMASK_ULL(9, 0);
+
+	return 0;
+}
+
+static void amd_uncore_umc_start(struct perf_event *event, int flags)
+{
+	struct hw_perf_event *hwc = &event->hw;
+
+	if (flags & PERF_EF_RELOAD)
+		wrmsrl(hwc->event_base, (u64)local64_read(&hwc->prev_count));
+
+	/* FIXME */
+	hwc->state = 0;
+	wrmsrl(hwc->config_base, (hwc->config | BIT_ULL(31)));
+	perf_event_update_userpage(event);
+}
+
+static int amd_uncore_umc_init(void)
+{
+	struct amd_uncore *uncore = &uncores[UNCORE_TYPE_UMC];
+	union cpuid_0x80000022_ebx ebx;
+	struct amd_uncore_unit *unit;
+	unsigned int eax, ecx, edx;
+	int id, ret = -ENOMEM;
+	u64 groupmask = 0;
+	int i, j = 0, k, l;
+
+	/* If not found, allow other PMUs to be discovered and initialized */
+	if (pmu_version < 2)
+		return 0;
+
+	/*
+	 * Since the memory controllers are yet to be discovered, assume the
+	 * highest possible configuration. Unused slots can be freed up later.
+	 */
+	uncore->units = kcalloc(NUM_UNITS_UMC_MAX,
+				sizeof(struct amd_uncore_unit), GFP_KERNEL);
+	if (!uncore->units)
+		return -ENOMEM;
+
+	/*
+	 * Each group of memory controllers can have an unique configuration
+	 * based on the DIMM population scheme. If all CPUs associated with a
+	 * group of memory channels are offline, then the corresponding memory
+	 * controllers will not be discoverable as this relies on CPUID.
+	 */
+	for_each_online_cpu(i) {
+		id = amd_uncore_umc_id(i);
+		if (groupmask & BIT_ULL(id))
+			continue;
+
+		groupmask |= BIT_ULL(id);
+		ret = cpuid_on_cpu(i, EXT_PERFMON_DEBUG_FEATURES,
+				   &eax, &ebx.full, &ecx, &edx);
+		if (ret)
+			goto fail;
+
+		for (k = 0, l = 0; j < NUM_UNITS_UMC_MAX && k < 32; k++) {
+			if (!(ecx & BIT(k)))
+				continue;
+
+			unit = &uncore->units[j];
+			snprintf(unit->name, sizeof(unit->name), "amd_umc_%d", j);
+			unit->num_counters = ebx.split.num_umc_pmc / hweight32(ecx);
+			unit->msr_base = MSR_F19H_UMC_PERF_CTL + l * unit->num_counters * 2;
+			unit->rdpmc_base = -1;
+			unit->pmu = (struct pmu) {
+				.type		= -1,
+				.task_ctx_nr	= perf_invalid_context,
+				.attr_groups	= amd_uncore_umc_attr_groups,
+				.name		= unit->name,
+				.event_init	= amd_uncore_umc_event_init,
+				.add		= amd_uncore_add,
+				.del		= amd_uncore_del,
+				.start		= amd_uncore_umc_start,
+				.stop		= amd_uncore_stop,
+				.read		= amd_uncore_read,
+				.capabilities	= PERF_PMU_CAP_NO_EXCLUDE | PERF_PMU_CAP_NO_INTERRUPT,
+				.module		= THIS_MODULE,
+			};
+
+			unit->owner = id;
+			unit->id = amd_uncore_umc_id;
+			ret = amd_uncore_unit_init(unit);
+			if (ret)
+				goto fail;
+
+			j++;
+			l++;
+		}
+	}
+
+	/* Update the number of units and free unused memory */
+	uncore->num_units = j;
+	uncore->units = krealloc_array(uncore->units, uncore->num_units,
+				       sizeof(struct amd_uncore_unit),
+				       GFP_KERNEL);
+	if (!uncore->units)
+		goto fail;
+
+	return 0;
+
+fail:
+	for (; j >= 0; j--) {
+		unit = &uncore->units[j];
+		if (unit->pmu.type > 0)
+			perf_pmu_unregister(&unit->pmu);
+		if (unit->ctx)
+			free_percpu(unit->ctx);
+	}
+
 	kfree(uncore->units);
 	uncore->num_units = 0;
 
@@ -901,6 +1088,9 @@ static int __init amd_uncore_init(void)
 		goto fail;
 
 	if (amd_uncore_llc_init())
+		goto fail;
+
+	if (amd_uncore_umc_init())
 		goto fail;
 
 	/*
