@@ -716,7 +716,7 @@ static int sev_launch_update_priv_gfn_handler(struct kvm *kvm,
 
 		ret = kvm_restrictedmem_get_pfn(memslot, gfn, &pfn, &order);
 		if (ret)
-			return ret;
+			goto e_ret;
 
 		kvaddr = pfn_to_kaddr(pfn);
 		if (!virt_addr_valid(kvaddr)) {
@@ -742,7 +742,13 @@ static int sev_launch_update_priv_gfn_handler(struct kvm *kvm,
 		kvm_release_pfn_clean(pfn);
 	}
 
+	/*
+	 * Memory attribute updates via KVM_SET_MEMORY_ATTRIBUTES are serialized
+	 * via kvm->slots_lock, so use the same protocol for updating them here.
+	 */
+	mutex_lock(&kvm->slots_lock);
 	kvm_vm_set_region_attr(kvm, range->start, range->end, KVM_MEMORY_ATTRIBUTE_PRIVATE);
+	mutex_unlock(&kvm->slots_lock);
 e_ret:
 	return ret;
 }
