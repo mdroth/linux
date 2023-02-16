@@ -755,7 +755,7 @@ int sev_update_mem_attr(struct kvm_memory_slot *slot, unsigned int attr,
 			gfn_t start, gfn_t end);
 void sev_invalidate_private_range(struct kvm_memory_slot *slot, gfn_t start, gfn_t end);
 
-int sev_fault_is_private(struct kvm *kvm, gpa_t gpa, u64 error_code, bool *private_fault);
+bool sev_fault_is_private(struct kvm *kvm, gpa_t gpa, u64 error_code, bool *private_fault);
 
 /* vmenter.S */
 
