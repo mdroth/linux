@@ -3492,7 +3492,9 @@ static int snp_complete_psc_msr_protocol(struct kvm_vcpu *vcpu)
  */
 static int snp_complete_psc(struct kvm_vcpu *vcpu)
 {
-	svm_set_ghcb_sw_exit_info_2(vcpu, 0);
+	struct vcpu_svm *svm = to_svm(vcpu);
+
+	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb, 0);
 
 	return 1;
 }
@@ -3576,7 +3578,7 @@ unlock:
 	mutex_unlock(&sev->guest_req_lock);
 
 e_fail:
-	svm_set_ghcb_sw_exit_info_2(vcpu, rc);
+	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb, rc);
 }
 
 static void snp_handle_ext_guest_request(struct vcpu_svm *svm, gpa_t req_gpa, gpa_t resp_gpa)
@@ -3657,7 +3659,7 @@ unlock:
 	mutex_unlock(&sev->guest_req_lock);
 
 e_fail:
-	svm_set_ghcb_sw_exit_info_2(vcpu, rc);
+	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb, rc);
 }
 
 static kvm_pfn_t gfn_to_pfn_restricted(struct kvm *kvm, gfn_t gfn)
@@ -4146,8 +4148,8 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 	case SVM_VMGEXIT_AP_CREATION:
 		ret = sev_snp_ap_creation(svm);
 		if (ret) {
-			svm_set_ghcb_sw_exit_info_1(vcpu, 1);
-			svm_set_ghcb_sw_exit_info_2(vcpu,
+			ghcb_set_sw_exit_info_1(ghcb, 1);
+			ghcb_set_sw_exit_info_2(ghcb,
 						    X86_TRAP_GP |
 						    SVM_EVTINJ_TYPE_EXEPT |
 						    SVM_EVTINJ_VALID);
