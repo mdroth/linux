@@ -2668,6 +2668,7 @@ unsigned long gfn_to_hva_memslot_prot(struct kvm_memory_slot *slot,
 
 	return hva;
 }
+EXPORT_SYMBOL_GPL(gfn_to_hva_memslot_prot);
 
 unsigned long gfn_to_hva_prot(struct kvm *kvm, gfn_t gfn, bool *writable)
 {
