@@ -572,23 +572,26 @@ static unsigned long get_num_contig_pages(unsigned long idx,
 	return pages;
 }
 
-static int sev_launch_update_data(struct kvm *kvm, struct kvm_sev_cmd *argp)
+static int sev_launch_update_shared_gfn_handler(struct kvm *kvm,
+						struct kvm_gfn_range *range,
+						struct kvm_sev_cmd *argp)
 {
 	unsigned long vaddr, vaddr_end, next_vaddr, npages, pages, size, i;
 	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
-	struct kvm_sev_launch_update_data params;
 	struct sev_data_launch_update_data data;
 	struct page **inpages;
 	int ret;
 
-	if (!sev_guest(kvm))
-		return -ENOTTY;
+	vaddr = gfn_to_hva_memslot_prot(range->slot, range->start, NULL);
+	pr_debug("%s: shared GFN: %llx, slot.id: %d, slot.base_gfn: %llx, slot.userspace_addr: %lx, slot.flags: %x, vaddr: %lx\n",
+		 __func__, range->start, range->slot->id, range->slot->base_gfn,
+		 range->slot->userspace_addr, range->slot->flags, vaddr);
+	if (kvm_is_error_hva(vaddr)) {
+		pr_err("vaddr is erroneous 0x%lx\n", vaddr);
+		return -EINVAL;
+	}
 
-	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data, sizeof(params)))
-		return -EFAULT;
-
-	vaddr = params.uaddr;
-	size = params.len;
+	size = (range->end - range->start) << PAGE_SHIFT;
 	vaddr_end = vaddr + size;
 
 	/* Lock the user memory. */
@@ -638,6 +641,88 @@ e_unpin:
 	/* unlock the user pages */
 	sev_unpin_memory(kvm, inpages, npages);
 	return ret;
+}
+
+static int sev_launch_update_priv_gfn_handler(struct kvm *kvm,
+					      struct kvm_gfn_range *range,
+					      struct kvm_sev_cmd *argp)
+{
+	struct sev_data_launch_update_data data;
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	gfn_t gfn;
+	kvm_pfn_t pfn;
+	struct kvm_memory_slot *memslot = range->slot;
+	int ret = 0;
+
+	data.reserved = 0;
+	data.handle = sev->handle;
+
+	for (gfn = range->start; gfn < range->end; gfn++) {
+		int order;
+		void *kvaddr;
+
+		ret = kvm_gmem_get_pfn(kvm, memslot, gfn, &pfn, &order);
+		if (ret)
+			goto e_ret;
+
+		kvaddr = pfn_to_kaddr(pfn);
+		if (!virt_addr_valid(kvaddr)) {
+			pr_debug("%s: Invalid kvaddr 0x%llx\n", __func__, (uint64_t)kvaddr);
+			ret = -EINVAL;
+			goto e_ret;
+		}
+
+		ret = kvm_read_guest_page(kvm, gfn, kvaddr, 0, PAGE_SIZE);
+		if (ret) {
+			pr_debug("%s: Guest read failed 0x%x\n", __func__, ret);
+			goto e_ret;
+		}
+
+		if (!cpu_feature_enabled(X86_FEATURE_SME_COHERENT))
+			clflush_cache_range(kvaddr, PAGE_SIZE);
+
+		data.len = PAGE_SIZE;
+		data.address = __sme_set(pfn << PAGE_SHIFT);
+		ret = sev_issue_cmd(kvm, SEV_CMD_LAUNCH_UPDATE_DATA, &data, &argp->error);
+		if (ret)
+			goto e_ret;
+		kvm_release_pfn_clean(pfn);
+	}
+
+	/*
+	 * Memory attribute updates via KVM_SET_MEMORY_ATTRIBUTES are serialized
+	 * via kvm->slots_lock, so use the same protocol for updating them here.
+	 */
+	mutex_lock(&kvm->slots_lock);
+	kvm_vm_set_region_attr(kvm, range->start, range->end, KVM_MEMORY_ATTRIBUTE_PRIVATE);
+	mutex_unlock(&kvm->slots_lock);
+e_ret:
+	return ret;
+}
+
+static int sev_launch_update_gfn_handler(struct kvm *kvm, struct kvm_gfn_range *range,
+					 void *data)
+{
+	struct kvm_sev_cmd *argp = (struct kvm_sev_cmd *)data;
+
+	if (kvm_slot_can_be_private(range->slot))
+		return sev_launch_update_priv_gfn_handler(kvm, range, argp);
+
+	return sev_launch_update_shared_gfn_handler(kvm, range, argp);
+}
+
+static int sev_launch_update_data(struct kvm *kvm, struct kvm_sev_cmd *argp)
+{
+	struct kvm_sev_launch_update_data params;
+
+	if (!sev_guest(kvm))
+		return -ENOTTY;
+
+	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data, sizeof(params)))
+		return -EFAULT;
+
+	return kvm_vm_do_hva_range_op(kvm, params.uaddr, params.uaddr + params.len,
+		sev_launch_update_gfn_handler, argp);
 }
 
 static int sev_es_sync_vmsa(struct vcpu_svm *svm)

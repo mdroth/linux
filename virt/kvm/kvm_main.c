@@ -689,6 +689,7 @@ e_ret:
 
 	return ret;
 }
+EXPORT_SYMBOL_GPL(kvm_vm_do_hva_range_op);
 
 static __always_inline int kvm_handle_hva_range(struct mmu_notifier *mn,
 						unsigned long start,
@@ -2667,6 +2668,7 @@ unsigned long gfn_to_hva_memslot_prot(struct kvm_memory_slot *slot,
 
 	return hva;
 }
+EXPORT_SYMBOL_GPL(gfn_to_hva_memslot_prot);
 
 unsigned long gfn_to_hva_prot(struct kvm *kvm, gfn_t gfn, bool *writable)
 {
