@@ -2465,12 +2465,28 @@ static void kvm_mem_attrs_changed(struct kvm *kvm, unsigned long attrs,
 		kvm_flush_remote_tlbs(kvm);
 }
 
+int kvm_vm_set_region_attr(struct kvm *kvm, gfn_t start, gfn_t end,
+			   u64 attributes)
+{
+	gfn_t index;
+	void *entry;
+
+	entry = attributes ? xa_mk_value(attributes) : NULL;
+
+	for (index = start; index < end; index++)
+		if (xa_err(xa_store(&kvm->mem_attr_array, index, entry,
+				    GFP_KERNEL_ACCOUNT)))
+			break;
+
+	return index;
+}
+EXPORT_SYMBOL_GPL(kvm_vm_set_region_attr);
+
 static int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
 					   struct kvm_memory_attributes *attrs)
 {
 	gfn_t start, end;
 	unsigned long i;
-	void *entry;
 
 	/* flags is currently not used. */
 	if (attrs->flags)
@@ -2485,8 +2501,6 @@ static int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
 	start = attrs->address >> PAGE_SHIFT;
 	end = (attrs->address + attrs->size - 1 + PAGE_SIZE) >> PAGE_SHIFT;
 
-	entry = attrs->attributes ? xa_mk_value(attrs->attributes) : NULL;
-
 	mutex_lock(&kvm->slots_lock);
 
 	KVM_MMU_LOCK(kvm);
@@ -2494,11 +2508,7 @@ static int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
 	kvm_mmu_invalidate_range_add(kvm, start, end);
 	KVM_MMU_UNLOCK(kvm);
 
-	for (i = start; i < end; i++) {
-		if (xa_err(xa_store(&kvm->mem_attr_array, i, entry,
-				    GFP_KERNEL_ACCOUNT)))
-			break;
-	}
+	i = kvm_vm_set_region_attr(kvm, start, end, attrs->attributes);
 
 	KVM_MMU_LOCK(kvm);
 	if (i > start)
