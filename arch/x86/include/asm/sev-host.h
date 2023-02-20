@@ -15,8 +15,10 @@
 
 #ifdef CONFIG_KVM_AMD_SEV
 int snp_lookup_rmpentry(u64 pfn, bool *assigned, int *level);
+void sev_dump_hva_rmpentry(unsigned long address);
 #else
 static inline int snp_lookup_rmpentry(u64 pfn, bool *assigned, int *level) { return -ENXIO; }
+static inline void sev_dump_hva_rmpentry(unsigned long address) {}
 #endif
 
 #endif

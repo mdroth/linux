@@ -290,3 +290,80 @@ int snp_lookup_rmpentry(u64 pfn, bool *assigned, int *level)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(snp_lookup_rmpentry);
+
+/*
+ * Dump the raw RMP entry for a particular PFN. These bits are documented in the
+ * PPR for a particular CPU model and provide useful information about how a
+ * particular PFN is being utilized by the kernel/firmware at the time certain
+ * unexpected events occur, such as RMP faults.
+ */
+static void sev_dump_rmpentry(u64 dumped_pfn)
+{
+	struct rmpentry e;
+	u64 pfn, pfn_end;
+	int level, ret;
+	u64 *e_data;
+
+	ret = __snp_lookup_rmpentry(dumped_pfn, &e, &level);
+	if (ret) {
+		pr_info("Failed to read RMP entry for PFN 0x%llx, error %d\n",
+			dumped_pfn, ret);
+		return;
+	}
+
+	e_data = (u64 *)&e;
+	if (e.assigned) {
+		pr_info("RMP entry for PFN 0x%llx: [high=0x%016llx low=0x%016llx]\n",
+			dumped_pfn, e_data[1], e_data[0]);
+		return;
+	}
+
+	/*
+	 * If the RMP entry for a particular PFN is not in an assigned state,
+	 * then it is sometimes useful to get an idea of whether or not any RMP
+	 * entries for other PFNs within the same 2MB region are assigned, since
+	 * those too can affect the ability to access a particular PFN in
+	 * certain situations, such as when the PFN is being accessed via a 2MB
+	 * mapping in the host page table.
+	 */
+	pfn = ALIGN(dumped_pfn, PTRS_PER_PMD);
+	pfn_end = pfn + PTRS_PER_PMD;
+
+	while (pfn < pfn_end) {
+		ret = __snp_lookup_rmpentry(pfn, &e, &level);
+		if (ret) {
+			pr_info_ratelimited("Failed to read RMP entry for PFN 0x%llx\n", pfn);
+			pfn++;
+			continue;
+		}
+
+		if (e_data[0] || e_data[1]) {
+			pr_info("No assigned RMP entry for PFN 0x%llx, but the 2MB region contains populated RMP entries, e.g.: PFN 0x%llx: [high=0x%016llx low=0x%016llx]\n",
+				dumped_pfn, pfn, e_data[1], e_data[0]);
+			return;
+		}
+		pfn++;
+	}
+
+	pr_info("No populated RMP entries in the 2MB region containing PFN 0x%llx\n",
+		dumped_pfn);
+}
+
+void sev_dump_hva_rmpentry(unsigned long hva)
+{
+	unsigned int level;
+	pgd_t *pgd;
+	pte_t *pte;
+
+	pgd = __va(read_cr3_pa());
+	pgd += pgd_index(hva);
+	pte = lookup_address_in_pgd(pgd, hva, &level);
+
+	if (pte) {
+		pr_info("Can't dump RMP entry for HVA %lx: no PTE/PFN found\n", hva);
+		return;
+	}
+
+	sev_dump_rmpentry(pte_pfn(*pte));
+}
+EXPORT_SYMBOL_GPL(sev_dump_hva_rmpentry);
