@@ -294,3 +294,46 @@ int snp_lookup_rmpentry(u64 pfn, bool *assigned, int *level)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(snp_lookup_rmpentry);
+
+void sev_dump_rmpentry(u64 pfn)
+{
+	unsigned long pfn_end;
+	struct rmpentry e;
+	int level, ret;
+
+	ret = __snp_lookup_rmpentry(pfn, &e, &level);
+	if (ret) {
+		pr_info("Failed to read RMP entry for PFN 0x%llx, error %d\n", pfn, ret);
+		return;
+	}
+
+	if (rmpentry_assigned(&e)) {
+		pr_info("RMPEntry paddr 0x%llx: [high=0x%016llx low=0x%016llx]\n",
+			pfn << PAGE_SHIFT, e.high, e.low);
+		return;
+	}
+
+	/*
+	 * If the RMP entry at the faulting pfn was not assigned, then not sure
+	 * what caused the RMP violation. To get some useful debug information,
+	 * iterate through the entire 2MB region, and dump the RMP entries if
+	 * one of the bit in the RMP entry is set.
+	 */
+	pfn = pfn & ~(PTRS_PER_PMD - 1);
+	pfn_end = pfn + PTRS_PER_PMD;
+
+	while (pfn < pfn_end) {
+		ret = __snp_lookup_rmpentry(pfn, &e, &level);
+		if (ret) {
+			pr_info("Failed to read RMP entry for PFN 0x%llx\n", pfn);
+			pfn++;
+			continue;
+		}
+
+		if (e.low || e.high)
+			pr_info("RMPEntry paddr 0x%llx: [high=0x%016llx low=0x%016llx]\n",
+				pfn << PAGE_SHIFT, e.high, e.low);
+		pfn++;
+	}
+}
+EXPORT_SYMBOL_GPL(sev_dump_rmpentry);
