@@ -395,7 +395,6 @@ cleanup:
 
 static int rmpupdate(u64 pfn, struct rmp_state *val)
 {
-	int max_attempts = 4 * num_present_cpus();
 	unsigned long paddr = pfn << PAGE_SHIFT;
 	int ret, level, npages;
 	int attempts = 0;
@@ -426,11 +425,7 @@ static int rmpupdate(u64 pfn, struct rmp_state *val)
 			     : "memory", "cc");
 
 		attempts++;
-		if (ret)
-			pr_debug("RMPUPDATE retry needed, ASID: %d, ret: %d, pfn: %llx, npages: %d, level: %d, assigned: %d, attempts: %d (max: %d)\n",
-				 ret, val->asid, pfn, npages, level, val->assigned,
-				 attempts, max_attempts);
-	} while (ret && attempts < max_attempts);
+	} while (ret == RMPUPDATE_FAIL_OVERLAP);
 
 	if (ret) {
 		pr_err("RMPUPDATE failed after %d attempts, ret: %d, pfn: %llx, npages: %d, level: %d\n",
@@ -438,9 +433,6 @@ static int rmpupdate(u64 pfn, struct rmp_state *val)
 		sev_dump_rmpentry(pfn);
 		dump_stack();
 		return -EFAULT;
-	} else if (attempts > 1) {
-		pr_debug("RMPUPDATE succeeded after %d attempts, ASID: %d, ret: %d, pfn: %llx, npages: %d",
-			 attempts, val->asid, ret, pfn, npages);
 	}
 
 	/*
