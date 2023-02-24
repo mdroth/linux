@@ -63,6 +63,11 @@ void apei_mce_report_mem_error(int severity, struct cper_sec_mem_err *mem_err)
 }
 EXPORT_SYMBOL_GPL(apei_mce_report_mem_error);
 
+static void __mce_setup(void *info)
+{
+	mce_setup((struct mce *)info);
+}
+
 int apei_smca_report_x86_error(struct cper_ia_proc_ctx *ctx_info, u64 lapic_id)
 {
 	const u64 *i_mce = ((const u64 *) (ctx_info + 1));
@@ -97,20 +102,13 @@ int apei_smca_report_x86_error(struct cper_ia_proc_ctx *ctx_info, u64 lapic_id)
 	if (ctx_info->reg_arr_size < 48)
 		return -EINVAL;
 
-	mce_setup(&m);
-
-	m.extcpu = -1;
-	m.socketid = -1;
-
-	for_each_possible_cpu(cpu) {
-		if (cpu_data(cpu).initial_apicid == lapic_id) {
-			m.extcpu = cpu;
-			m.socketid = cpu_data(m.extcpu).phys_proc_id;
+	for_each_possible_cpu(cpu)
+		if (cpu_data(cpu).initial_apicid == lapic_id)
 			break;
-		}
-	}
 
-	m.apicid = lapic_id;
+	if (smp_call_function_single(cpu, __mce_setup, &m, 1))
+		return -EINVAL;
+
 	m.bank = (ctx_info->msr_addr >> 4) & 0xFF;
 	m.status = *i_mce;
 	m.addr = *(i_mce + 1);
