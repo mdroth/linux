@@ -3297,6 +3297,7 @@ static int sev_es_validate_vmgexit(struct vcpu_svm *svm)
 	case SVM_VMGEXIT_NMI_COMPLETE:
 	case SVM_VMGEXIT_AP_HLT_LOOP:
 	case SVM_VMGEXIT_AP_JUMP_TABLE:
+	case SVM_VMGEXIT_TERM_REQUEST:
 	case SVM_VMGEXIT_UNSUPPORTED_EVENT:
 	case SVM_VMGEXIT_HV_FEATURES:
 	case SVM_VMGEXIT_PSC:
@@ -4211,6 +4212,17 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 		}
 
 		ret = 1;
+		break;
+	case SVM_VMGEXIT_TERM_REQUEST:
+		pr_info("SEV-ES guest requested termination: exit_info_1=%#llx, exit_info_2=%#llx\n",
+			control->exit_info_1, control->exit_info_2);
+
+		vcpu->run->exit_reason = KVM_EXIT_SYSTEM_EVENT;
+		vcpu->run->system_event.type = KVM_SYSTEM_EVENT_SEV_TERM;
+		vcpu->run->system_event.ndata = 2;
+		vcpu->run->system_event.data[0] = control->exit_info_1;
+		vcpu->run->system_event.data[1] = control->exit_info_2;
+		ret = 0;
 		break;
 	case SVM_VMGEXIT_UNSUPPORTED_EVENT:
 		vcpu_unimpl(vcpu,
