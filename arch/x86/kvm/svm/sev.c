@@ -3291,8 +3291,9 @@ static int sev_es_validate_vmgexit(struct vcpu_svm *svm)
 			goto vmgexit_err;
 		break;
 	case SVM_VMGEXIT_AP_CREATION:
-		if (!ghcb_rax_is_valid(ghcb))
-			goto vmgexit_err;
+		if (lower_32_bits(ghcb_get_sw_exit_info_1(ghcb)) != SVM_VMGEXIT_AP_DESTROY)
+			if (!ghcb_rax_is_valid(ghcb))
+				goto vmgexit_err;
 		break;
 	case SVM_VMGEXIT_NMI_COMPLETE:
 	case SVM_VMGEXIT_AP_HLT_LOOP:
@@ -3741,8 +3742,6 @@ static kvm_pfn_t gfn_to_pfn_restricted(struct kvm *kvm, gfn_t gfn)
 		return INVALID_PAGE;
 	}
 
-	put_page(pfn_to_page(pfn));
-
 	return pfn;
 }
 
@@ -3759,7 +3758,7 @@ static int __sev_snp_update_protected_guest_state(struct kvm_vcpu *vcpu)
 
 	/* Mark the vCPU as offline and not runnable */
 	vcpu->arch.pv.pv_unhalted = false;
-	vcpu->arch.mp_state = KVM_MP_STATE_STOPPED;
+	vcpu->arch.mp_state = KVM_MP_STATE_HALTED;
 
 	/* Clear use of the VMSA */
 	svm->sev_es.vmsa_pa = INVALID_PAGE;
@@ -3769,14 +3768,9 @@ static int __sev_snp_update_protected_guest_state(struct kvm_vcpu *vcpu)
 		/*
 		 * The svm->sev_es.vmsa_pa field holds the hypervisor physical
 		 * address of the about to be replaced VMSA which will no longer
-		 * be used or referenced, so un-pin it. However, restricted
-		 * pages (e.g. via AP creation) should be left to the
-		 * restrictedmem backend to deal with, so don't release the
-		 * page in that case.
+		 * be used or referenced, so un-pin it.
 		 */
-		if (!VALID_PAGE(gfn_to_pfn_restricted(vcpu->kvm,
-						      gpa_to_gfn(svm->sev_es.snp_vmsa_gpa))))
-			kvm_release_pfn_dirty(__phys_to_pfn(cur_pa));
+		kvm_release_pfn_dirty(__phys_to_pfn(cur_pa));
 	}
 
 	if (VALID_PAGE(svm->sev_es.snp_vmsa_gpa)) {
@@ -3785,8 +3779,8 @@ static int __sev_snp_update_protected_guest_state(struct kvm_vcpu *vcpu)
 		 * so retrieve the PFN and ensure it is restricted memory.
 		 */
 		pfn = gfn_to_pfn_restricted(vcpu->kvm, gpa_to_gfn(svm->sev_es.snp_vmsa_gpa));
-		if (!VALID_PAGE(pfn))
-			return pfn;
+		if (!VALID_PAGE(pfn) || is_error_pfn(pfn))
+			return -EINVAL;
 
 		/* Use the new VMSA */
 		svm->sev_es.vmsa_pa = pfn_to_hpa(pfn);
