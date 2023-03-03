@@ -200,7 +200,8 @@ struct snp_psc_desc {
 #define GHCB_ERR_INVALID_EVENT		6
 
 /* RMUPDATE detected 4K page and 2MB page overlap. */
-#define RMPUPDATE_FAIL_OVERLAP		7
+#define RMPUPDATE_FAIL_OVERLAP		4
+
 
 /* RMP page size */
 #define RMP_PG_SIZE_4K			0
