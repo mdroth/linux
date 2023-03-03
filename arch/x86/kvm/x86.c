@@ -10504,8 +10504,10 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 
 		if (kvm_check_request(KVM_REQ_UPDATE_PROTECTED_GUEST_STATE, vcpu)) {
 			kvm_vcpu_reset(vcpu, true);
-			if (vcpu->arch.mp_state != KVM_MP_STATE_RUNNABLE)
+			if (vcpu->arch.mp_state != KVM_MP_STATE_RUNNABLE) {
+				r = 1;
 				goto out;
+			}
 		}
 	}
 
