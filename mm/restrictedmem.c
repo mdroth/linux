@@ -81,12 +81,7 @@ static int restrictedmem_getattr(struct user_namespace *mnt_userns,
 				 const struct path *path, struct kstat *stat,
 				 u32 request_mask, unsigned int query_flags)
 {
-	struct inode *inode = d_inode(path->dentry);
-	struct restrictedmem *rm = inode->i_mapping->private_data;
-	struct file *memfd = rm->memfd;
-
-	return memfd->f_inode->i_op->getattr(mnt_userns, path, stat,
-					     request_mask, query_flags);
+	return simple_getattr(mnt_userns, path, stat, request_mask, query_flags);
 }
 
 static int restrictedmem_setattr(struct user_namespace *mnt_userns,
