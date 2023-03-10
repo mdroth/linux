@@ -1,3 +1,3 @@
 # SPDX-License-Identifier: GPL-2.0
 
-obj-y += host.o
+obj-$(CONFIG_KVM_AMD_SEV) += host.o
