@@ -2412,6 +2412,7 @@ static int iommu_setup_intcapxt(struct amd_iommu *iommu)
 	struct irq_domain *domain;
 	struct irq_alloc_info info;
 	int irq, ret;
+	int node = dev_to_node(&iommu->dev->dev);
 
 	domain = amd_iommu_get_irqdomain();
 	if (!domain)
@@ -2421,7 +2422,7 @@ static int iommu_setup_intcapxt(struct amd_iommu *iommu)
 	info.type = X86_IRQ_ALLOC_TYPE_AMDVI;
 	info.data = iommu;
 
-	irq = irq_domain_alloc_irqs(domain, 1, NUMA_NO_NODE, &info);
+	irq = irq_domain_alloc_irqs(domain, 1, node, &info);
 	if (irq < 0) {
 		irq_domain_remove(domain);
 		return irq;
