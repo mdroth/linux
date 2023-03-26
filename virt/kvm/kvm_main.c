@@ -544,6 +544,8 @@ struct kvm_hva_range {
 	on_unlock_fn_t on_unlock;
 	bool flush_on_ret;
 	bool may_block;
+	void *unlocked_data;
+	hva_unlocked_handler_t unlocked_handler;
 };
 
 /*
@@ -568,18 +570,20 @@ static void kvm_null_fn(void)
 static __always_inline int __kvm_handle_hva_range(struct kvm *kvm,
 						  const struct kvm_hva_range *range)
 {
-	bool ret = false, locked = false;
 	struct kvm_gfn_range gfn_range;
 	struct kvm_memory_slot *slot;
 	struct kvm_memslots *slots;
+	bool locked = false;
+	int ret = 0;
 	int i, idx;
 
 	if (WARN_ON_ONCE(range->end <= range->start))
 		return 0;
 
-	/* A null handler is allowed if and only if on_lock() is provided. */
+	/* A null handler is allowed if and only if on_lock() or unlocked_handler() is provided. */
 	if (WARN_ON_ONCE(IS_KVM_NULL_FN(range->on_lock) &&
-			 IS_KVM_NULL_FN(range->handler)))
+			 IS_KVM_NULL_FN(range->handler) &&
+			 IS_KVM_NULL_FN(range->unlocked_handler)))
 		return 0;
 
 	idx = srcu_read_lock(&kvm->srcu);
@@ -614,6 +618,18 @@ static __always_inline int __kvm_handle_hva_range(struct kvm *kvm,
 			gfn_range.end = hva_to_gfn_memslot(hva_end + PAGE_SIZE - 1, slot);
 			gfn_range.slot = slot;
 
+			/*
+			 * Unlocked handlers do not rely on KVM MMU locking and
+			 * return integer error codes rather than true/false.
+			 */
+			if (!IS_KVM_NULL_FN(range->unlocked_handler)) {
+				ret = range->unlocked_handler(kvm, &gfn_range,
+							      range->unlocked_data);
+				if (ret)
+					goto err_unlocked;
+				continue;
+			}
+
 			if (!locked) {
 				locked = true;
 				KVM_MMU_LOCK(kvm);
@@ -623,7 +639,9 @@ static __always_inline int __kvm_handle_hva_range(struct kvm *kvm,
 				if (IS_KVM_NULL_FN(range->handler))
 					break;
 			}
-			ret |= range->handler(kvm, &gfn_range);
+
+			/* The notifiers are averse to booleans. :-( */
+			ret = range->handler(kvm, &gfn_range) ? 1 : ret;
 		}
 	}
 
@@ -636,58 +654,30 @@ static __always_inline int __kvm_handle_hva_range(struct kvm *kvm,
 			range->on_unlock(kvm);
 	}
 
-	srcu_read_unlock(&kvm->srcu, idx);
-
-	/* The notifiers are averse to booleans. :-( */
-	return (int)ret;
-}
-
-int kvm_vm_do_hva_range_op(struct kvm *kvm, unsigned long hva_start,
-			   unsigned long hva_end, kvm_hva_range_op_t handler, void *data)
-{
-	int ret = 0;
-	struct kvm_gfn_range gfn_range;
-	struct kvm_memory_slot *slot;
-	struct kvm_memslots *slots;
-	int i, idx;
-
-	if (WARN_ON_ONCE(hva_end <= hva_start))
-		return -EINVAL;
-
-	idx = srcu_read_lock(&kvm->srcu);
-
-	for (i = 0; i < kvm_arch_nr_memslot_as_ids(kvm); i++) {
-		struct interval_tree_node *node;
-
-		slots = __kvm_memslots(kvm, i);
-		kvm_for_each_memslot_in_hva_range(node, slots,
-						  hva_start, hva_end - 1) {
-			unsigned long start, end;
-
-			slot = container_of(node, struct kvm_memory_slot,
-					    hva_node[slots->node_idx]);
-			start = max(hva_start, slot->userspace_addr);
-			end = min(hva_end, slot->userspace_addr +
-						  (slot->npages << PAGE_SHIFT));
-
-			/*
-			 * {gfn(page) | page intersects with [hva_start, hva_end)} =
-			 * {gfn_start, gfn_start+1, ..., gfn_end-1}.
-			 */
-			gfn_range.start = hva_to_gfn_memslot(start, slot);
-			gfn_range.end = hva_to_gfn_memslot(end + PAGE_SIZE - 1, slot);
-			gfn_range.slot = slot;
-
-			ret = handler(kvm, &gfn_range, data);
-			if (ret)
-				goto e_ret;
-		}
-	}
-
-e_ret:
+err_unlocked:
 	srcu_read_unlock(&kvm->srcu, idx);
 
 	return ret;
+}
+
+int kvm_vm_do_hva_range_op(struct kvm *kvm, unsigned long start,
+			   unsigned long end, hva_unlocked_handler_t unlocked_handler,
+			   void *unlocked_data)
+{
+	const struct kvm_hva_range range = {
+		.start		= start,
+		.end		= end,
+		.pte		= __pte(0),
+		.handler	= (void *)kvm_null_fn,
+		.on_lock	= (void *)kvm_null_fn,
+		.on_unlock	= (void *)kvm_null_fn,
+		.flush_on_ret	= true,
+		.may_block	= false,
+		.unlocked_data	= unlocked_data,
+		.unlocked_handler = (void *)unlocked_handler,
+	};
+
+	return __kvm_handle_hva_range(kvm, &range);
 }
 EXPORT_SYMBOL_GPL(kvm_vm_do_hva_range_op);
 
@@ -707,9 +697,14 @@ static __always_inline int kvm_handle_hva_range(struct mmu_notifier *mn,
 		.on_unlock	= (void *)kvm_null_fn,
 		.flush_on_ret	= true,
 		.may_block	= false,
+		.unlocked_handler = (void *)kvm_null_fn,
 	};
+	int ret;
 
-	return __kvm_handle_hva_range(kvm, &range);
+	ret = __kvm_handle_hva_range(kvm, &range);
+	WARN_ON_ONCE(ret != 0 && ret != 1);
+
+	return ret;
 }
 
 static __always_inline int kvm_handle_hva_range_no_flush(struct mmu_notifier *mn,
@@ -727,10 +722,16 @@ static __always_inline int kvm_handle_hva_range_no_flush(struct mmu_notifier *mn
 		.on_unlock	= (void *)kvm_null_fn,
 		.flush_on_ret	= false,
 		.may_block	= false,
+		.unlocked_handler = (void *)kvm_null_fn,
 	};
+	int ret;
 
-	return __kvm_handle_hva_range(kvm, &range);
+	ret = __kvm_handle_hva_range(kvm, &range);
+	WARN_ON_ONCE(ret != 0 && ret != 1);
+
+	return ret;
 }
+
 static void kvm_mmu_notifier_change_pte(struct mmu_notifier *mn,
 					struct mm_struct *mm,
 					unsigned long address,
@@ -813,6 +814,7 @@ static int kvm_mmu_notifier_invalidate_range_start(struct mmu_notifier *mn,
 		.on_unlock	= kvm_arch_guest_memory_reclaimed,
 		.flush_on_ret	= true,
 		.may_block	= mmu_notifier_range_blockable(range),
+		.unlocked_handler = (void *)kvm_null_fn,
 	};
 
 	trace_kvm_unmap_hva_range(range->start, range->end);
@@ -877,6 +879,7 @@ static void kvm_mmu_notifier_invalidate_range_end(struct mmu_notifier *mn,
 		.on_unlock	= (void *)kvm_null_fn,
 		.flush_on_ret	= false,
 		.may_block	= mmu_notifier_range_blockable(range),
+		.unlocked_handler = (void *)kvm_null_fn,
 	};
 	bool wake;
 

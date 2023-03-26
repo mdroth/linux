@@ -1403,11 +1403,11 @@ void kvm_mmu_invalidate_begin(struct kvm *kvm);
 void kvm_mmu_invalidate_range_add(struct kvm *kvm, gfn_t start, gfn_t end);
 void kvm_mmu_invalidate_end(struct kvm *kvm);
 
-typedef int (*kvm_hva_range_op_t)(struct kvm *kvm,
-				struct kvm_gfn_range *range, void *data);
+typedef int (*hva_unlocked_handler_t)(struct kvm *kvm,
+				      struct kvm_gfn_range *range, void *data);
 
 int kvm_vm_do_hva_range_op(struct kvm *kvm, unsigned long hva_start,
-			   unsigned long hva_end, kvm_hva_range_op_t handler, void *data);
+			   unsigned long hva_end, hva_unlocked_handler_t handler, void *data);
 
 long kvm_arch_dev_ioctl(struct file *filp,
 			unsigned int ioctl, unsigned long arg);
