@@ -6219,6 +6219,13 @@
 			Force threading of all interrupt handlers except those
 			marked explicitly IRQF_NO_THREAD.
 
+	tlbi=		[X86,AMD]
+			Format: {off | on}
+			Disable TLB invalidations on AMD using the
+			hardware-assisted, cross-core invalidations
+			using INVLPGB+TLBSYNC.
+			Default is on.
+
 	topology=	[S390]
 			Format: {off | on}
 			Specify if the kernel should make use of the cpu

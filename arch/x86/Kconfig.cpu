@@ -391,6 +391,16 @@ config X86_VMX_FEATURE_NAMES
 	def_bool y
 	depends on IA32_FEAT_CTL && X86_FEATURE_NAMES
 
+config X86_AMD_TLBI
+	bool "Add support for TLB broadcasting on AMD"
+	depends on CPU_SUP_AMD
+	select MMU_GATHER_RCU_TABLE_FREE
+	help
+	  Enable TLB broadcasting support on AMD processors. The TLB
+	  broadcasting hw feature obviates the need for software to send
+	  TLB invalidation IPIs to remote processors as this is taken
+	  care of by the hardware.
+
 menuconfig PROCESSOR_SELECT
 	bool "Supported processor vendors" if EXPERT
 	help

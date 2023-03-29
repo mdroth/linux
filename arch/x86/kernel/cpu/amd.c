@@ -26,11 +26,32 @@
 #endif
 
 #include "cpu.h"
+#include <asm/tlbflush.h>
 
 static const int amd_erratum_383[];
 static const int amd_erratum_400[];
 static const int amd_erratum_1054[];
 static bool cpu_has_amd_erratum(struct cpuinfo_x86 *cpu, const int *erratum);
+
+static int __init setup_tlb_tlbi(char *arg)
+{
+	bool tlbi;
+	int ret;
+
+	ret = kstrtobool(arg, &tlbi);
+	if (ret)
+		return ret;
+
+       if (!tlbi) {
+	       if (cpu_feature_enabled(X86_FEATURE_INVLPGB)) {
+			pr_info("TLBI disabled\n");
+			setup_clear_cpu_cap(X86_FEATURE_INVLPGB);
+	       }
+       }
+       return 0;
+}
+
+early_param("tlbi", setup_tlb_tlbi);
 
 /*
  * nodes_per_socket: Stores the number of nodes per socket.

@@ -395,6 +395,16 @@ static void __cpa_flush_tlb(void *data)
 		flush_tlb_one_kernel(fix_addr(__cpa_addr(cpa, i)));
 }
 
+static void cpa_flush_tlb(struct cpa_data *cpa)
+{
+	if (cpu_feature_enabled(X86_FEATURE_INVLPGB)) {
+		tlbi_flush_kernel_range(fix_addr(__cpa_addr(cpa, 0)),
+					fix_addr(__cpa_addr(cpa, cpa->numpages)), true);
+	} else {
+		on_each_cpu(__cpa_flush_tlb, cpa, 1);
+	}
+}
+
 static void cpa_flush(struct cpa_data *data, int cache)
 {
 	struct cpa_data *cpa = data;
@@ -405,12 +415,11 @@ static void cpa_flush(struct cpa_data *data, int cache)
 	if (cache && !static_cpu_has(X86_FEATURE_CLFLUSH)) {
 		cpa_flush_all(cache);
 		return;
-	}
-
-	if (cpa->force_flush_all || cpa->numpages > tlb_single_page_flush_ceiling)
+	} else if (cpa->force_flush_all || cpa->numpages > tlb_single_page_flush_ceiling) {
 		flush_tlb_all();
-	else
-		on_each_cpu(__cpa_flush_tlb, cpa, 1);
+	} else {
+		cpa_flush_tlb(cpa);
+	}
 
 	if (!cache)
 		return;
