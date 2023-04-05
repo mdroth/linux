@@ -19,6 +19,7 @@
 #include <linux/secretmem.h>
 #include <linux/set_memory.h>
 #include <linux/sched/signal.h>
+#include <linux/migrate.h>
 
 #include <uapi/linux/magic.h>
 
@@ -343,13 +344,63 @@ static const struct file_operations kvm_gmem_fops = {
 	.fallocate	= kvm_gmem_fallocate,
 };
 
+#ifdef CONFIG_MIGRATION
+int __weak kvm_arch_gmem_migrate(struct kvm *kvm, struct page *dst, struct page *src)
+{
+	return 0;
+}
+
 static int kvm_gmem_migrate_folio(struct address_space *mapping,
 				  struct folio *dst, struct folio *src,
 				  enum migrate_mode mode)
 {
+	struct super_block *sb = kvm_gmem_mnt->mnt_sb;
+	struct page *page = &src->page;
+	struct inode *inode, *next;
+	pgoff_t start, end;
+	bool found;
+
+	start = page->index;
+	end = start + thp_nr_pages(page);
+
+	if (!page->restricted)
+		return -EBUSY;
+
+	pr_err_ratelimited("%s: got migrate call src_pfn %lx -> dst_pfn %lx, start %lx end %lx\n",
+			   __func__, page_to_pfn(&src->page), page_to_pfn(&dst->page), start, end);
+
+	spin_lock(&sb->s_inode_list_lock);
+	list_for_each_entry_safe(inode, next, &sb->s_inodes, i_sb_list) {
+		struct kvm_gmem *gmem;
+
+		if (inode->i_mapping != mapping)
+			continue;
+
+		gmem = inode->i_mapping->private_data;
+		if (!gmem)
+			continue;
+
+		found = true;
+		kvm_arch_gmem_migrate(gmem->kvm, &dst->page, &src->page);
+		break;
+	}
+	spin_unlock(&sb->s_inode_list_lock);
+
+	if (!found)
+		return -EBUSY;
+
+	migrate_folio(mapping, dst, src, MIGRATE_SYNC_NO_COPY);
+	return 0;
+}
+
+#else
+static int kvm_gmem_migrate_folio(struct address_space *mapping,
+				  struct folio *dst, struct folio *src,
+				  enum migrate_mode mode)
 	WARN_ON_ONCE(1);
 	return -EINVAL;
 }
+#endif
 
 static int kvm_gmem_error_page(struct address_space *mapping, struct page *page)
 {
@@ -452,6 +503,8 @@ static int __kvm_gmem_create(struct kvm *kvm, loff_t size, u64 flags,
 	kvm_get_kvm(kvm);
 	gmem->kvm = kvm;
 	gmem->flags = flags;
+
+	inode_sb_list_add(inode);
 
 	inode->i_op = &kvm_gmem_iops;
 	inode->i_mapping->a_ops = &kvm_gmem_aops;
