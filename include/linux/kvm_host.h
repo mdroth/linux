@@ -2355,6 +2355,7 @@ int __kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
 int kvm_arch_gmem_prepare(struct kvm *kvm, struct kvm_memory_slot *slot,
 			  kvm_pfn_t pfn_start, gfn_t gfn_start, int order);
 void kvm_arch_gmem_invalidate(struct kvm *kvm, struct kvm_memory_slot *slot, gfn_t start, gfn_t end);
+int kvm_arch_gmem_migrate(struct kvm *kvm, struct page *dst, struct page *src);
 
 #else
 static inline int kvm_gmem_get_pfn(struct kvm *kvm,
