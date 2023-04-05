@@ -121,6 +121,12 @@ static void __folio_put_large(struct folio *folio)
 
 void __folio_put(struct folio *folio)
 {
+	if (folio->page.restricted) {
+		pr_debug("%s: PFN: 0x%lx, page: %px, ref_count: %d\n",
+			__func__, page_to_pfn(&folio->page), &folio->page, page_ref_count(&folio->page));
+		folio->page.restricted = false;
+	}
+
 	if (unlikely(folio_is_zone_device(folio)))
 		free_zone_device_page(&folio->page);
 	else if (unlikely(folio_test_large(folio)))

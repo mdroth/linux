@@ -617,6 +617,9 @@ int kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
 
 	*pfn = page_to_pfn(page);
 	*order = thp_order(compound_head(page));
+	page->restricted = true;
+	pr_debug("%s: GFN: 0x%llx, PFN: 0x%llx, page: %px, ref_count: %d, order: %d\n",
+		 __func__, gfn, *pfn, page, page_ref_count(page), *order);
 
 	folio_unlock(folio);
 	fput(file);

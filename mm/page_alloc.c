@@ -4331,6 +4331,12 @@ try_this_zone:
 			if (unlikely(alloc_flags & ALLOC_HIGHATOMIC))
 				reserve_highatomic_pageblock(page, zone, order);
 
+			if (page->restricted) {
+				pr_debug("%s: PFN: 0x%lx, page: %px, ref_count: %d\n",
+					__func__, page_to_pfn(page), page, page_ref_count(page));
+				page->restricted = false;
+			}
+
 			return page;
 		} else {
 #ifdef CONFIG_DEFERRED_STRUCT_PAGE_INIT
