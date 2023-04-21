@@ -154,6 +154,7 @@ bool amd_iommu_irq_remap __read_mostly;
 
 enum io_pgtable_fmt amd_iommu_pgtable = AMD_IOMMU_V1;
 
+static bool amd_iommu_gappi;
 int amd_iommu_guest_ir = AMD_IOMMU_GUEST_IR_VAPIC;
 static int amd_iommu_xt_mode = IRQ_REMAP_XAPIC_MODE;
 
@@ -2385,7 +2386,7 @@ static const struct irq_domain_ops intcapxt_domain_ops = {
 
 static struct irq_domain *iommu_irqdomain;
 
-static struct irq_domain *iommu_get_irqdomain(void)
+struct irq_domain *amd_iommu_get_irqdomain(void)
 {
 	struct fwnode_handle *fn;
 
@@ -2412,7 +2413,7 @@ static int iommu_setup_intcapxt(struct amd_iommu *iommu)
 	struct irq_alloc_info info;
 	int irq, ret;
 
-	domain = iommu_get_irqdomain();
+	domain = amd_iommu_get_irqdomain();
 	if (!domain)
 		return -ENXIO;
 
@@ -2437,6 +2438,19 @@ static int iommu_setup_intcapxt(struct amd_iommu *iommu)
 	return 0;
 }
 
+static int iommu_gappi_enable(struct amd_iommu *iommu)
+{
+	if (!amd_iommu_gappi)
+		return 0;
+
+	iommu_feature_enable(iommu, CONTROL_GAPPI_EN);
+	iommu->gappi_enabled = true;
+
+	hash_init(iommu->gappi_hash);
+	spin_lock_init(&iommu->gappi_hash_lock);
+	return 0;
+}
+
 static int iommu_init_irq(struct amd_iommu *iommu)
 {
 	int ret;
@@ -2455,6 +2469,10 @@ static int iommu_init_irq(struct amd_iommu *iommu)
 		return ret;
 
 	iommu->int_enabled = true;
+	ret = iommu_gappi_enable(iommu);
+	if (ret)
+		return ret;
+
 enable_faults:
 
 	if (amd_iommu_xt_mode == IRQ_REMAP_X2APIC_MODE)
@@ -2860,11 +2878,21 @@ static void enable_iommus_vapic(void)
 		return;
 	}
 
+	if (amd_iommu_gappi &&
+	    !check_feature_on_all_iommus(FEATURE_GAPPI)) {
+		pr_warn("GAPPI is not supported.\n");
+		amd_iommu_gappi = false;
+	}
+	pr_info("GAPPI enabled\n");
+
 	/* Enabling GAM and SNPAVIC support */
 	for_each_iommu(iommu) {
-		if (iommu_init_ga_log(iommu) ||
-		    iommu_ga_log_enable(iommu))
-			return;
+		/* Do not setup GA Log when enable GAPPI */
+		if (!amd_iommu_gappi) {
+			if (iommu_init_ga_log(iommu) ||
+			    iommu_ga_log_enable(iommu))
+				return;
+		}
 
 		iommu_feature_enable(iommu, CONTROL_GAM_EN);
 		if (amd_iommu_snp_en)
@@ -2872,7 +2900,8 @@ static void enable_iommus_vapic(void)
 	}
 
 	amd_iommu_irq_ops.capability |= (1 << IRQ_POSTING_CAP);
-	pr_info("Virtual APIC enabled\n");
+	pr_info("Virtual APIC enabled with %s\n",
+		amd_iommu_gappi ? "GAPPI" : "GALOG");
 #endif
 }
 
@@ -3447,6 +3476,8 @@ static int __init parse_amd_iommu_options(char *str)
 			amd_iommu_pgtable = AMD_IOMMU_V2;
 		} else if (strncmp(str, "irtcachedis", 11) == 0) {
 			amd_iommu_irtcachedis = true;
+		} else if (strncmp(str, "gappi", 5) == 0) {
+			amd_iommu_gappi = true;
 		} else {
 			pr_notice("Unknown option - '%s'\n", str);
 		}

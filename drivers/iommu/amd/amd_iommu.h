@@ -38,6 +38,7 @@ extern enum io_pgtable_fmt amd_iommu_pgtable;
 
 /* IOMMUv2 specific functions */
 struct iommu_domain;
+struct irq_domain;
 
 extern bool amd_iommu_v2_supported(void);
 extern struct amd_iommu *get_amd_iommu(unsigned int idx);
@@ -63,6 +64,7 @@ extern int amd_iommu_flush_tlb(struct iommu_domain *dom, u32 pasid);
 extern int amd_iommu_domain_set_gcr3(struct iommu_domain *dom, u32 pasid,
 				     unsigned long cr3);
 extern int amd_iommu_domain_clear_gcr3(struct iommu_domain *dom, u32 pasid);
+extern struct irq_domain *amd_iommu_get_irqdomain(void);
 
 #ifdef CONFIG_IRQ_REMAP
 extern int amd_iommu_create_irq_domain(struct amd_iommu *iommu);

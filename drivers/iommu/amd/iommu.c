@@ -29,6 +29,7 @@
 #include <linux/percpu.h>
 #include <linux/io-pgtable.h>
 #include <linux/cc_platform.h>
+#include <linux/hashtable.h>
 #include <asm/irq_remapping.h>
 #include <asm/io_apic.h>
 #include <asm/apic.h>
@@ -80,6 +81,8 @@ struct kmem_cache *amd_iommu_irq_cache;
 
 static void detach_device(struct device *dev);
 static int domain_enable_v2(struct protection_domain *domain, int pasids);
+static int gappi_alloc_irq(struct iommu_dev_data *dev_data);
+static void gappi_free_irq(struct iommu_dev_data *dev_data);
 
 /****************************************************************************
  *
@@ -194,6 +197,9 @@ static struct iommu_dev_data *alloc_dev_data(struct amd_iommu *iommu, u16 devid)
 	spin_lock_init(&dev_data->lock);
 	dev_data->devid = devid;
 	ratelimit_default_init(&dev_data->rs);
+
+	dev_data->gappi_irq = -1;
+	dev_data->iommu = iommu;
 
 	llist_add(&dev_data->dev_data_list, &pci_seg->dev_data_list);
 	return dev_data;
@@ -1899,6 +1905,8 @@ out:
 	spin_unlock(&dev_data->lock);
 
 	spin_unlock_irqrestore(&domain->lock, flags);
+
+	gappi_free_irq(dev_data);
 }
 
 static struct iommu_device *amd_iommu_probe_device(struct device *dev)
@@ -2209,10 +2217,12 @@ static int amd_iommu_attach_device(struct iommu_domain *dom,
 
 #ifdef CONFIG_IRQ_REMAP
 	if (AMD_IOMMU_GUEST_IR_VAPIC(amd_iommu_guest_ir)) {
-		if (dom->type == IOMMU_DOMAIN_UNMANAGED)
+		if (dom->type == IOMMU_DOMAIN_UNMANAGED) {
 			dev_data->use_vapic = 1;
-		else
+			ret = gappi_alloc_irq(dev_data);
+		} else {
 			dev_data->use_vapic = 0;
+		}
 	}
 #endif
 
@@ -3400,6 +3410,8 @@ static int irq_remapping_alloc(struct irq_domain *domain, unsigned int virq,
 		}
 
 		data->iommu = iommu;
+		data->dest_mode_logical = apic->dest_mode_logical;
+
 		irq_data->hwirq = (devid << 16) + i;
 		irq_data->chip_data = data;
 		irq_data->chip = &amd_ir_chip;
@@ -3506,14 +3518,208 @@ static const struct irq_domain_ops amd_ir_domain_ops = {
 	.deactivate = irq_remapping_deactivate,
 };
 
+/*
+ * GAPPI
+ *
+ * NOTE:
+ * - IRQ / thread per device ID (only have 8-bit 256)
+ * - struct gappi per IRTE entry
+ */
+irqreturn_t amd_iommu_gappi_handler(int irq, void *data)
+{
+	return IRQ_WAKE_THREAD;
+}
+
+irqreturn_t amd_iommu_gappi_thread(int irq, void *data)
+{
+	struct iommu_dev_data *dev_data = (struct iommu_dev_data *) data;
+	struct amd_iommu *iommu = dev_data->iommu;
+	struct gappi *g;
+	unsigned long flags;
+
+	if (!iommu_ga_log_notifier)
+		return IRQ_HANDLED;
+
+	pr_debug("%s: iommu=%#x, irq=%d, devid=%#x\n",
+		__func__, iommu->devid, irq, dev_data->devid);
+
+	spin_lock_irqsave(&iommu->gappi_hash_lock, flags);
+	hash_for_each_possible(iommu->gappi_hash, g, hnode, dev_data->devid) {
+		/*
+		 * Since we cannot figure out which vcpus to wake up,
+		 * just notify all of them.
+		 */
+		if (!g)
+			continue;
+		if (iommu_ga_log_notifier(g->ga_tag) != 0)
+			pr_err("GAPPI: fail to wake up vcpu (%#x)\n", g->ga_tag);
+	}
+	spin_unlock_irqrestore(&iommu->gappi_hash_lock, flags);
+
+	return IRQ_HANDLED;
+}
+
+static int gappi_alloc_irq(struct iommu_dev_data *dev_data)
+{
+	int irq, ret;
+	struct irq_domain *domain;
+	struct irq_cfg *cfg;
+	struct amd_iommu *iommu = dev_data->iommu;
+	int node = dev_to_node(&iommu->dev->dev);
+
+	if (!iommu->gappi_enabled || dev_data->gappi_irq >= 0)
+		return 0;
+
+	cpumask_copy(&dev_data->gappi_cpumask, cpumask_of_node(node));
+	init_irq_alloc_info(&dev_data->irq_info, &dev_data->gappi_cpumask);
+
+	dev_data->irq_info.type = X86_IRQ_ALLOC_TYPE_AMDVI;
+	dev_data->irq_info.mask = &dev_data->gappi_cpumask;
+	dev_data->irq_info.data = iommu;
+
+	domain = amd_iommu_get_irqdomain();
+	if (!domain)
+		return -ENXIO;
+
+	irq = irq_domain_alloc_irqs(domain, 1, node, &dev_data->irq_info);
+	if (irq < 0)
+		return irq;
+
+	ret = request_threaded_irq(irq,
+				 amd_iommu_gappi_handler,
+				 amd_iommu_gappi_thread,
+				 0, "AMD-Vi-gappi",
+				 dev_data);
+	if (ret) {
+		irq_domain_free_irqs(irq, 1);
+		return ret;
+	}
+	dev_data->gappi_irq = irq;
+	cfg = irq_cfg(dev_data->gappi_irq);
+	pr_debug("%s: irq=%d, vector=%d, dest_apicid=%#x(%d)\n", __func__,
+		 irq, cfg->vector, cfg->dest_apicid, cfg->dest_apicid);
+
+	return ret;
+}
+
+static void gappi_free_irq(struct iommu_dev_data *dev_data)
+{
+	struct amd_iommu *iommu = dev_data->iommu;
+
+	if (!iommu->gappi_enabled || dev_data->gappi_irq < 0)
+		return;
+
+	pr_debug("%s: irq=%d\n", __func__, dev_data->gappi_irq);
+
+	free_irq(dev_data->gappi_irq, dev_data);
+	irq_domain_free_irqs(dev_data->gappi_irq, 1);
+	dev_data->gappi_irq = -1;
+}
+
+static int gappi_hash_update(struct amd_ir_data *ir_data, bool is_guest_mode)
+{
+	int ret = 0;
+	struct gappi *g;
+	unsigned long flags;
+	u32 ga_tag = ir_data->ga_tag;
+	u32 cached_ga_tag = ir_data->cached_ga_tag;
+	u16 devid = ir_data->irq_2_irte.devid;
+	struct amd_iommu *iommu = ir_data->iommu;
+
+	spin_lock_irqsave(&iommu->gappi_hash_lock, flags);
+
+	if (!is_guest_mode) {
+		struct hlist_node *tmp;
+
+		pr_debug("%s: deleting: devid=%#x, ga_tag=%#x, cached_ga_tag=%#x, is_guest_mode=%d\n",
+			 __func__, devid, ga_tag, cached_ga_tag, is_guest_mode);
+		hash_for_each_possible_safe(iommu->gappi_hash, g, tmp, hnode, devid) {
+			if (!g)
+				continue;
+			if (g->ga_tag == cached_ga_tag) {
+				hash_del(&g->hnode);
+				kfree(g);
+				break;
+			}
+		}
+	} else {
+		bool found = false;
+
+		pr_debug("%s: adding: devid=%#x, ga_tag=%#x, is_guest_mode=%d\n",
+			 __func__, devid, ga_tag, is_guest_mode);
+		hash_for_each_possible(iommu->gappi_hash, g, hnode, devid) {
+			if (!g)
+				continue;
+			if (g->ga_tag == ga_tag) {
+				found = true;
+				break;
+			}
+		}
+
+		if (found) {
+			goto out;
+		} else {
+			g = kzalloc(sizeof(struct gappi), GFP_KERNEL);
+			if (!g) {
+				ret = -ENOMEM;
+				goto out;
+			}
+			g->ga_tag = ga_tag;
+
+			pr_debug("%s: iommu=%#x, added ga_tag=%#x, devid=%#x\n",
+				 __func__, iommu->devid, ga_tag, devid);
+			hash_add(iommu->gappi_hash, &g->hnode, devid);
+		}
+	}
+out:
+	spin_unlock_irqrestore(&iommu->gappi_hash_lock, flags);
+	return ret;
+}
+
+unsigned int get_dest_apicid(struct amd_ir_data *ir_data, u32 apicid)
+{
+	unsigned long bitmap, cluster;
+	u32 dest = apicid;
+
+	if (!ir_data->dest_mode_logical)
+		return dest;
+
+	if (x2apic_enabled()) {
+		/* Logical cluster x2APIC 16 bit dest mask, 16 bit cluster id */
+		bitmap  = dest & 0xFFFF;
+		cluster = (dest >> 16) & 0xFFFF;
+		dest = (cluster << 4) + find_first_bit(&bitmap, 16);
+	} else if (apic_read(APIC_DFR) == APIC_DFR_CLUSTER) {
+		/* Logical cluster xAPIC : 4 bit desk mask, 4 bit cluster id */
+		bitmap  = dest & 0xF;
+		cluster = (dest >> 4);
+		dest = (cluster << 2) + find_first_bit(&bitmap, 4);
+	} else {
+		/* Logical flat */
+		bitmap  = dest & 0xFF;
+		dest = find_first_bit(&bitmap, 8);
+	}
+	return dest;
+}
+
 int amd_iommu_activate_guest_mode(void *data)
 {
 	struct amd_ir_data *ir_data = (struct amd_ir_data *)data;
 	struct irte_ga *entry = (struct irte_ga *) ir_data->entry;
+	u32 devid = ir_data->irq_2_irte.devid;
+	struct iommu_dev_data *dev_data;
 	u64 valid;
 
 	if (!AMD_IOMMU_GUEST_IR_VAPIC(amd_iommu_guest_ir) ||
 	    !entry)
+		return 0;
+
+	/* TODO: Add comment here */
+	if (ir_data->iommu == NULL)
+		return -EINVAL;
+
+	dev_data = search_dev_data(ir_data->iommu, devid);
+	if (!dev_data)
 		return 0;
 
 	valid = entry->lo.fields_vapic.valid;
@@ -3523,10 +3729,28 @@ int amd_iommu_activate_guest_mode(void *data)
 
 	entry->lo.fields_vapic.valid       = valid;
 	entry->lo.fields_vapic.guest_mode  = 1;
-	entry->lo.fields_vapic.ga_log_intr = 1;
 	entry->hi.fields.ga_root_ptr       = ir_data->ga_root_ptr;
 	entry->hi.fields.vector            = ir_data->ga_vector;
-	entry->lo.fields_vapic.ga_tag      = ir_data->ga_tag;
+
+	if (ir_data->iommu->gappi_enabled) {
+		u32 dest;
+		struct irq_cfg *cfg = irq_cfg(dev_data->gappi_irq);
+
+		/* TODO: Add comment here */
+		if (!cfg)
+			return 0;
+
+		dest = get_dest_apicid(ir_data, cfg->dest_apicid);
+		pr_debug("%s: gappi enabled: devid=%#x, irq=%d, vec=%d, dest=%#x(%u)\n",
+			 __func__, devid, dev_data->gappi_irq, cfg->vector, dest, dest);
+		entry->lo.fields_vapic.ga_tag      = cfg->vector & 0xFF;
+		entry->lo.fields_vapic.destination = APICID_TO_IRTE_DEST_LO(dest);
+		entry->hi.fields.destination = APICID_TO_IRTE_DEST_HI(dest);
+	} else {
+		pr_debug("%s: gappi disabled\n", __func__);
+		entry->lo.fields_vapic.ga_log_intr = 1;
+		entry->lo.fields_vapic.ga_tag      = ir_data->ga_tag;
+	}
 
 	return modify_irte_ga(ir_data->iommu, ir_data->irq_2_irte.devid,
 			      ir_data->irq_2_irte.index, entry);
@@ -3595,6 +3819,13 @@ static int amd_ir_set_vcpu_affinity(struct irq_data *data, void *vcpu_info)
 		pr_debug("%s: Fall back to using intr legacy remap\n",
 			 __func__);
 		pi_data->is_guest_mode = false;
+	}
+
+	if (ir_data->iommu->gappi_enabled) {
+		ir_data->ga_tag = pi_data->ga_tag;
+		ret = gappi_hash_update(ir_data, pi_data->is_guest_mode);
+		if (ret)
+			return ret;
 	}
 
 	pi_data->prev_ga_tag = ir_data->cached_ga_tag;
@@ -3731,11 +3962,30 @@ int amd_iommu_update_ga(int cpu, bool is_run, void *data)
 	if (!ir_data->iommu)
 		return -ENODEV;
 
-	if (cpu >= 0) {
+	if (is_run) {
+		if (WARN_ON(cpu < 0))
+			return -EINVAL;
 		entry->lo.fields_vapic.destination =
 					APICID_TO_IRTE_DEST_LO(cpu);
 		entry->hi.fields.destination =
 					APICID_TO_IRTE_DEST_HI(cpu);
+	} else if (ir_data->iommu->gappi_enabled) {
+
+		u32 dest;
+		struct irq_cfg *cfg;
+		struct iommu_dev_data *dev_data;
+
+		dev_data = search_dev_data(ir_data->iommu, ir_data->irq_2_irte.devid);
+		if (!dev_data)
+			return 0;
+
+		cfg = irq_cfg(dev_data->gappi_irq);
+		if (!cfg)
+			return 0;
+
+		dest = get_dest_apicid(ir_data, cfg->dest_apicid);
+		entry->lo.fields_vapic.destination = APICID_TO_IRTE_DEST_LO(dest);
+		entry->hi.fields.destination = APICID_TO_IRTE_DEST_HI(dest);
 	}
 	entry->lo.fields_vapic.is_run = is_run;
 

@@ -16,6 +16,7 @@
 #include <linux/pci.h>
 #include <linux/irqreturn.h>
 #include <linux/io-pgtable.h>
+#include <linux/hashtable.h>
 
 /*
  * Maximum number of IOMMUs supported
@@ -89,6 +90,7 @@
 #define FEATURE_X2APIC		(1ULL<<2)
 #define FEATURE_NX		(1ULL<<3)
 #define FEATURE_GT		(1ULL<<4)
+#define FEATURE_GAPPI		(1ULL<<5)
 #define FEATURE_IA		(1ULL<<6)
 #define FEATURE_GA		(1ULL<<7)
 #define FEATURE_HE		(1ULL<<8)
@@ -172,6 +174,7 @@
 #define CONTROL_GAINT_EN	29
 #define CONTROL_XT_EN		50
 #define CONTROL_INTCAPXT_EN	51
+#define CONTROL_GAPPI_EN	55
 #define CONTROL_IRTCACHEDIS	59
 #define CONTROL_SNPAVIC_EN	61
 
@@ -750,6 +753,11 @@ struct amd_iommu {
 	/* DebugFS Info */
 	struct dentry *debugfs;
 #endif
+
+	/* GAPPI */
+	bool gappi_enabled;
+	spinlock_t gappi_hash_lock;
+	DECLARE_HASHTABLE(gappi_hash, 16);
 };
 
 static inline struct amd_iommu *dev_to_amd_iommu(struct device *dev)
@@ -802,6 +810,11 @@ struct iommu_dev_data {
 	bool defer_attach;
 
 	struct ratelimit_state rs;        /* Ratelimit IOPF messages */
+
+	int gappi_irq;
+	struct cpumask gappi_cpumask;
+	struct amd_iommu *iommu;
+	struct irq_alloc_info irq_info;
 };
 
 /* Map HPET and IOAPIC ids to the devid used by the IOMMU */
@@ -981,6 +994,11 @@ union irte_ga_hi {
 	} fields;
 };
 
+struct gappi {
+	u32 ga_tag;
+	struct hlist_node hnode;
+};
+
 struct irte_ga {
 	union irte_ga_lo lo;
 	union irte_ga_hi hi;
@@ -1006,6 +1024,7 @@ struct amd_ir_data {
 	int ga_vector;
 	u64 ga_root_ptr;
 	u32 ga_tag;
+	bool dest_mode_logical;
 };
 
 struct amd_irte_ops {
