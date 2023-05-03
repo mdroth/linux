@@ -467,7 +467,6 @@ static inline int vm_create_guest_memfd(struct kvm_vm *vm, uint64_t size,
 	struct kvm_create_guest_memfd gmem = {
 		.size = size,
 		.flags = flags,
-		.mount_fd = mount_fd,
 	};
 
 	int fd = __vm_ioctl(vm, KVM_CREATE_GUEST_MEMFD, &gmem);
