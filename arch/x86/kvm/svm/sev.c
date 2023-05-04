@@ -3686,7 +3686,7 @@ static void snp_handle_ext_guest_request(struct vcpu_svm *svm, gpa_t req_gpa, gp
 	data_npages = vcpu->arch.regs[VCPU_REGS_RBX];
 
 	if (!IS_ALIGNED(data_gpa, PAGE_SIZE)) {
-		rc = SEV_RET_INVALID_ADDRESS;
+		exitcode = SEV_RET_INVALID_ADDRESS;
 		goto e_fail;
 	}
 
