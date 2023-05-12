@@ -262,7 +262,7 @@ static int sev_guest_init(struct kvm *kvm, struct kvm_sev_cmd *argp)
 		goto e_no_asid;
 	sev->asid = asid;
 
-	ret = sev_platform_init(&argp->error);
+	ret = sev_platform_init(&argp->error, false);
 	if (ret)
 		goto e_free;
 
