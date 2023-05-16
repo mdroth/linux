@@ -117,8 +117,8 @@ static void kvm_gmem_invalidate_begin(struct kvm *kvm, struct kvm_gmem *gmem,
 
 	xa_for_each_range(&gmem->bindings, index, slot, start, end - 1) {
 		struct kvm_gfn_range gfn_range = {
-			.start = slot->base_gfn + max(start, slot->gmem.index),
-			.end = slot->base_gfn + min(end, slot->gmem.index + slot->npages),
+			.start = slot->base_gfn + min(index - slot->gmem.index, slot->npages),
+			.end = slot->base_gfn + min(end - slot->gmem.index, slot->npages),
 			.slot = slot,
 			.pte = __pte(0),
 			.may_block = true,
