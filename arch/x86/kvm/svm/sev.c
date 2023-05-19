@@ -2007,6 +2007,8 @@ static int snp_launch_start(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	if (rc)
 		goto e_free_context;
 
+	kvm->arch.mmu_private_fault_mask = PFERR_GUEST_ENC_MASK;
+
 	return 0;
 
 e_free_context:
