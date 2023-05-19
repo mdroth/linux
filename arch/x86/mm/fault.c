@@ -33,6 +33,7 @@
 #include <asm/kvm_para.h>		/* kvm_handle_async_pf		*/
 #include <asm/vdso.h>			/* fixup_vdso_exception()	*/
 #include <asm/irq_stack.h>
+#include <asm/sev-host.h>		/* sev_dump_rmpentry()          */
 
 #define CREATE_TRACE_POINTS
 #include <asm/trace/exceptions.h>
@@ -579,6 +580,18 @@ show_fault_oops(struct pt_regs *regs, unsigned long error_code, unsigned long ad
 	}
 
 	dump_pagetable(address);
+
+	if (error_code & X86_PF_RMP) {
+		unsigned int level;
+		pgd_t *pgd;
+		pte_t *pte;
+
+		pgd = __va(read_cr3_pa());
+		pgd += pgd_index(address);
+		pte = lookup_address_in_pgd(pgd, address, &level);
+
+		sev_dump_rmpentry(pte_pfn(*pte));
+	}
 }
 
 static noinline void
