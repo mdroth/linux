@@ -43,7 +43,40 @@ static struct folio *kvm_gmem_get_huge_folio(struct inode *inode, pgoff_t index,
 	return folio;
 }
 
-static struct folio *kvm_gmem_get_folio(struct inode *inode, pgoff_t index)
+static int kvm_gmem_prepare_folio(struct inode *inode, pgoff_t index, struct folio *folio)
+{
+#ifdef CONFIG_HAVE_KVM_GMEM_PREPARE
+	struct list_head *gmem_list = &inode->i_mapping->i_private_list;
+	struct kvm_gmem *gmem;
+
+	list_for_each_entry(gmem, gmem_list, entry) {
+		struct kvm_memory_slot *slot;
+		struct kvm *kvm = gmem->kvm;
+		struct page *page;
+		kvm_pfn_t pfn;
+		gfn_t gfn;
+		int rc;
+
+		slot = xa_load(&gmem->bindings, index);
+		if (!slot)
+			continue;
+
+		page = folio_file_page(folio, index);
+		pfn = page_to_pfn(page);
+		gfn = slot->base_gfn + index - slot->gmem.pgoff;
+		rc = kvm_arch_gmem_prepare(kvm, gfn, pfn, compound_order(compound_head(page)));
+		if (rc) {
+			pr_warn_ratelimited("gmem: Failed to prepare folio for index %lx, error %d.\n",
+					    index, rc);
+			return rc;
+		}
+	}
+
+#endif
+	return 0;
+}
+
+static struct folio *kvm_gmem_get_folio(struct inode *inode, pgoff_t index, bool prep)
 {
 	struct folio *folio;
 
@@ -71,6 +104,12 @@ static struct folio *kvm_gmem_get_folio(struct inode *inode, pgoff_t index)
 			clear_highpage(folio_page(folio, i));
 
 		folio_mark_uptodate(folio);
+	}
+
+	if (prep && kvm_gmem_prepare_folio(inode, index, folio)) {
+		folio_unlock(folio);
+		folio_put(folio);
+		return NULL;
 	}
 
 	/*
@@ -177,7 +216,7 @@ static long kvm_gmem_allocate(struct inode *inode, loff_t offset, loff_t len)
 			break;
 		}
 
-		folio = kvm_gmem_get_folio(inode, index);
+		folio = kvm_gmem_get_folio(inode, index, true);
 		if (!folio) {
 			r = -ENOMEM;
 			break;
@@ -516,8 +555,8 @@ void kvm_gmem_unbind(struct kvm_memory_slot *slot)
 	fput(file);
 }
 
-int kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
-		     gfn_t gfn, kvm_pfn_t *pfn, int *max_order)
+int __kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
+		       gfn_t gfn, kvm_pfn_t *pfn, int *max_order, bool prep)
 {
 	pgoff_t index, huge_index;
 	struct kvm_gmem *gmem;
@@ -538,7 +577,7 @@ int kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
 		goto out_fput;
 	}
 
-	folio = kvm_gmem_get_folio(file_inode(file), index);
+	folio = kvm_gmem_get_folio(file_inode(file), index, prep);
 	if (!folio) {
 		r = -ENOMEM;
 		goto out_fput;
@@ -578,5 +617,12 @@ out_fput:
 	fput(file);
 
 	return r;
+}
+EXPORT_SYMBOL_GPL(__kvm_gmem_get_pfn);
+
+int kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
+		     gfn_t gfn, kvm_pfn_t *pfn, int *max_order)
+{
+	return __kvm_gmem_get_pfn(kvm, slot, gfn, pfn, max_order, true);
 }
 EXPORT_SYMBOL_GPL(kvm_gmem_get_pfn);
