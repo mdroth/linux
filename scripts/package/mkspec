@@ -56,9 +56,9 @@ $S	Source0: linux.tar.gz
 $S	Source1: config
 $S	Source2: diff.patch
 	Provides: $PROVIDES
-$S	BuildRequires: bc binutils bison dwarves
-$S	BuildRequires: (elfutils-libelf-devel or libelf-devel) flex
-$S	BuildRequires: gcc make openssl openssl-devel perl python3 rsync
+#$S	BuildRequires: bc binutils bison dwarves
+#$S	BuildRequires: (elfutils-libelf-devel or libelf-devel) flex
+#$S	BuildRequires: gcc make openssl openssl-devel perl python3 rsync
 
 	# $UTS_MACHINE as a fallback of _arch in case
 	# /usr/lib/rpm/platform/*/macros was not included.
