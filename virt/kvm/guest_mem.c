@@ -144,6 +144,30 @@ static void kvm_gmem_invalidate_end(struct kvm *kvm, struct kvm_gmem *gmem,
 	KVM_MMU_UNLOCK(kvm);
 }
 
+void __weak kvm_arch_gmem_invalidate(struct kvm *kvm, struct kvm_memory_slot *slot,
+				     gfn_t start, gfn_t end)
+{
+}
+
+/* Handle arch-specific hooks needed before releasing guarded pages. */
+static void kvm_gmem_issue_arch_invalidate(struct kvm *kvm,
+					   struct kvm_gmem *gmem,
+					   pgoff_t start, pgoff_t end)
+{
+	struct kvm_memory_slot *slot;
+	unsigned long index;
+	int idx;
+
+	idx = srcu_read_lock(&kvm->srcu);
+	xa_for_each_range(&gmem->bindings, index, slot, start, end - 1) {
+		gfn_t gfn_start = slot->base_gfn + min(index - slot->gmem.index, slot->npages);
+		gfn_t gfn_end = slot->base_gfn + min(end - slot->gmem.index, slot->npages);
+
+		kvm_arch_gmem_invalidate(kvm, slot, gfn_start, gfn_end);
+	}
+	srcu_read_unlock(&kvm->srcu, idx);
+}
+
 static long kvm_gmem_punch_hole(struct file *file, int mode, loff_t offset,
 				loff_t len)
 {
@@ -160,6 +184,7 @@ static long kvm_gmem_punch_hole(struct file *file, int mode, loff_t offset,
 
 	kvm_gmem_invalidate_begin(kvm, gmem, start, end);
 
+	kvm_gmem_issue_arch_invalidate(kvm, gmem, start, end);
 	truncate_inode_pages_range(file->f_mapping, offset, offset + len);
 
 	kvm_gmem_invalidate_end(kvm, gmem, start, end);
@@ -461,6 +486,7 @@ void kvm_gmem_unbind(struct kvm_memory_slot *slot)
 	gmem = slot->gmem.file->private_data;
 
 	filemap_invalidate_lock(slot->gmem.file->f_mapping);
+	kvm_gmem_issue_arch_invalidate(gmem->kvm, gmem, start, end);
 	xa_store_range(&gmem->bindings, start, end - 1, NULL, GFP_KERNEL);
 	synchronize_rcu();
 	filemap_invalidate_unlock(slot->gmem.file->f_mapping);

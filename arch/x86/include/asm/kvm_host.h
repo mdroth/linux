@@ -1735,6 +1735,8 @@ struct kvm_x86_ops {
 
 	int (*gmem_prepare)(struct kvm *kvm, struct kvm_memory_slot *slot,
 			    kvm_pfn_t pfn_start, gfn_t gfn_start, int order);
+	void (*gmem_invalidate)(struct kvm *kvm, struct kvm_memory_slot *slot,
+				gfn_t start, gfn_t end);
 };
 
 struct kvm_x86_nested_ops {
