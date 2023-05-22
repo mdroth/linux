@@ -469,9 +469,14 @@ void kvm_gmem_unbind(struct kvm_memory_slot *slot)
 	slot->gmem.file = NULL;
 }
 
+int __weak kvm_arch_gmem_prepare(struct kvm *kvm, struct kvm_memory_slot *slot,
+				 kvm_pfn_t pfn, gfn_t gfn, int order)
+{
+	return 0;
+}
 
-int kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
-		     gfn_t gfn, kvm_pfn_t *pfn, int *order)
+int __kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
+		       gfn_t gfn, kvm_pfn_t *pfn, int *order)
 {
 	pgoff_t index = gfn - slot->base_gfn + slot->gmem.index;
 	struct file *file = slot->gmem.file;
@@ -494,6 +499,18 @@ int kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
 	folio_unlock(folio);
 
 	return 0;
+}
+EXPORT_SYMBOL_GPL(__kvm_gmem_get_pfn);
+
+int kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
+		     gfn_t gfn, kvm_pfn_t *pfn, int *order)
+{
+	int ret = __kvm_gmem_get_pfn(kvm, slot, gfn, pfn, order);
+
+	if (ret)
+		return ret;
+
+	return kvm_arch_gmem_prepare(kvm, slot, *pfn, gfn, *order);
 }
 EXPORT_SYMBOL_GPL(kvm_gmem_get_pfn);
 
