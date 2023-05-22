@@ -13258,6 +13258,12 @@ int kvm_arch_gmem_prepare(struct kvm *kvm, struct kvm_memory_slot *slot,
 {
 	return static_call(kvm_x86_gmem_prepare)(kvm, slot, pfn_start, gfn_start, order);
 }
+
+void kvm_arch_gmem_invalidate(struct kvm *kvm, struct kvm_memory_slot *slot,
+			      gfn_t start, gfn_t end)
+{
+	static_call_cond(kvm_x86_gmem_invalidate)(kvm, slot, start, end);
+}
 #endif
 
 int kvm_spec_ctrl_test_value(u64 value)
