@@ -2172,30 +2172,20 @@ void sev_snp_certs_put(struct sev_snp_certs *certs)
 }
 EXPORT_SYMBOL_GPL(sev_snp_certs_put);
 
-int sev_issue_cmd_external_user_cert(struct file *filep, unsigned int cmd, void *data,
-				     struct sev_snp_certs **certs, int *error)
+struct sev_snp_certs *sev_snp_global_certs_get(void)
 {
 	struct sev_device *sev;
-	int rc;
 
 	if (!psp_master || !psp_master->sev_data)
-		return -ENODEV;
+		return NULL;
 
 	sev = psp_master->sev_data;
-
 	if (!sev->snp_initialized)
-		return -EINVAL;
+		return NULL;
 
-	mutex_lock(&sev->snp_certs_lock);
-
-	rc = sev_issue_cmd_external_user(filep, cmd, data, error);
-	if (!rc)
-		*certs = sev_snp_certs_get(sev->snp_certs);
-
-	mutex_unlock(&sev->snp_certs_lock);
-	return rc;
+	return sev_snp_certs_get(sev->snp_certs);
 }
-EXPORT_SYMBOL_GPL(sev_issue_cmd_external_user_cert);
+EXPORT_SYMBOL_GPL(sev_snp_global_certs_get);
 
 static void sev_exit(struct kref *ref)
 {
@@ -2264,7 +2254,6 @@ int sev_dev_init(struct psp_device *psp)
 		goto e_sev;
 
 	sev->cmd_buf_backup = (uint8_t *)sev->cmd_buf + PAGE_SIZE;
-	mutex_init(&sev->snp_certs_lock);
 
 	psp->sev_data = sev;
 
