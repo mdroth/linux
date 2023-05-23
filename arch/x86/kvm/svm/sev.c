@@ -390,23 +390,6 @@ static int sev_issue_cmd(struct kvm *kvm, int id, void *data, int *error)
 	return __sev_issue_cmd(sev->fd, id, data, error);
 }
 
-static int sev_issue_cmd_cert(struct kvm *kvm, int id, void *data,
-			      struct sev_snp_certs **snp_certs, int *error)
-{
-	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
-	struct fd f;
-	int ret;
-
-	f = fdget(sev->fd);
-	if (!f.file)
-		return -EBADF;
-
-	ret = sev_issue_cmd_external_user_cert(f.file, id, data, snp_certs, error);
-
-	fdput(f);
-	return ret;
-}
-
 static int sev_launch_start(struct kvm *kvm, struct kvm_sev_cmd *argp)
 {
 	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
@@ -3699,28 +3682,26 @@ static void snp_handle_ext_guest_request(struct vcpu_svm *svm, gpa_t req_gpa, gp
 	if (rc)
 		goto unlock;
 
+	/*
+	 * If a VMM-specific certificate blob hasn't been provided, grab the
+	 * host-wide one.
+	 */
 	snp_certs = sev_snp_certs_get(sev->snp_certs);
+	if (!snp_certs)
+		snp_certs = sev_snp_global_certs_get();
 
 	/*
-	 * If the VMM has overridden the certs, then change the error message
-	 * if the size is inappropriate for the override. Otherwise, use a
-	 * regular guest request and copy back the instance certs.
+	 * If there is a host-wide or VMM-specific certificate blob available,
+	 * make sure the guest has allocated enough space to store it.
+	 * Otherwise, inform the guest how much space is needed.
 	 */
-	if (snp_certs) {
-		if ((data_npages << PAGE_SHIFT) < snp_certs->len) {
-			/*
-			 * If buffer length is small then return the expected
-			 * length in rbx.
-			 */
-			vcpu->arch.regs[VCPU_REGS_RBX] = snp_certs->len >> PAGE_SHIFT;
-			exitcode = SNP_GUEST_REQ_INVALID_LEN;
-			goto cleanup;
-		}
-		rc = sev_issue_cmd(kvm, SEV_CMD_SNP_GUEST_REQUEST, &req, &err);
-	} else {
-		rc = sev_issue_cmd_cert(kvm, SEV_CMD_SNP_GUEST_REQUEST, &req, &snp_certs, &err);
+	if (snp_certs && (data_npages << PAGE_SHIFT) < snp_certs->len) {
+		vcpu->arch.regs[VCPU_REGS_RBX] = snp_certs->len >> PAGE_SHIFT;
+		exitcode = SNP_GUEST_REQ_INVALID_LEN;
+		goto cleanup;
 	}
 
+	rc = sev_issue_cmd(kvm, SEV_CMD_SNP_GUEST_REQUEST, &req, &err);
 	if (rc) {
 		/* pass the firmware error code */
 		exitcode = err;
