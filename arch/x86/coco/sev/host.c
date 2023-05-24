@@ -317,6 +317,26 @@ void sev_dump_rmpentry(u64 pfn)
 }
 EXPORT_SYMBOL_GPL(sev_dump_rmpentry);
 
+void sev_dump_rmpentry_pfn(u64 pfn, char *s)
+{
+	struct rmpentry *e;
+	int level;
+
+	e = __snp_lookup_rmpentry(pfn, &level);
+	if (!e) {
+		pr_info("failed to read RMP entry pfn 0x%llx\n", pfn);
+		return;
+	}
+
+	pr_info("%s: RMPEntry paddr 0x%llx [assigned=%d immutable=%d pagesize=%d gpa=0x%lx"
+		" asid=%d vmsa=%d validated=%d]\n", s, pfn << PAGE_SHIFT,
+		rmpentry_assigned(e), e->info.immutable, rmpentry_pagesize(e),
+		(unsigned long)e->info.gpa, e->info.asid, e->info.vmsa,
+		e->info.validated);
+	return;
+}
+EXPORT_SYMBOL_GPL(sev_dump_rmpentry_pfn);
+
 /*
  * Return 1 if the RMP entry is assigned, 0 if it exists but is not assigned,
  * and -errno if there is no corresponding RMP entry.
