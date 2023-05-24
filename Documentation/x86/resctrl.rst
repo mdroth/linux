@@ -49,6 +49,8 @@ mount options are:
 "debug":
 	Make debug files accessible. Available debug files are annotated with
 	"Available only with debug option".
+"abmc":
+	Enable assignable bandwidth monitor counter (ABMC).
 
 L2 and L3 CDP are controlled separately.
 

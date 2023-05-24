@@ -2621,6 +2621,7 @@ enum rdt_param {
 	Opt_cdpl2,
 	Opt_mba_mbps,
 	Opt_debug,
+	Opt_abmc,
 	nr__rdt_params
 };
 
@@ -2629,6 +2630,7 @@ static const struct fs_parameter_spec rdt_fs_parameters[] = {
 	fsparam_flag("cdpl2",		Opt_cdpl2),
 	fsparam_flag("mba_MBps",	Opt_mba_mbps),
 	fsparam_flag("debug",		Opt_debug),
+	fsparam_flag("abmc",		Opt_abmc),
 	{}
 };
 
@@ -2656,6 +2658,9 @@ static int rdt_parse_param(struct fs_context *fc, struct fs_parameter *param)
 		return 0;
 	case Opt_debug:
 		ctx->enable_debug = true;
+		return 0;
+	case Opt_abmc:
+		ctx->enable_abmc = true;
 		return 0;
 	}
 
