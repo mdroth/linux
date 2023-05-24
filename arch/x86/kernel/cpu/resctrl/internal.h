@@ -240,6 +240,51 @@ struct rdtgroup {
 
 /*
  * Define the file type flags for base and info directories.
+ *
+ * RESCTRL filesystem has two main components
+ *   a. info
+ *   b. base
+ *
+ * /sys/fs/resctrl/
+ *     |
+ *     --> info (directory and provides details on control
+ *     |         and monitoring resources)
+ *     |
+ *     --> base (Lists the files and information to interact with control
+ *               or monitor groups. There is no directory with name base.
+ *               Provides details on default control group when filesystem
+ *               is created)
+ *
+ *     info structure
+ *    -------------------------------------------------------------
+ *    --> RFTYPE_INFO
+ *        --> <info>
+ *            --> RFTYPE_TOP_INFO
+ *                Files: last_cmd_status
+ *
+ *        --> RFTYPE_MON_INFO
+ *            --> <L3_MON>
+ *                 Files: max_threshold_occupancy, mbm_local_bytes_config,
+ *                        mbm_total_bytes_config, mon_features, num_rmids
+ *
+ *        --> RFTYPE_CTRL_INFO
+ *            --> RFTYPE_RES_CACHE
+ *                --> <L2/L3>
+ *                     Files: bit_usage, cbm_mask, min_cbm_bits,
+ *                            num_closids, shareable_bits
+ *
+ *            --> RFTYPE_RES_MB
+ *                --> <MB/SMBA>
+ *                     Files: bandwidth_gran, delay_linear, min_bandwidth,
+ *                            num_closids
+ *
+ *     base structure
+ *     -----------------------------------------------------------
+ *     --> RFTYPE_BASE (Files common for both MON and CTRL groups)
+ *         Files: cpus, cpus_list, tasks
+ *
+ *     --> RFTYPE_CTRL_BASE (Files only for CTRL group)
+ *         Files: mode, schemata, size
  */
 #define RFTYPE_INFO			BIT(0)
 #define RFTYPE_BASE			BIT(1)
