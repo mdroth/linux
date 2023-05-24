@@ -494,3 +494,21 @@ int rmp_make_shared(u64 pfn, enum pg_level level)
 	return rmpupdate(pfn, &val);
 }
 EXPORT_SYMBOL_GPL(rmp_make_shared);
+
+/*
+ * Return gpa of the RMP entry if assigned to guest
+ */
+u64 snp_rmpentry_get_gpa(u64 pfn, int *level, unsigned int asid)
+{
+	struct rmpentry *e;
+
+	e = __snp_lookup_rmpentry(pfn, level);
+	if (IS_ERR(e))
+		return 0;
+
+	if (rmpentry_assigned(e) && e->info.asid == asid)
+		return (e->info.gpa << PAGE_SHIFT);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(snp_rmpentry_get_gpa);

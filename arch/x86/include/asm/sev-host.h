@@ -19,6 +19,7 @@ void sev_dump_rmpentry(u64 pfn);
 int psmash(u64 pfn);
 int rmp_make_private(u64 pfn, u64 gpa, enum pg_level level, int asid, bool immutable);
 int rmp_make_shared(u64 pfn, enum pg_level level);
+u64 snp_rmpentry_get_gpa(u64 pfn, int *level, unsigned int asid);
 #else
 static inline int snp_lookup_rmpentry(u64 pfn, int *level) { return 0; }
 static inline void sev_dump_rmpentry(u64 pfn) {}
@@ -29,6 +30,7 @@ static inline int rmp_make_private(u64 pfn, u64 gpa, enum pg_level level, int as
 	return -ENODEV;
 }
 static inline int rmp_make_shared(u64 pfn, enum pg_level level) { return -ENODEV; }
+static inline u64 snp_rmpentry_get_gpa(u64 pfn, int *level, unsigned int asid) { return 0; }
 #endif
 
 #endif
