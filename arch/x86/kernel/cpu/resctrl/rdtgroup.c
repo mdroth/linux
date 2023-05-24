@@ -178,6 +178,23 @@ static void abmc_counters_init(void)
 	abmc_counters_free_map_len = r->abmc_counters;
 }
 
+static int abmc_counters_alloc(void)
+{
+       u32 counterid = ffs(abmc_counters_free_map);
+
+       if (counterid == 0)
+               return -ENOSPC;
+       counterid--;
+       abmc_counters_free_map &= ~(1 << counterid);
+
+       return counterid;
+}
+
+void abmc_counters_free(int closid)
+{
+       abmc_counters_free_map |= 1 << closid;
+}
+
 /**
  * rdtgroup_mode_by_closid - Return mode of resource group with closid
  * @closid: closid if the resource group
@@ -802,6 +819,145 @@ static int rdtgroup_abmc_state_show(struct kernfs_open_file *of,
 	rdtgroup_kn_unlock(of->kn);
 
 	return ret;
+}
+
+static void rdtgroup_abmc_msrwrite(void *info)
+{
+	u64 *msrval = info;
+
+	wrmsrl(MSR_IA32_L3_QOS_ABMC_CFG, *msrval);
+}
+
+static ssize_t rdtgroup_assign_abmc(struct rdtgroup *rdtgrp,
+				    struct rdt_resource *r,
+				    u32 evtid, int index)
+{
+	union l3_qos_abmc_cfg abmc_cfg = { 0 };
+	struct rdt_domain *d;
+	struct rmid_read rr;
+	int counterid = 0;
+
+	if (!(rdtgrp->mon.abmc_state & BIT(index))) {
+		counterid = abmc_counters_alloc();
+		if (counterid < 0) {
+			rdt_last_cmd_puts("ABMC counters not available\n");
+			return -ENOENT;
+		} else {
+			rdtgrp->mon.counterid[index] = counterid;
+		}
+	}
+
+	abmc_cfg.split.enable_counter = 1;
+	abmc_cfg.split.configure_counter = 1;
+	abmc_cfg.split.counterid = rdtgrp->mon.counterid[index];
+	abmc_cfg.split.bwtype = rdtgrp->mon.bw_cfg[index];
+	abmc_cfg.split.bwsrc = rdtgrp->mon.rmid;
+
+	list_for_each_entry(d, &r->domains, list) {
+		smp_call_function_any(&d->cpu_mask, rdtgroup_abmc_msrwrite, &abmc_cfg, 1);
+		mon_event_read(&rr, r, d, rdtgrp, evtid, true);
+	}
+
+	rdtgrp->mon.abmc_state |= BIT(index);
+
+	return 0;
+}
+
+static ssize_t rdtgroup_unassign_abmc(struct rdtgroup *rdtgrp,
+                                     struct rdt_resource *r, int index)
+{
+	union l3_qos_abmc_cfg abmc_cfg = { 0 };
+	struct rdt_domain *d;
+
+	if (rdtgrp->mon.abmc_state & BIT(index)) {
+		abmc_cfg.split.enable_counter = 0;
+		abmc_cfg.split.configure_counter = 1;
+		abmc_cfg.split.counterid = rdtgrp->mon.counterid[index];
+		abmc_cfg.split.bwtype = rdtgrp->mon.bw_cfg[index];
+		abmc_cfg.split.bwsrc = rdtgrp->mon.rmid;
+
+		list_for_each_entry(d, &r->domains, list)
+			smp_call_function_any(&d->cpu_mask, rdtgroup_abmc_msrwrite, &abmc_cfg, 1);
+
+		abmc_counters_free(rdtgrp->mon.counterid[index]);
+		rdtgrp->mon.counterid[index] = 0;
+	}
+
+	rdtgrp->mon.abmc_state &= ~BIT(index);
+
+	return 0;
+}
+
+/**
+ * rdtgroup_abmc_state_write - Modify the resource group's assign
+ *
+ */
+static ssize_t rdtgroup_abmc_state_write(struct kernfs_open_file *of,
+					 char *buf, size_t nbytes, loff_t off)
+{
+	struct rdt_resource *r = &rdt_resources_all[RDT_RESOURCE_L3].r_resctrl;
+	char *abmc_str, *event_str;
+	struct rdtgroup *rdtgrp;
+	int ret = 0, index;
+	u32 evtid;
+
+	/* Valid input requires a trailing newline */
+	if (nbytes == 0 || buf[nbytes - 1] != '\n')
+		return -EINVAL;
+	buf[nbytes - 1] = '\0';
+
+	rdtgrp = rdtgroup_kn_lock_live(of->kn);
+	if (!rdtgrp) {
+		rdtgroup_kn_unlock(of->kn);
+		return -ENOENT;
+	}
+
+	rdt_last_cmd_clear();
+
+	while (buf && buf[0] != '\0') {
+		/* Start processing the strings for each domain */
+		abmc_str = strim(strsep(&buf, ";"));
+		event_str = strsep(&abmc_str, "=");
+
+		if (event_str && abmc_str) {
+			if (!strcmp(event_str, "total")) {
+				index = 0;
+				evtid = QOS_L3_MBM_TOTAL_EVENT_ID;
+			} else if (!strcmp(event_str, "local")) {
+				index = 1;
+				evtid = QOS_L3_MBM_LOCAL_EVENT_ID;
+			} else {
+				rdt_last_cmd_puts("Invalid ABMC event\n");
+				ret = -EINVAL;
+				break;
+			}
+
+			if (!strcmp(abmc_str, "unassign")) {
+				ret = rdtgroup_unassign_abmc(rdtgrp, r, index);
+				if (ret) {
+					rdt_last_cmd_puts("ABMC unassign failed\n");
+					break;
+				}
+			} else if (!strcmp(abmc_str, "assign")) {
+				ret = rdtgroup_assign_abmc(rdtgrp, r, evtid, index);
+				if (ret) {
+					rdt_last_cmd_puts("ABMC assign failed\n");
+					break;
+				}
+			} else {
+				rdt_last_cmd_puts("Invalid ABMC event\n");
+				ret = -EINVAL;
+				break;
+			}
+		} else {
+			rdt_last_cmd_puts("Invalid ABMC input\n");
+			ret = -EINVAL;
+			break;
+		}
+	}
+
+	rdtgroup_kn_unlock(of->kn);
+	return ret ?: nbytes;
 }
 
 static int rdtgroup_abmc_bw_cfg_show(struct kernfs_open_file *of,
@@ -1911,9 +2067,10 @@ static struct rftype res_common_files[] = {
 	},
 	{
 		.name		= "abmc_state",
-		.mode		= 0444,
+		.mode		= 0644,
 		.kf_ops		= &rdtgroup_kf_single_ops,
 		.seq_show	= rdtgroup_abmc_state_show,
+		.write		= rdtgroup_abmc_state_write,
 	},
 	{
 		.name		= "bw_cfg",
@@ -3023,6 +3180,7 @@ static void rdt_kill_sb(struct super_block *sb)
 		if (rft)
 			rft->fflags &= ~RFTYPE_BASE;
 		resctrl_arch_set_abmc_enabled(false);
+		rdtgroup_default.mon.abmc_state = 0;
 	}
 
 	/*Put everything back to default values. */
