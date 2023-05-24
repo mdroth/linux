@@ -2510,8 +2510,6 @@ static int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
 	KVM_MMU_UNLOCK(kvm);
 
 	i = kvm_vm_set_region_attr(kvm, start, end, attrs->attributes);
-	if (i > start)
-		kvm_pre_mem_attrs_changed(kvm, attrs->attributes, start, i);
 
 	KVM_MMU_LOCK(kvm);
 	if (i > start)
