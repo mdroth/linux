@@ -768,6 +768,26 @@ static int rdtgroup_tasks_show(struct kernfs_open_file *of,
 	return ret;
 }
 
+static int rdtgroup_abmc_state_show(struct kernfs_open_file *of,
+				    struct seq_file *s, void *v)
+{
+	struct rdtgroup *rdtgrp;
+	int ret = 0;
+
+	rdtgrp = rdtgroup_kn_lock_live(of->kn);
+	if (rdtgrp)
+		seq_printf(s, "total=%s;local=%s\n",
+			   rdtgrp->mon.abmc_state & ABMC_MBM_TOTAL ?
+			   "assigned" : "unassigned",
+			   rdtgrp->mon.abmc_state & ABMC_MBM_LOCAL ?
+			   "assigned" : "unassigned");
+	else
+		ret = -ENOENT;
+	rdtgroup_kn_unlock(of->kn);
+
+	return ret;
+}
+
 static int rdtgroup_closid_show(struct kernfs_open_file *of,
 				struct seq_file *s, void *v)
 {
@@ -1857,6 +1877,12 @@ static struct rftype res_common_files[] = {
 		.fflags		= RFTYPE_BASE,
 	},
 	{
+		.name		= "abmc_state",
+		.mode		= 0444,
+		.kf_ops		= &rdtgroup_kf_single_ops,
+		.seq_show	= rdtgroup_abmc_state_show,
+	},
+	{
 		.name		= "tasks",
 		.mode		= 0644,
 		.kf_ops		= &rdtgroup_kf_single_ops,
@@ -2482,6 +2508,7 @@ static int mkdir_mondata_all(struct kernfs_node *parent_kn,
 
 static int rdt_enable_ctx(struct rdt_fs_context *ctx)
 {
+	struct rftype *rft;
 	int ret = 0;
 
 	if (ctx->enable_cdpl2)
@@ -2496,8 +2523,12 @@ static int rdt_enable_ctx(struct rdt_fs_context *ctx)
 	if (!ret && ctx->enable_debug)
 		resctrl_debug = true;
 
-	if (!ret && ctx->enable_abmc)
+	if (!ret && ctx->enable_abmc) {
+		rft = rdtgroup_get_rftype_by_name("abmc_state");
+		if (rft)
+			rft->fflags = RFTYPE_BASE;
 		ret = resctrl_arch_set_abmc_enabled(true);
+	}
 
 	return ret;
 }
@@ -2929,6 +2960,7 @@ static void rdt_kill_sb(struct super_block *sb)
 {
 	struct rdt_hw_resource *hw_res = &rdt_resources_all[RDT_RESOURCE_L3];
 	struct rdt_resource *r;
+	struct rftype *rft;
 
 	cpus_read_lock();
 	mutex_lock(&rdtgroup_mutex);
@@ -2937,8 +2969,12 @@ static void rdt_kill_sb(struct super_block *sb)
 
 	resctrl_debug = false;
 
-	if (hw_res->abmc_enabled)
+	if (hw_res->abmc_enabled) {
+		rft = rdtgroup_get_rftype_by_name("abmc_state");
+		if (rft)
+			rft->fflags &= ~RFTYPE_BASE;
 		resctrl_arch_set_abmc_enabled(false);
+	}
 
 	/*Put everything back to default values. */
 	for_each_alloc_capable_rdt_resource(r)

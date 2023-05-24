@@ -56,6 +56,9 @@
 /* ABMC ENABLE */
 #define ABMC_ENABLE			BIT(0)
 
+#define ABMC_MBM_TOTAL			BIT(0)
+#define ABMC_MBM_LOCAL			BIT(1)
+
 struct rdt_fs_context {
 	struct kernfs_fs_context	kfc;
 	bool				enable_cdpl2;
@@ -169,6 +172,7 @@ struct mongroup {
 	struct rdtgroup		*parent;
 	struct list_head	crdtgrp_list;
 	u32			rmid;
+	u32			abmc_state;
 };
 
 /**
