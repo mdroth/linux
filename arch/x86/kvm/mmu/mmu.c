@@ -7431,10 +7431,4 @@ void kvm_mmu_init_memslot_memory_attributes(struct kvm *kvm,
 		}
 	}
 }
-
-void kvm_arch_gmem_invalidate(struct kvm *kvm, struct kvm_memory_slot *slot,
-			      gfn_t start, gfn_t end)
-{
-	static_call_cond(kvm_x86_gmem_invalidate)(kvm, slot, start, end);
-}
 #endif
