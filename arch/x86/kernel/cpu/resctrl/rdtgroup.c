@@ -1866,6 +1866,7 @@ static struct rftype res_common_files[] = {
 		.mode		= 0444,
 		.kf_ops		= &rdtgroup_kf_single_ops,
 		.seq_show	= rdtgroup_rmid_show,
+		.fflags		= RFTYPE_BASE | RFTYPE_DEBUG,
 	},
 	{
 		.name		= "schemata",
@@ -1895,6 +1896,7 @@ static struct rftype res_common_files[] = {
 		.mode		= 0444,
 		.kf_ops		= &rdtgroup_kf_single_ops,
 		.seq_show	= rdtgroup_closid_show,
+		.fflags		= RFTYPE_CTRL_BASE | RFTYPE_DEBUG,
 	},
 
 };
@@ -1908,6 +1910,9 @@ static int rdtgroup_add_files(struct kernfs_node *kn, unsigned long fflags)
 	len = ARRAY_SIZE(res_common_files);
 
 	lockdep_assert_held(&rdtgroup_mutex);
+
+	if (resctrl_debug)
+		fflags |= RFTYPE_DEBUG;
 
 	for (rft = rfts; rft < rfts + len; rft++) {
 		if (rft->fflags && ((fflags & rft->fflags) == rft->fflags)) {
