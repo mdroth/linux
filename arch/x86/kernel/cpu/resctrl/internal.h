@@ -53,6 +53,9 @@
 /* Max event bits supported */
 #define MAX_EVT_CONFIG_BITS		GENMASK(6, 0)
 
+/* ABMC ENABLE */
+#define ABMC_ENABLE			BIT(0)
+
 struct rdt_fs_context {
 	struct kernfs_fs_context	kfc;
 	bool				enable_cdpl2;
@@ -454,6 +457,7 @@ struct rdt_hw_resource {
 	unsigned int		mon_scale;
 	unsigned int		mbm_width;
 	bool			cdp_enabled;
+	bool			abmc_enabled;
 };
 
 static inline struct rdt_hw_resource *resctrl_to_arch_res(struct rdt_resource *r)
@@ -498,6 +502,11 @@ static inline bool resctrl_arch_get_cdp_enabled(enum resctrl_res_level l)
 }
 
 int resctrl_arch_set_cdp_enabled(enum resctrl_res_level l, bool enable);
+
+static inline bool resctrl_arch_get_abmc_enabled(enum resctrl_res_level l)
+{
+	return rdt_resources_all[l].abmc_enabled;
+}
 
 /*
  * To return the common struct rdt_resource, which is contained in struct

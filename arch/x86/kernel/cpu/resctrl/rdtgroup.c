@@ -2344,6 +2344,72 @@ static void cdp_disable_all(void)
 		resctrl_arch_set_cdp_enabled(RDT_RESOURCE_L2, false);
 }
 
+static void resctrl_abmc_msrwrite(void *arg)
+{
+	bool *enable = arg;
+	u64 msrval;
+
+	rdmsrl(MSR_IA32_L3_QOS_EXT_CFG, msrval);
+
+	if (*enable)
+		msrval |= ABMC_ENABLE;
+	else
+		msrval &= ~ABMC_ENABLE;
+
+	wrmsrl(MSR_IA32_L3_QOS_EXT_CFG, msrval);
+}
+
+static int resctrl_abmc_setup(bool enable)
+{
+	struct rdt_resource *r = &rdt_resources_all[RDT_RESOURCE_L3].r_resctrl;
+	struct rdt_domain *d;
+
+	/* Update QOS_CFG MSR on all the CPUs in cpu_mask */
+	list_for_each_entry(d, &r->domains, list)
+		on_each_cpu_mask(&d->cpu_mask, resctrl_abmc_msrwrite, &enable, 1);
+
+	return 0;
+}
+
+static int resctrl_abmc_enable(void)
+{
+	struct rdt_hw_resource *hw_res = &rdt_resources_all[RDT_RESOURCE_L3];
+	int ret = 0;
+
+	if (!hw_res->abmc_enabled) {
+		ret = resctrl_abmc_setup(true);
+		if (!ret)
+			hw_res->abmc_enabled = true;
+	}
+
+	return ret;
+}
+
+static void resctrl_abmc_disable(void)
+{
+	struct rdt_hw_resource *hw_res = &rdt_resources_all[RDT_RESOURCE_L3];
+
+	if (hw_res->abmc_enabled) {
+		resctrl_abmc_setup(false);
+		hw_res->abmc_enabled = false;
+	}
+}
+
+int resctrl_arch_set_abmc_enabled(bool enable)
+{
+	struct rdt_hw_resource *hw_res = &rdt_resources_all[RDT_RESOURCE_L3];
+
+	if (!hw_res->r_resctrl.abmc_capable)
+		return -EINVAL;
+
+	if (enable)
+		return resctrl_abmc_enable();
+
+	resctrl_abmc_disable();
+
+	return 0;
+}
+
 /*
  * We don't allow rdtgroup directories to be created anywhere
  * except the root directory. Thus when looking for the rdtgroup
@@ -2429,6 +2495,9 @@ static int rdt_enable_ctx(struct rdt_fs_context *ctx)
 
 	if (!ret && ctx->enable_debug)
 		resctrl_debug = true;
+
+	if (!ret && ctx->enable_abmc)
+		ret = resctrl_arch_set_abmc_enabled(true);
 
 	return ret;
 }
@@ -2858,6 +2927,7 @@ static void rmdir_all_sub(void)
 
 static void rdt_kill_sb(struct super_block *sb)
 {
+	struct rdt_hw_resource *hw_res = &rdt_resources_all[RDT_RESOURCE_L3];
 	struct rdt_resource *r;
 
 	cpus_read_lock();
@@ -2866,6 +2936,9 @@ static void rdt_kill_sb(struct super_block *sb)
 	set_mba_sc(false);
 
 	resctrl_debug = false;
+
+	if (hw_res->abmc_enabled)
+		resctrl_arch_set_abmc_enabled(false);
 
 	/*Put everything back to default values. */
 	for_each_alloc_capable_rdt_resource(r)
@@ -3624,6 +3697,9 @@ static int rdtgroup_show_options(struct seq_file *seq, struct kernfs_root *kf)
 
 	if (resctrl_debug)
 		seq_puts(seq, ",debug");
+
+	if (resctrl_arch_get_abmc_enabled(RDT_RESOURCE_L3))
+		seq_puts(seq, ",abmc");
 
 	return 0;
 }
