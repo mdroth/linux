@@ -189,18 +189,17 @@ static struct arch_mbm_state *get_arch_mbm_state(struct rdt_hw_domain *hw_dom,
 	return NULL;
 }
 
-void resctrl_arch_reset_rmid(struct rdt_resource *r, struct rdt_domain *d,
-			     u32 rmid, enum resctrl_event_id eventid)
+void resctrl_arch_reset_rmid(struct rmid_read *rr, u32 rmid)
 {
-	struct rdt_hw_domain *hw_dom = resctrl_to_arch_dom(d);
+	struct rdt_hw_domain *hw_dom = resctrl_to_arch_dom(rr->d);
 	struct arch_mbm_state *am;
 
-	am = get_arch_mbm_state(hw_dom, rmid, eventid);
+	am = get_arch_mbm_state(hw_dom, rmid, rr->evtid);
 	if (am) {
 		memset(am, 0, sizeof(*am));
 
 		/* Record any initial, non-zero count value. */
-		__rmid_read(rmid, eventid, &am->prev_msr);
+		__rmid_read(rmid, rr->evtid, &am->prev_msr);
 	}
 }
 
@@ -229,23 +228,22 @@ static u64 mbm_overflow_count(u64 prev_msr, u64 cur_msr, unsigned int width)
 	return chunks >> shift;
 }
 
-int resctrl_arch_rmid_read(struct rdt_resource *r, struct rdt_domain *d,
-			   u32 rmid, enum resctrl_event_id eventid, u64 *val)
+int resctrl_arch_rmid_read(struct rmid_read *rr, u32 rmid, u64 *val)
 {
-	struct rdt_hw_resource *hw_res = resctrl_to_arch_res(r);
-	struct rdt_hw_domain *hw_dom = resctrl_to_arch_dom(d);
+	struct rdt_hw_resource *hw_res = resctrl_to_arch_res(rr->r);
+	struct rdt_hw_domain *hw_dom = resctrl_to_arch_dom(rr->d);
 	struct arch_mbm_state *am;
 	u64 msr_val, chunks;
 	int ret;
 
-	if (!cpumask_test_cpu(smp_processor_id(), &d->cpu_mask))
+	if (!cpumask_test_cpu(smp_processor_id(), &rr->d->cpu_mask))
 		return -EINVAL;
 
-	ret = __rmid_read(rmid, eventid, &msr_val);
+	ret = __rmid_read(rmid, rr->evtid, &msr_val);
 	if (ret)
 		return ret;
 
-	am = get_arch_mbm_state(hw_dom, rmid, eventid);
+	am = get_arch_mbm_state(hw_dom, rmid, rr->evtid);
 	if (am) {
 		am->chunks += mbm_overflow_count(am->prev_msr, msr_val,
 						 hw_res->mbm_width);
@@ -269,10 +267,15 @@ int resctrl_arch_rmid_read(struct rdt_resource *r, struct rdt_domain *d,
 void __check_limbo(struct rdt_domain *d, bool force_free)
 {
 	struct rdt_resource *r = &rdt_resources_all[RDT_RESOURCE_L3].r_resctrl;
+	struct rmid_read rr = { 0 };
 	struct rmid_entry *entry;
 	u32 crmid = 1, nrmid;
 	bool rmid_dirty;
 	u64 val = 0;
+
+	rr.evtid = QOS_L3_OCCUP_EVENT_ID;
+	rr.r = r;
+	rr.d = d;
 
 	/*
 	 * Skip RMID 0 and start from RMID 1 and check all the RMIDs that
@@ -287,8 +290,7 @@ void __check_limbo(struct rdt_domain *d, bool force_free)
 
 		entry = __rmid_entry(nrmid);
 
-		if (resctrl_arch_rmid_read(r, d, entry->rmid,
-					   QOS_L3_OCCUP_EVENT_ID, &val)) {
+		if (resctrl_arch_rmid_read(&rr, entry->rmid, &val)) {
 			rmid_dirty = true;
 		} else {
 			rmid_dirty = (val >= resctrl_rmid_realloc_threshold);
@@ -334,17 +336,20 @@ int alloc_rmid(void)
 static void add_rmid_to_limbo(struct rmid_entry *entry)
 {
 	struct rdt_resource *r = &rdt_resources_all[RDT_RESOURCE_L3].r_resctrl;
+	struct rmid_read rr = { 0 };
 	struct rdt_domain *d;
 	int cpu, err;
 	u64 val = 0;
+
+	rr.r = r;
+	rr.evtid = QOS_L3_OCCUP_EVENT_ID;
 
 	entry->busy = 0;
 	cpu = get_cpu();
 	list_for_each_entry(d, &r->domains, list) {
 		if (cpumask_test_cpu(cpu, &d->cpu_mask)) {
-			err = resctrl_arch_rmid_read(r, d, entry->rmid,
-						     QOS_L3_OCCUP_EVENT_ID,
-						     &val);
+			rr.d = d;
+			err = resctrl_arch_rmid_read(&rr, entry->rmid, &val);
 			if (err || val <= resctrl_rmid_realloc_threshold)
 				continue;
 		}
@@ -389,9 +394,9 @@ static int __mon_event_count(u32 rmid, struct rmid_read *rr)
 	u64 tval = 0;
 
 	if (rr->first)
-		resctrl_arch_reset_rmid(rr->r, rr->d, rmid, rr->evtid);
+		resctrl_arch_reset_rmid(rr, rmid);
 
-	rr->err = resctrl_arch_rmid_read(rr->r, rr->d, rmid, rr->evtid, &tval);
+	rr->err = resctrl_arch_rmid_read(rr, rmid, &tval);
 	if (rr->err)
 		return rr->err;
 
@@ -605,10 +610,12 @@ static void update_mba_bw(struct rdtgroup *rgrp, struct rdt_domain *dom_mbm)
 	}
 }
 
-static void mbm_update(struct rdt_resource *r, struct rdt_domain *d, int rmid)
+static void mbm_update(struct rdt_resource *r, struct rdt_domain *d,
+		       struct rdtgroup *rgrp)
 {
 	struct rmid_read rr;
 
+	rr.rgrp = rgrp;
 	rr.first = false;
 	rr.r = r;
 	rr.d = d;
@@ -620,12 +627,12 @@ static void mbm_update(struct rdt_resource *r, struct rdt_domain *d, int rmid)
 	if (is_mbm_total_enabled()) {
 		rr.evtid = QOS_L3_MBM_TOTAL_EVENT_ID;
 		rr.val = 0;
-		__mon_event_count(rmid, &rr);
+		__mon_event_count(rgrp->mon.rmid, &rr);
 	}
 	if (is_mbm_local_enabled()) {
 		rr.evtid = QOS_L3_MBM_LOCAL_EVENT_ID;
 		rr.val = 0;
-		__mon_event_count(rmid, &rr);
+		__mon_event_count(rgrp->mon.rmid, &rr);
 
 		/*
 		 * Call the MBA software controller only for the
@@ -633,7 +640,7 @@ static void mbm_update(struct rdt_resource *r, struct rdt_domain *d, int rmid)
 		 * the software controller explicitly.
 		 */
 		if (is_mba_sc(NULL))
-			mbm_bw_count(rmid, &rr);
+			mbm_bw_count(rgrp->mon.rmid, &rr);
 	}
 }
 
@@ -690,11 +697,11 @@ void mbm_handle_overflow(struct work_struct *work)
 	d = container_of(work, struct rdt_domain, mbm_over.work);
 
 	list_for_each_entry(prgrp, &rdt_all_groups, rdtgroup_list) {
-		mbm_update(r, d, prgrp->mon.rmid);
+		mbm_update(r, d, prgrp);
 
 		head = &prgrp->mon.crdtgrp_list;
 		list_for_each_entry(crgrp, head, mon.crdtgrp_list)
-			mbm_update(r, d, crgrp->mon.rmid);
+			mbm_update(r, d, crgrp);
 
 		if (is_mba_sc(NULL))
 			update_mba_bw(prgrp, d);

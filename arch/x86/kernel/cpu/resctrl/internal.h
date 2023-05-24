@@ -118,16 +118,6 @@ union mon_data_bits {
 	} u;
 };
 
-struct rmid_read {
-	struct rdtgroup		*rgrp;
-	struct rdt_resource	*r;
-	struct rdt_domain	*d;
-	enum resctrl_event_id	evtid;
-	bool			first;
-	int			err;
-	u64			val;
-};
-
 extern bool rdt_alloc_capable;
 extern bool rdt_mon_capable;
 extern unsigned int rdt_mon_features;

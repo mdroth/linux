@@ -206,6 +206,16 @@ struct resctrl_schema {
 	u32				num_closid;
 };
 
+struct rmid_read {
+	struct rdtgroup         *rgrp;
+	struct rdt_resource     *r;
+	struct rdt_domain       *d;
+	enum resctrl_event_id   evtid;
+	bool                    first;
+	int                     err;
+	u64                     val;
+};
+
 /* The number of closid supported by this resource regardless of CDP */
 u32 resctrl_arch_get_num_closid(struct rdt_resource *r);
 int resctrl_arch_update_domains(struct rdt_resource *r, u32 closid);
@@ -236,8 +246,7 @@ void resctrl_offline_domain(struct rdt_resource *r, struct rdt_domain *d);
  * Return:
  * 0 on success, or -EIO, -EINVAL etc on error.
  */
-int resctrl_arch_rmid_read(struct rdt_resource *r, struct rdt_domain *d,
-			   u32 rmid, enum resctrl_event_id eventid, u64 *val);
+int resctrl_arch_rmid_read(struct rmid_read *rr, u32 rmid, u64 *val);
 
 /**
  * resctrl_arch_reset_rmid() - Reset any private state associated with rmid
@@ -249,8 +258,7 @@ int resctrl_arch_rmid_read(struct rdt_resource *r, struct rdt_domain *d,
  *
  * This can be called from any CPU.
  */
-void resctrl_arch_reset_rmid(struct rdt_resource *r, struct rdt_domain *d,
-			     u32 rmid, enum resctrl_event_id eventid);
+void resctrl_arch_reset_rmid(struct rmid_read *rr, u32 rmid);
 
 /**
  * resctrl_arch_reset_rmid_all() - Reset all private state associated with
