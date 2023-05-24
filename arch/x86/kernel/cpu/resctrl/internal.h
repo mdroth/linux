@@ -53,6 +53,14 @@
 /* Max event bits supported */
 #define MAX_EVT_CONFIG_BITS		GENMASK(6, 0)
 
+/* All local events supported */
+#define LOCAL_EVT_CONFIG_BITS		READS_TO_LOCAL_MEM |		\
+					NON_TEMP_WRITE_TO_LOCAL_MEM |	\
+					READS_TO_LOCAL_S_MEM
+
+/* MAX ABMC asignable counters per group */
+#define ABMC_MAX_PER_GROUP              2
+
 /* ABMC ENABLE */
 #define ABMC_ENABLE			BIT(0)
 
@@ -173,6 +181,7 @@ struct mongroup {
 	struct list_head	crdtgrp_list;
 	u32			rmid;
 	u32			abmc_state;
+	u32                     bw_cfg[ABMC_MAX_PER_GROUP];
 };
 
 /**

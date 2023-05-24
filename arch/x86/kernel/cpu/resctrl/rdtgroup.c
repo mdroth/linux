@@ -3367,6 +3367,7 @@ static int mkdir_rdt_prepare(struct kernfs_node *parent_kn,
 			     const char *name, umode_t mode,
 			     enum rdt_group_type rtype, struct rdtgroup **r)
 {
+	struct rdt_hw_resource *hw_res = &rdt_resources_all[RDT_RESOURCE_L3];
 	struct rdtgroup *prdtgrp, *rdtgrp;
 	struct kernfs_node *kn;
 	uint files = 0;
@@ -3396,6 +3397,10 @@ static int mkdir_rdt_prepare(struct kernfs_node *parent_kn,
 	*r = rdtgrp;
 	rdtgrp->mon.parent = prdtgrp;
 	rdtgrp->type = rtype;
+	if (hw_res->r_resctrl.abmc_capable) {
+		rdtgrp->mon.bw_cfg[0] = MAX_EVT_CONFIG_BITS;
+		rdtgrp->mon.bw_cfg[1] = LOCAL_EVT_CONFIG_BITS;
+	}
 	INIT_LIST_HEAD(&rdtgrp->mon.crdtgrp_list);
 
 	/* kernfs creates the directory for rdtgrp */
@@ -3748,6 +3753,8 @@ static struct kernfs_syscall_ops rdtgroup_kf_syscall_ops = {
 
 static int rdtgroup_setup_root(void)
 {
+	struct rdt_hw_resource *hw_res = &rdt_resources_all[RDT_RESOURCE_L3];
+
 	rdt_root = kernfs_create_root(&rdtgroup_kf_syscall_ops,
 				      KERNFS_ROOT_CREATE_DEACTIVATED |
 				      KERNFS_ROOT_EXTRA_OPEN_PERM_CHECK,
@@ -3760,6 +3767,10 @@ static int rdtgroup_setup_root(void)
 	rdtgroup_default.closid = 0;
 	rdtgroup_default.mon.rmid = 0;
 	rdtgroup_default.type = RDTCTRL_GROUP;
+	if (hw_res->r_resctrl.abmc_capable) {
+		rdtgroup_default.mon.bw_cfg[0] = MAX_EVT_CONFIG_BITS;
+		rdtgroup_default.mon.bw_cfg[1] = LOCAL_EVT_CONFIG_BITS;
+        }
 	INIT_LIST_HEAD(&rdtgroup_default.mon.crdtgrp_list);
 
 	list_add(&rdtgroup_default.rdtgroup_list, &rdt_all_groups);
