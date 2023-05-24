@@ -57,6 +57,7 @@ static char last_cmd_status_buf[512];
 struct dentry *debugfs_resctrl;
 
 static bool resctrl_debug;
+static int rdtgroup_setup_root(void);
 
 void rdt_last_cmd_clear(void)
 {
@@ -2519,13 +2520,6 @@ static int rdt_get_tree(struct fs_context *fc)
 
 	cpus_read_lock();
 	mutex_lock(&rdtgroup_mutex);
-	/*
-	 * resctrl file system can only be mounted once.
-	 */
-	if (static_branch_unlikely(&rdt_enable_key)) {
-		ret = -EBUSY;
-		goto out;
-	}
 
 	ret = rdt_enable_ctx(ctx);
 	if (ret < 0)
@@ -2539,9 +2533,16 @@ static int rdt_get_tree(struct fs_context *fc)
 
 	closid_init();
 
+	ret = rdtgroup_add_files(rdtgroup_default.kn, RFTYPE_CTRL_BASE);
+        if (ret) {
+		goto out_schemata_free;
+        }
+
+        kernfs_activate(rdtgroup_default.kn);
+
 	ret = rdtgroup_create_info_dir(rdtgroup_default.kn);
 	if (ret < 0)
-		goto out_schemata_free;
+		goto out_default;
 
 	if (rdt_mon_capable) {
 		ret = mongroup_create_dir(rdtgroup_default.kn,
@@ -2591,6 +2592,8 @@ out_mongrp:
 		kernfs_remove(kn_mongrp);
 out_info:
 	kernfs_remove(kn_info);
+out_default:
+	kernfs_remove(rdtgroup_default.kn);
 out_schemata_free:
 	schemata_list_destroy();
 out_mba:
@@ -2668,10 +2671,23 @@ static const struct fs_context_operations rdt_fs_context_ops = {
 static int rdt_init_fs_context(struct fs_context *fc)
 {
 	struct rdt_fs_context *ctx;
+	int ret;
+
+	/*
+	 * resctrl file system can only be mounted once.
+	 */
+	if (static_branch_unlikely(&rdt_enable_key))
+		return -EBUSY;
+
+	ret = rdtgroup_setup_root();
+	if (ret)
+		return ret;
 
 	ctx = kzalloc(sizeof(struct rdt_fs_context), GFP_KERNEL);
-	if (!ctx)
+	if (!ctx) {
+		kernfs_destroy_root(rdt_root);
 		return -ENOMEM;
+	}
 
 	ctx->kfc.root = rdt_root;
 	ctx->kfc.magic = RDTGROUP_SUPER_MAGIC;
@@ -2849,6 +2865,9 @@ static void rdt_kill_sb(struct super_block *sb)
 	static_branch_disable_cpuslocked(&rdt_alloc_enable_key);
 	static_branch_disable_cpuslocked(&rdt_mon_enable_key);
 	static_branch_disable_cpuslocked(&rdt_enable_key);
+	/* Remove the default group and cleanup the root */
+	list_del(&rdtgroup_default.rdtgroup_list);
+	kernfs_destroy_root(rdt_root);
 	kernfs_kill_sb(sb);
 	mutex_unlock(&rdtgroup_mutex);
 	cpus_read_unlock();
@@ -3602,10 +3621,8 @@ static struct kernfs_syscall_ops rdtgroup_kf_syscall_ops = {
 	.show_options	= rdtgroup_show_options,
 };
 
-static int __init rdtgroup_setup_root(void)
+static int rdtgroup_setup_root(void)
 {
-	int ret;
-
 	rdt_root = kernfs_create_root(&rdtgroup_kf_syscall_ops,
 				      KERNFS_ROOT_CREATE_DEACTIVATED |
 				      KERNFS_ROOT_EXTRA_OPEN_PERM_CHECK,
@@ -3622,19 +3639,11 @@ static int __init rdtgroup_setup_root(void)
 
 	list_add(&rdtgroup_default.rdtgroup_list, &rdt_all_groups);
 
-	ret = rdtgroup_add_files(kernfs_root_to_node(rdt_root), RFTYPE_CTRL_BASE);
-	if (ret) {
-		kernfs_destroy_root(rdt_root);
-		goto out;
-	}
-
 	rdtgroup_default.kn = kernfs_root_to_node(rdt_root);
-	kernfs_activate(rdtgroup_default.kn);
 
-out:
 	mutex_unlock(&rdtgroup_mutex);
 
-	return ret;
+	return 0;
 }
 
 static void domain_destroy_mon_state(struct rdt_domain *d)
@@ -3756,13 +3765,9 @@ int __init rdtgroup_init(void)
 	seq_buf_init(&last_cmd_status, last_cmd_status_buf,
 		     sizeof(last_cmd_status_buf));
 
-	ret = rdtgroup_setup_root();
-	if (ret)
-		return ret;
-
 	ret = sysfs_create_mount_point(fs_kobj, "resctrl");
 	if (ret)
-		goto cleanup_root;
+		return ret;
 
 	ret = register_filesystem(&rdt_fs_type);
 	if (ret)
@@ -3795,8 +3800,6 @@ int __init rdtgroup_init(void)
 
 cleanup_mountpoint:
 	sysfs_remove_mount_point(fs_kobj, "resctrl");
-cleanup_root:
-	kernfs_destroy_root(rdt_root);
 
 	return ret;
 }
@@ -3806,5 +3809,4 @@ void __exit rdtgroup_exit(void)
 	debugfs_remove_recursive(debugfs_resctrl);
 	unregister_filesystem(&rdt_fs_type);
 	sysfs_remove_mount_point(fs_kobj, "resctrl");
-	kernfs_destroy_root(rdt_root);
 }
