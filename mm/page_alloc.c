@@ -1450,6 +1450,10 @@ static __always_inline bool free_pages_prepare(struct page *page,
 
 	page_cpupid_reset_last(page);
 	page->flags &= ~PAGE_FLAGS_CHECK_AT_PREP;
+	if (page->restricted)
+		trace_mm_page_free(page, 0xCC);
+
+	page->restricted = false;
 	reset_page_owner(page, order);
 	page_table_check_free(page, order);
 
