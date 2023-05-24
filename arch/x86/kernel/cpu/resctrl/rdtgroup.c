@@ -788,6 +788,23 @@ static int rdtgroup_abmc_state_show(struct kernfs_open_file *of,
 	return ret;
 }
 
+static int rdtgroup_abmc_bw_cfg_show(struct kernfs_open_file *of,
+				     struct seq_file *s, void *v)
+{
+	struct rdtgroup *rdtgrp;
+	int ret = 0;
+
+	rdtgrp = rdtgroup_kn_lock_live(of->kn);
+	if (rdtgrp)
+		seq_printf(s, "total=0x%x;local=0x%x\n",
+			   rdtgrp->mon.bw_cfg[0], rdtgrp->mon.bw_cfg[1]);
+	else
+		ret = -ENOENT;
+	rdtgroup_kn_unlock(of->kn);
+
+	return ret;
+}
+
 static int rdtgroup_closid_show(struct kernfs_open_file *of,
 				struct seq_file *s, void *v)
 {
@@ -1883,6 +1900,12 @@ static struct rftype res_common_files[] = {
 		.seq_show	= rdtgroup_abmc_state_show,
 	},
 	{
+		.name		= "bw_cfg",
+		.mode		= 0444,
+		.kf_ops		= &rdtgroup_kf_single_ops,
+		.seq_show	= rdtgroup_abmc_bw_cfg_show,
+	},
+	{
 		.name		= "tasks",
 		.mode		= 0644,
 		.kf_ops		= &rdtgroup_kf_single_ops,
@@ -2527,6 +2550,9 @@ static int rdt_enable_ctx(struct rdt_fs_context *ctx)
 		rft = rdtgroup_get_rftype_by_name("abmc_state");
 		if (rft)
 			rft->fflags = RFTYPE_BASE;
+		rft = rdtgroup_get_rftype_by_name("bw_cfg");
+		if (rft)
+			rft->fflags = RFTYPE_BASE;
 		ret = resctrl_arch_set_abmc_enabled(true);
 	}
 
@@ -2971,6 +2997,9 @@ static void rdt_kill_sb(struct super_block *sb)
 
 	if (hw_res->abmc_enabled) {
 		rft = rdtgroup_get_rftype_by_name("abmc_state");
+		if (rft)
+			rft->fflags &= ~RFTYPE_BASE;
+		rft = rdtgroup_get_rftype_by_name("bw_cfg");
 		if (rft)
 			rft->fflags &= ~RFTYPE_BASE;
 		resctrl_arch_set_abmc_enabled(false);
