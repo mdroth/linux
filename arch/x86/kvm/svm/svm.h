@@ -775,6 +775,7 @@ void sev_snp_init_protected_guest_state(struct kvm_vcpu *vcpu);
 int sev_gmem_prepare(struct kvm *kvm, struct kvm_memory_slot *slot,
 		     kvm_pfn_t pfn, gfn_t gfn, u8 *max_level);
 void sev_gmem_invalidate(struct kvm *kvm, kvm_pfn_t start, kvm_pfn_t end);
+int sev_gmem_migrate(struct kvm *kvm, struct page *dst, struct page *src);
 
 /* vmenter.S */
 

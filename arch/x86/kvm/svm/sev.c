@@ -4588,3 +4588,137 @@ void sev_gmem_invalidate(struct kvm *kvm, kvm_pfn_t start, kvm_pfn_t end)
 					    pfn, rc);
 	}
 }
+
+static int sev_copy_cmd(struct kvm_sev_info *sev, struct page *dst, struct page *src)
+{
+	struct sev_copy_enc_mem params;
+	int error = 0, ret = 0;
+
+	params.handle = sev->handle;
+	params.length = min(page_size(src), page_size(dst));
+	params.dst_addr = __sme_page_pa(dst);
+	params.src_addr = __sme_page_pa(src);
+
+	/* Make a call to PSP */
+	ret = sev_do_cmd(SEV_CMD_COPY, &params, &error);
+	if (ret != 0) {
+		pr_err("%s: CMD_COPY ret %d error %d\n", __func__, ret, error);
+		pr_err("%s: CMD_COPY handle %x length %x src 0x%llx dst 0x%llx\n",
+		       __func__, params.handle, params.length, params.src_addr, params.dst_addr);
+	}
+	return ret;
+}
+
+static int snp_make_page_shared(struct kvm *kvm, gpa_t gpa, kvm_pfn_t pfn, int level)
+{
+       int rc, rmp_level;
+       bool assigned;
+
+       rc = snp_lookup_rmpentry(pfn, &assigned, &rmp_level);
+       if (rc)
+	       return -EINVAL;
+
+       if (!assigned)
+	       return 0;
+
+       /*
+	* Is the page part of an existing 2MB RMP entry ? Split the 2MB into
+	* multiple of 4K-page before making the memory shared.
+	*/
+       if (level == PG_LEVEL_4K && rmp_level == PG_LEVEL_2M) {
+	       rc = snp_rmptable_psmash(kvm, pfn);
+	       if (rc)
+		       return rc;
+       }
+
+       return rmp_make_shared(pfn, level);
+}
+
+static int snp_page_move(struct kvm *kvm, struct kvm_sev_info *sev, struct page *dst, struct page *src)
+{
+	struct sev_snp_page_move params;
+	int error = 0, ret = 0, page_sz, level = 0;
+	u64 gpa;
+
+	if (page_size(src) != page_size(dst))
+		return -EINVAL;
+
+	if (page_size(src) == (1ULL<<12))
+		page_sz = 0;
+	else if (page_size(src) == (1ULL<<20))
+		page_sz = 1;
+	else
+		return -EINVAL;
+
+	memset(&params, 0, sizeof(struct sev_snp_page_move));
+
+	/* Assign the destination page to the guest */
+	gpa = snp_rmpentry_get_gpa(page_to_pfn(src), &level, sev->asid);
+	if (!gpa) {
+		pr_err("%s: *** gpa is zero for pfn %lx\n", __func__, page_to_pfn(src));
+		return -EINVAL;
+	}
+	else
+		pr_err_ratelimited("%s: *** gpa is %llx for pfn %lx - level %d\n", __func__, gpa, page_to_pfn(src), level);
+
+	/* Transition the source page to pre-swap */
+	ret = rmp_make_private(page_to_pfn(src), gpa, level, sev->asid, true);
+	if (ret) {
+		pr_err("%s: RMPUPDATE src failed(%d)  for pfn %lx gpa %llx\n", __func__, ret, page_to_pfn(dst), gpa);
+		return -EINVAL;
+	}
+
+	/* Transition the destination page to pre-guest */
+	ret = rmp_make_private(page_to_pfn(dst), gpa, level, sev->asid, true);
+	if (ret) {
+		pr_err("%s: RMPUPDATE dst failed(%d)  for pfn %lx gpa %llx\n", __func__, ret, page_to_pfn(dst), gpa);
+		return -EINVAL;
+	}
+
+	params.gctx_paddr = __psp_pa(sev->snp_context);
+	params.page_size = page_sz;
+	params.dst_addr = __sme_page_pa(dst);
+	params.src_addr = __sme_page_pa(src);
+
+	/* Make a call to PSP */
+	ret = sev_do_cmd(SEV_CMD_SNP_PAGE_MOVE, &params, &error);
+	if (!ret) {
+		int r = snp_make_page_shared(kvm, gpa, page_to_pfn(src), level);
+		/* Mark destination page accessed/dirty and take page reference */
+		/* FIXME: Destination page to be allocated using shmem hooks */
+		set_page_dirty(dst);
+		mark_page_accessed(dst);
+		get_page(dst);
+
+		trace_snp_page_move(page_to_pfn(src), page_to_pfn(dst), gpa_to_gfn(gpa), 0);
+		if (r)
+			sev_dump_rmpentry_pfn(page_to_pfn(src), "faildstshrd");
+	} else {
+		snp_make_page_shared(kvm, gpa, page_to_pfn(dst), level);
+		sev_dump_rmpentry_pfn(page_to_pfn(src), "failpgmv_src");
+		sev_dump_rmpentry_pfn(page_to_pfn(dst), "failpgmv_dst");
+		trace_snp_page_move(page_to_pfn(src), page_to_pfn(dst), gpa_to_gfn(gpa), 1);
+		pr_err("%s: PAGE_MOVE ret %d error %d\n", __func__, ret, error);
+		pr_err("%s: PAGE_MOVE gctx_paddr %llx page_size %x src 0x%llx dst 0x%llx\n",
+		       __func__, params.gctx_paddr, params.page_size, params.src_addr, params.dst_addr);
+		KVM_BUG(true, kvm, "SNP: Unable to move page\n");
+	}
+
+	return ret;
+}
+
+int sev_gmem_migrate(struct kvm *kvm, struct page *dst, struct page *src)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+
+	if (!sev_guest(kvm))
+		return -ENOTTY;
+
+	if (!dst || !src)
+		return -EFAULT;
+
+	if (sev_snp_guest(kvm))
+		return snp_page_move(kvm, sev, dst, src);
+
+	return sev_copy_cmd(sev, dst, src);
+}

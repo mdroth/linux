@@ -165,6 +165,7 @@ static int sev_cmd_buffer_len(int cmd)
 	case SEV_CMD_DEACTIVATE:		return sizeof(struct sev_data_deactivate);
 	case SEV_CMD_DECOMMISSION:		return sizeof(struct sev_data_decommission);
 	case SEV_CMD_GUEST_STATUS:		return sizeof(struct sev_data_guest_status);
+	case SEV_CMD_COPY:			return sizeof(struct sev_copy_enc_mem);
 	case SEV_CMD_DBG_DECRYPT:		return sizeof(struct sev_data_dbg);
 	case SEV_CMD_DBG_ENCRYPT:		return sizeof(struct sev_data_dbg);
 	case SEV_CMD_SEND_START:		return sizeof(struct sev_data_send_start);
@@ -194,6 +195,7 @@ static int sev_cmd_buffer_len(int cmd)
 	case SEV_CMD_SNP_PLATFORM_STATUS:	return sizeof(struct sev_data_snp_addr);
 	case SEV_CMD_SNP_GUEST_REQUEST:		return sizeof(struct sev_data_snp_guest_request);
 	case SEV_CMD_SNP_CONFIG:		return sizeof(struct sev_user_data_snp_config);
+	case SEV_CMD_SNP_PAGE_MOVE:		return sizeof(struct sev_snp_page_move);
 	default:				return 0;
 	}
 
