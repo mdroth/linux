@@ -419,6 +419,35 @@ TRACE_EVENT(kvm_page_fault,
 		  __entry->fault_address, __entry->error_code)
 );
 
+#define snp_page_move_shorthand			\
+	{0x0, "success"},			\
+	{0x1, "fail"},				\
+	{0x2, "migrate"},			\
+	{0x3, "free"}
+
+TRACE_EVENT(snp_page_move,
+	    TP_PROTO(u64 srcpfn, u64 dstpfn, u64 gpa, u64 code),
+	    TP_ARGS(srcpfn, dstpfn, gpa, code),
+
+	    TP_STRUCT__entry(
+			     __field(	u64,	srcpfn	)
+			     __field(	u64,    dstpfn	)
+			     __field(	u64,	gpa	)
+			     __field(	u64,	code	)
+			     ),
+
+	    TP_fast_assign(
+			   __entry->srcpfn	= srcpfn;
+			   __entry->dstpfn	= dstpfn;
+			   __entry->gpa		= gpa;
+			   __entry->code	= code;
+			   ),
+
+	    TP_printk("%s: srcpfn 0x%016llx dstpfn 0x%016llx gpa 0x%016llx",
+		      __print_symbolic(__entry->code, snp_page_move_shorthand),
+		      __entry->srcpfn, __entry->dstpfn, __entry->gpa)
+	    );
+
 /*
  * Tracepoint for guest MSR access.
  */
