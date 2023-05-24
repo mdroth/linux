@@ -127,6 +127,12 @@ static const struct mbm_correction_factor_table {
 static u32 mbm_cf_rmidthreshold __read_mostly = UINT_MAX;
 static u64 mbm_cf __read_mostly;
 
+/*
+ * ABMC Qos Event Identifiers.
+ */
+#define ABMC_EXTENDED_EVT_ID        BIT(31)
+#define ABMC_EVT_ID            1
+
 static inline u64 get_corrected_mbm_count(u32 rmid, unsigned long val)
 {
 	/* Correct MBM value. */
@@ -170,6 +176,39 @@ static int __rmid_read(u32 rmid, enum resctrl_event_id eventid, u64 *val)
 	return 0;
 }
 
+static int __abmc_counter_read(struct rmid_read *rr, u64 *val)
+{
+	u32 counter_id, eventid, index;
+	u64 msr_val;
+
+	if (rr->evtid == QOS_L3_MBM_TOTAL_EVENT_ID)
+		index = 0;
+	else if (rr->evtid == QOS_L3_MBM_LOCAL_EVENT_ID)
+		index = 1;
+	else {
+		/* Never expect to get here */
+		WARN_ON_ONCE(1);
+		return -EINVAL;
+	}
+
+	if (!(rr->rgrp->mon.abmc_state & BIT(index)))
+		return -EINVAL;
+
+	counter_id = rr->rgrp->mon.counterid[index];
+	eventid = ABMC_EXTENDED_EVT_ID | ABMC_EVT_ID;
+
+	wrmsr(MSR_IA32_QM_EVTSEL, eventid, counter_id);
+	rdmsrl(MSR_IA32_QM_CTR, msr_val);
+
+	if (msr_val & RMID_VAL_ERROR)
+		return -EIO;
+	if (msr_val & RMID_VAL_UNAVAIL)
+		return -EINVAL;
+
+	*val = msr_val;
+	return 0;
+}
+
 static struct arch_mbm_state *get_arch_mbm_state(struct rdt_hw_domain *hw_dom,
 						 u32 rmid,
 						 enum resctrl_event_id eventid)
@@ -191,6 +230,7 @@ static struct arch_mbm_state *get_arch_mbm_state(struct rdt_hw_domain *hw_dom,
 
 void resctrl_arch_reset_rmid(struct rmid_read *rr, u32 rmid)
 {
+	struct rdt_hw_resource *hw_res = resctrl_to_arch_res(rr->r);
 	struct rdt_hw_domain *hw_dom = resctrl_to_arch_dom(rr->d);
 	struct arch_mbm_state *am;
 
@@ -199,7 +239,12 @@ void resctrl_arch_reset_rmid(struct rmid_read *rr, u32 rmid)
 		memset(am, 0, sizeof(*am));
 
 		/* Record any initial, non-zero count value. */
-		__rmid_read(rmid, rr->evtid, &am->prev_msr);
+		if (hw_res->abmc_enabled &&
+		    (rr->evtid == QOS_L3_MBM_TOTAL_EVENT_ID ||
+		     rr->evtid == QOS_L3_MBM_LOCAL_EVENT_ID))
+			__abmc_counter_read(rr, &am->prev_msr);
+		else
+			__rmid_read(rmid, rr->evtid, &am->prev_msr);
 	}
 }
 
@@ -239,7 +284,12 @@ int resctrl_arch_rmid_read(struct rmid_read *rr, u32 rmid, u64 *val)
 	if (!cpumask_test_cpu(smp_processor_id(), &rr->d->cpu_mask))
 		return -EINVAL;
 
-	ret = __rmid_read(rmid, rr->evtid, &msr_val);
+	if (hw_res->abmc_enabled &&
+	    (rr->evtid == QOS_L3_MBM_TOTAL_EVENT_ID ||
+	     rr->evtid == QOS_L3_MBM_LOCAL_EVENT_ID))
+		ret = __abmc_counter_read(rr, &msr_val);
+	else
+		ret = __rmid_read(rmid, rr->evtid, &msr_val);
 	if (ret)
 		return ret;
 
