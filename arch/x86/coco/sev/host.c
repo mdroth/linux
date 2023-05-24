@@ -522,3 +522,22 @@ void snp_leak_pages(unsigned long pfn, unsigned int npages)
 	atomic_long_inc(&snp_nr_leaked_pages);
 }
 EXPORT_SYMBOL_GPL(snp_leak_pages);
+
+/*
+ * Return gpa of the RMP entry if assigned to guest
+ */
+u64 snp_rmpentry_get_gpa(u64 pfn, int *level, unsigned int asid)
+{
+	struct rmpentry e;
+	int ret;
+
+	ret = __snp_lookup_rmpentry(pfn, &e, level);
+	if (ret)
+		return 0;
+
+	if (rmpentry_assigned(&e) && (!asid || e.info.asid == asid))
+		return (e.info.gpa << PAGE_SHIFT);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(snp_rmpentry_get_gpa);
