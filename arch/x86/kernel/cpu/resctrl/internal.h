@@ -182,6 +182,7 @@ struct mongroup {
 	u32			rmid;
 	u32			abmc_state;
 	u32                     bw_cfg[ABMC_MAX_PER_GROUP];
+	u32			counterid[ABMC_MAX_PER_GROUP];
 };
 
 /**
@@ -564,6 +565,23 @@ union cpuid_0x10_x_edx {
 		unsigned int cos_max:16;
 	} split;
 	unsigned int full;
+};
+
+/*
+ * L3_QOS_ABMC_CFG MSR details. ABMC counters can be configured
+ * by writing to L3_QOS_ABMC_CFG.
+ */
+union l3_qos_abmc_cfg {
+	struct {
+		unsigned long  bwtype           :32,
+			       bwsrc            :15,
+			       bwsrcisclos      : 1,
+			       counterid        :10,
+			       reserved         : 4,
+			       enable_counter   : 1,
+			       configure_counter: 1;
+	} split;
+	unsigned long full;
 };
 
 void rdt_last_cmd_clear(void);
