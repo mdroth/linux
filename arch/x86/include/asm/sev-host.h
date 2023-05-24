@@ -16,6 +16,7 @@
 #ifdef CONFIG_KVM_AMD_SEV
 int snp_lookup_rmpentry(u64 pfn, bool *assigned, int *level);
 void sev_dump_rmpentry(u64 pfn);
+void sev_dump_rmpentry_pfn(u64 pfn, char *s);
 int psmash(u64 pfn);
 int rmp_make_private(u64 pfn, u64 gpa, enum pg_level level, int asid, bool immutable);
 int rmp_make_shared(u64 pfn, enum pg_level level);
@@ -24,6 +25,7 @@ u64 snp_rmpentry_get_gpa(u64 pfn, int *level, unsigned int asid);
 #else
 static inline int snp_lookup_rmpentry(u64 pfn, bool *assigned, int *level) { return 0; }
 static inline void sev_dump_rmpentry(u64 pfn) {}
+static inline void sev_dump_rmpentry_pfn(u64 pfn, char *s) {}
 static inline int psmash(u64 pfn) { return -ENXIO; }
 static inline int rmp_make_private(u64 pfn, u64 gpa, enum pg_level level, int asid,
 				   bool immutable)
