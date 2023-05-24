@@ -696,28 +696,42 @@ static ssize_t rdtgroup_tasks_write(struct kernfs_open_file *of,
 				    char *buf, size_t nbytes, loff_t off)
 {
 	struct rdtgroup *rdtgrp;
+	char *pid_str;
 	int ret = 0;
 	pid_t pid;
 
-	if (kstrtoint(strstrip(buf), 0, &pid) || pid < 0)
+	if (nbytes == 0)
 		return -EINVAL;
+
 	rdtgrp = rdtgroup_kn_lock_live(of->kn);
 	if (!rdtgrp) {
 		rdtgroup_kn_unlock(of->kn);
 		return -ENOENT;
 	}
+
 	rdt_last_cmd_clear();
 
-	if (rdtgrp->mode == RDT_MODE_PSEUDO_LOCKED ||
-	    rdtgrp->mode == RDT_MODE_PSEUDO_LOCKSETUP) {
-		ret = -EINVAL;
-		rdt_last_cmd_puts("Pseudo-locking in progress\n");
-		goto unlock;
+	while (buf && buf[0] != '\0') {
+		pid_str = strim(strsep(&buf, ","));
+
+		if (kstrtoint(pid_str, 0, &pid)) {
+			rdt_last_cmd_puts("Task list parsing error\n");
+			ret = -EINVAL;
+			break;
+		}
+
+		if (pid < 0) {
+			rdt_last_cmd_printf("Invalid pid %d value\n", pid);
+			ret = -EINVAL;
+			break;
+		}
+
+		ret = rdtgroup_move_task(pid, rdtgrp, of);
+		if (ret) {
+			rdt_last_cmd_printf("Error while processing task %d\n", pid);
+			break;
+		}
 	}
-
-	ret = rdtgroup_move_task(pid, rdtgrp, of);
-
-unlock:
 	rdtgroup_kn_unlock(of->kn);
 
 	return ret ?: nbytes;
