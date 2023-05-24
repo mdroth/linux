@@ -162,6 +162,22 @@ static bool closid_allocated(unsigned int closid)
 	return (closid_free_map & (1 << closid)) == 0;
 }
 
+static u64 abmc_counters_free_map;
+static u32 abmc_counters_free_map_len;
+
+static void abmc_counters_init(void)
+{
+	struct rdt_resource *r = &rdt_resources_all[RDT_RESOURCE_L3].r_resctrl;
+
+	if (r->abmc_counters > 64) {
+		r->abmc_counters = 64;
+		WARN(1, "Cannot support more than 64 abmc counters\n");
+	}
+
+	abmc_counters_free_map = BIT_MASK(r->abmc_counters) - 1;
+	abmc_counters_free_map_len = r->abmc_counters;
+}
+
 /**
  * rdtgroup_mode_by_closid - Return mode of resource group with closid
  * @closid: closid if the resource group
@@ -2647,9 +2663,10 @@ static void schemata_list_destroy(void)
 
 static int rdt_get_tree(struct fs_context *fc)
 {
+	struct rdt_resource *r = &rdt_resources_all[RDT_RESOURCE_L3].r_resctrl;
+	struct rdt_hw_resource *hw_res = resctrl_to_arch_res(r);
 	struct rdt_fs_context *ctx = rdt_fc2context(fc);
 	struct rdt_domain *dom;
-	struct rdt_resource *r;
 	int ret;
 
 	cpus_read_lock();
@@ -2666,6 +2683,9 @@ static int rdt_get_tree(struct fs_context *fc)
 	}
 
 	closid_init();
+
+	if (r->abmc_capable && hw_res->abmc_enabled)
+		abmc_counters_init();
 
 	ret = rdtgroup_add_files(rdtgroup_default.kn, RFTYPE_CTRL_BASE);
         if (ret) {
