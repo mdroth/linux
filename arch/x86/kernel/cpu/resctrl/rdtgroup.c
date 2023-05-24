@@ -977,6 +977,79 @@ static int rdtgroup_abmc_bw_cfg_show(struct kernfs_open_file *of,
 	return ret;
 }
 
+static ssize_t rdtgroup_abmc_bw_cfg_write(struct kernfs_open_file *of,
+					  char *buf, size_t nbytes, loff_t off)
+{
+	struct rdt_resource *r = &rdt_resources_all[RDT_RESOURCE_L3].r_resctrl;
+	struct rdt_hw_resource *hw_res = resctrl_to_arch_res(r);
+	char *abmc_str, *event_str;
+	struct rdtgroup *rdtgrp;
+	int ret = 0, index;
+	unsigned long val;
+	u32 evtid;
+
+	if (!hw_res->abmc_enabled)
+		return -ENOENT;
+
+	/* Valid input requires a trailing newline */
+	if (nbytes == 0 || buf[nbytes - 1] != '\n')
+		return -EINVAL;
+
+	buf[nbytes - 1] = '\0';
+
+	rdt_last_cmd_clear();
+
+	rdtgrp = rdtgroup_kn_lock_live(of->kn);
+	if (!rdtgrp) {
+		rdtgroup_kn_unlock(of->kn);
+		return -ENOENT;
+	}
+
+	while (buf && buf[0] != '\0') {
+		/* Start processing the strings for each domain */
+		abmc_str = strim(strsep(&buf, ";"));
+		event_str = strsep(&abmc_str, "=");
+
+		if (event_str && abmc_str) {
+			if (!strcmp(event_str, "total")) {
+				index = 0;
+				evtid = QOS_L3_MBM_TOTAL_EVENT_ID;
+			} else if (!strcmp(event_str, "local")) {
+				index = 1;
+				evtid = QOS_L3_MBM_LOCAL_EVENT_ID;
+			} else {
+				rdt_last_cmd_puts("Invalid ABMC event\n");
+				ret = -EINVAL;
+				break;
+			}
+
+			if (!abmc_str || kstrtoul(abmc_str, 16, &val)) {
+				rdt_last_cmd_puts("Non-numeric event configuration value\n");
+				ret = -EINVAL;
+				break;
+			}
+
+			if (rdtgrp->mon.bw_cfg[index] != val) {
+				rdtgrp->mon.bw_cfg[index] = val;
+				ret = rdtgroup_assign_abmc(rdtgrp, r, evtid, index);
+				if (!ret)
+					rdtgrp->mon.abmc_state |= BIT(index);
+				else {
+					rdt_last_cmd_puts("ABMC update failed\n");
+					break;
+				}
+			}
+		} else {
+			rdt_last_cmd_puts("Invalid ABMC input\n");
+			ret = -EINVAL;
+			break;
+		}
+	}
+
+	rdtgroup_kn_unlock(of->kn);
+	return ret ?: nbytes;
+}
+
 static int rdtgroup_closid_show(struct kernfs_open_file *of,
 				struct seq_file *s, void *v)
 {
@@ -2074,9 +2147,10 @@ static struct rftype res_common_files[] = {
 	},
 	{
 		.name		= "bw_cfg",
-		.mode		= 0444,
+		.mode		= 0644,
 		.kf_ops		= &rdtgroup_kf_single_ops,
 		.seq_show	= rdtgroup_abmc_bw_cfg_show,
+		.write		= rdtgroup_abmc_bw_cfg_write,
 	},
 	{
 		.name		= "tasks",
