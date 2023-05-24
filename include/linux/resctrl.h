@@ -182,6 +182,8 @@ struct rdt_resource {
 	struct list_head	evt_list;
 	unsigned long		fflags;
 	bool			cdp_capable;
+	bool			abmc_capable;
+	int			abmc_counters;
 };
 
 /**
