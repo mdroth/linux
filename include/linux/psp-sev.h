@@ -70,6 +70,7 @@ enum sev_cmd {
 	SEV_CMD_ACTIVATE		= 0x021,
 	SEV_CMD_DEACTIVATE		= 0x022,
 	SEV_CMD_GUEST_STATUS		= 0x023,
+	SEV_CMD_COPY			= 0x024,
 
 	/* Guest launch commands */
 	SEV_CMD_LAUNCH_START		= 0x030,
@@ -786,6 +787,37 @@ struct sev_data_snp_shutdown_ex {
 	u32 length;
 	u32 iommu_snp_shutdown:1;
 	u32 rsvd1:31;
+} __packed;
+
+/**
+ * struct sev_copy_enc_mem - Copy encrypted memory to a new location
+ *
+ * @handle: handle of the VM to copy memory
+ * @length: number of bytes to be copied, 4k aligned
+ * @src_addr: physical address of the source, 4k aligned
+ * @dst_addr: physical address of the destination, 4k aligned
+ */
+struct sev_copy_enc_mem {
+	u32 handle;				/* In */
+	u32 length;				/* In */
+	u64 src_addr;				/* In */
+	u64 dst_addr;				/* In */
+} __packed;
+
+/**
+ * struct sev_snp_page_move - Move encrypted memory to a new location
+ *
+ * @gctx_addr: system physical address of guest context page
+ * @page_size: page size 0 indicates 4K and 1 indicates 2MB page
+ * @src_addr: physical address of the source, aligned as per page_size
+ * @dst_addr: physical address of the destination, aligned as per page_size
+ */
+struct sev_snp_page_move {
+	u64 gctx_paddr;				/* In */
+	u32 page_size;				/* In */
+	u32 rsvd;				/* reserved, must be zero */
+	u64 src_addr;				/* In */
+	u64 dst_addr;				/* In */
 } __packed;
 
 #ifdef CONFIG_CRYPTO_DEV_SP_PSP

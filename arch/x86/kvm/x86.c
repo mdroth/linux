@@ -13275,6 +13275,11 @@ void kvm_arch_gmem_invalidate(struct kvm *kvm, struct kvm_memory_slot *slot,
 {
 	static_call_cond(kvm_x86_gmem_invalidate)(kvm, slot, start, end);
 }
+
+int kvm_arch_gmem_migrate(struct kvm *kvm, struct page *dst, struct page *src)
+{
+	return static_call(kvm_x86_gmem_migrate)(kvm, dst, src);
+}
 #endif
 
 int kvm_spec_ctrl_test_value(u64 value)

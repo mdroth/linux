@@ -1756,6 +1756,8 @@ struct kvm_x86_ops {
 	void *(*alloc_apic_backing_page)(struct kvm_vcpu *vcpu);
 
 	void (*adjust_mapping_level)(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn, int *level);
+
+	int (*gmem_migrate)(struct kvm *kvm, struct page *dst, struct page *src);
 };
 
 struct kvm_x86_nested_ops {

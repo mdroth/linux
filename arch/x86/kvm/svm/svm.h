@@ -778,6 +778,7 @@ int sev_gmem_prepare(struct kvm *kvm, struct kvm_memory_slot *slot,
 		     kvm_pfn_t pfn_start, gfn_t gfn_start, int order);
 void sev_gmem_invalidate(struct kvm *kvm, struct kvm_memory_slot *slot,
 			 gfn_t start, gfn_t end);
+int sev_gmem_migrate(struct kvm *kvm, struct page *dst, struct page *src);
 
 /* vmenter.S */
 
