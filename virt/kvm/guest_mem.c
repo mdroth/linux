@@ -344,7 +344,6 @@ static const struct file_operations kvm_gmem_fops = {
 	.fallocate	= kvm_gmem_fallocate,
 };
 
-#ifdef CONFIG_MIGRATION
 int __weak kvm_arch_gmem_migrate(struct kvm *kvm, struct page *dst, struct page *src)
 {
 	return 0;
@@ -354,6 +353,7 @@ static int kvm_gmem_migrate_folio(struct address_space *mapping,
 				  struct folio *dst, struct folio *src,
 				  enum migrate_mode mode)
 {
+#ifdef CONFIG_MIGRATION
 	struct super_block *sb = kvm_gmem_mnt->mnt_sb;
 	struct page *page = &src->page;
 	struct inode *inode, *next;
@@ -391,16 +391,11 @@ static int kvm_gmem_migrate_folio(struct address_space *mapping,
 
 	migrate_folio(mapping, dst, src, MIGRATE_SYNC_NO_COPY);
 	return 0;
-}
-
 #else
-static int kvm_gmem_migrate_folio(struct address_space *mapping,
-				  struct folio *dst, struct folio *src,
-				  enum migrate_mode mode)
 	WARN_ON_ONCE(1);
 	return -EINVAL;
-}
 #endif
+}
 
 static int kvm_gmem_error_page(struct address_space *mapping, struct page *page)
 {
