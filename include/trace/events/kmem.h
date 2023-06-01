@@ -155,6 +155,28 @@ TRACE_EVENT(mm_page_free,
 			__entry->order)
 );
 
+TRACE_EVENT(mm_page_free_cc,
+
+	TP_PROTO(struct page *page, unsigned int order),
+
+	TP_ARGS(page, order),
+
+	TP_STRUCT__entry(
+		__field(	unsigned long,	pfn		)
+		__field(	unsigned int,	order		)
+	),
+
+	TP_fast_assign(
+		__entry->pfn		= page_to_pfn(page);
+		__entry->order		= order;
+	),
+
+	TP_printk("page=%p pfn=0x%lx order=%d",
+			pfn_to_page(__entry->pfn),
+			__entry->pfn,
+			__entry->order)
+);
+
 TRACE_EVENT(mm_page_free_batched,
 
 	TP_PROTO(struct page *page),

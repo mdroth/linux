@@ -349,6 +349,8 @@ int __weak kvm_arch_gmem_migrate(struct kvm *kvm, struct page *dst, struct page 
 	return 0;
 }
 
+#include <asm/sev-host.h>
+
 static int kvm_gmem_migrate_folio(struct address_space *mapping,
 				  struct folio *dst, struct folio *src,
 				  enum migrate_mode mode)
@@ -359,6 +361,12 @@ static int kvm_gmem_migrate_folio(struct address_space *mapping,
 	struct inode *inode, *next;
 	pgoff_t start, end;
 	bool found;
+	int level = 0;
+	u64 gpa;
+	struct kvm_gmem *gmem;
+	struct kvm *kvm;
+	bool flush = false;
+	int idx;
 
 	start = page->index;
 	end = start + thp_nr_pages(page);
@@ -371,7 +379,10 @@ static int kvm_gmem_migrate_folio(struct address_space *mapping,
 
 	spin_lock(&sb->s_inode_list_lock);
 	list_for_each_entry_safe(inode, next, &sb->s_inodes, i_sb_list) {
-		struct kvm_gmem *gmem;
+		struct kvm_gfn_range gfn_range = {
+			.pte = __pte(0),
+			.may_block = true,
+		};
 
 		if (inode->i_mapping != mapping)
 			continue;
@@ -381,7 +392,24 @@ static int kvm_gmem_migrate_folio(struct address_space *mapping,
 			continue;
 
 		found = true;
-		kvm_arch_gmem_migrate(gmem->kvm, &dst->page, &src->page);
+		kvm = gmem->kvm;
+
+		gpa = snp_rmpentry_get_gpa(page_to_pfn(&src->page), &level, 0);
+		gfn_range.start = gpa_to_gfn(gpa);
+		gfn_range.end = gpa_to_gfn(gpa) + thp_nr_pages(&src->page);
+		gfn_range.slot = gfn_to_memslot(kvm, gpa_to_gfn(gpa));
+
+		idx = srcu_read_lock(&kvm->srcu);
+		KVM_MMU_LOCK(kvm);
+		kvm_mmu_invalidate_begin(kvm);
+		kvm_mmu_invalidate_range_add(kvm, gfn_range.start, gfn_range.end);
+		flush = kvm_unmap_gfn_range(kvm, &gfn_range);
+		if (flush)
+			kvm_flush_remote_tlbs(kvm);
+		KVM_MMU_UNLOCK(kvm);
+		srcu_read_unlock(&kvm->srcu, idx);
+
+		kvm_arch_gmem_migrate(kvm, &dst->page, &src->page);
 		break;
 	}
 	spin_unlock(&sb->s_inode_list_lock);
@@ -390,6 +418,9 @@ static int kvm_gmem_migrate_folio(struct address_space *mapping,
 		return -EBUSY;
 
 	migrate_folio(mapping, dst, src, MIGRATE_SYNC_NO_COPY);
+	KVM_MMU_LOCK(kvm);
+	kvm_mmu_invalidate_end(kvm);
+	KVM_MMU_UNLOCK(kvm);
 	return 0;
 #else
 	WARN_ON_ONCE(1);
