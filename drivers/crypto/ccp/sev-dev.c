@@ -136,6 +136,20 @@ static void sev_irq_handler(int irq, void *data, unsigned int status)
 	}
 }
 
+static int sev_cmd_ioc(struct sev_device *sev,
+		       unsigned int *reg, unsigned int timeout)
+{
+	/* TODO: add timeout handling */
+	while (true) {
+		if (sev->int_rcvd)
+			break;
+	}
+
+	*reg = ioread32(sev->io_regs + sev->vdata->cmdresp_reg);
+
+	return 0;
+}
+
 static int sev_wait_cmd_ioc(struct sev_device *sev,
 			    unsigned int *reg, unsigned int timeout)
 {
@@ -866,7 +880,10 @@ static int __sev_do_cmd_locked(int cmd, void *data, int *psp_ret)
 	iowrite32(reg, sev->io_regs + sev->vdata->cmdresp_reg);
 
 	/* wait for command completion */
-	ret = sev_wait_cmd_ioc(sev, &reg, psp_timeout);
+	if (cmd == SEV_CMD_SNP_PAGE_MOVE)
+		ret = sev_cmd_ioc(sev, &reg, psp_timeout);
+	else
+		ret = sev_wait_cmd_ioc(sev, &reg, psp_timeout);
 	if (ret) {
 		if (psp_ret)
 			*psp_ret = 0;
