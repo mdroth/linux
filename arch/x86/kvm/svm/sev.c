@@ -4733,6 +4733,7 @@ static int snp_page_move(struct kvm *kvm, struct kvm_sev_info *sev, struct page 
 	params.src_addr = __sme_page_pa(src);
 
 	/* Make a call to PSP */
+	trace_snp_page_move(page_to_pfn(src), page_to_pfn(dst), gpa_to_gfn(gpa), 0);
 	ret = sev_do_cmd(SEV_CMD_SNP_PAGE_MOVE, &params, &error);
 	if (!ret) {
 		int r = snp_make_page_shared(kvm, gpa, page_to_pfn(src), level);
@@ -4742,10 +4743,11 @@ static int snp_page_move(struct kvm *kvm, struct kvm_sev_info *sev, struct page 
 		mark_page_accessed(dst);
 		get_page(dst);
 
-		trace_snp_page_move(page_to_pfn(src), page_to_pfn(dst), gpa_to_gfn(gpa), 0);
+		trace_snp_page_move(page_to_pfn(src), page_to_pfn(dst), gpa_to_gfn(gpa), 1);
 		if (r)
 			sev_dump_rmpentry_pfn(page_to_pfn(src), "faildstshrd");
 	} else {
+		trace_snp_page_move(page_to_pfn(src), page_to_pfn(dst), gpa_to_gfn(gpa), 2);
 		snp_make_page_shared(kvm, gpa, page_to_pfn(dst), level);
 		sev_dump_rmpentry_pfn(page_to_pfn(src), "failpgmv_src");
 		sev_dump_rmpentry_pfn(page_to_pfn(dst), "failpgmv_dst");

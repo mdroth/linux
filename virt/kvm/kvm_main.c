@@ -757,6 +757,7 @@ static void kvm_mmu_notifier_change_pte(struct mmu_notifier *mn,
 
 void kvm_mmu_invalidate_begin(struct kvm *kvm)
 {
+	trace_kvm_mmu_invalidate_begin(0, 0);
 	lockdep_assert_held_write(&kvm->mmu_lock);
 	/*
 	 * The count increase must become visible at unlock time as no
@@ -771,6 +772,7 @@ void kvm_mmu_invalidate_begin(struct kvm *kvm)
 
 void kvm_mmu_invalidate_range_add(struct kvm *kvm, gfn_t start, gfn_t end)
 {
+	trace_kvm_mmu_invalidate_begin(start, end);
 	lockdep_assert_held_write(&kvm->mmu_lock);
 
 	WARN_ON_ONCE(!kvm->mmu_invalidate_in_progress);
@@ -850,6 +852,7 @@ static int kvm_mmu_notifier_invalidate_range_start(struct mmu_notifier *mn,
 
 void kvm_mmu_invalidate_end(struct kvm *kvm)
 {
+	trace_kvm_mmu_invalidate_end(kvm->mmu_invalidate_range_start, kvm->mmu_invalidate_range_end);
 	/*
 	 * This sequence increase will notify the kvm page fault that
 	 * the page that is going to be mapped in the spte could have

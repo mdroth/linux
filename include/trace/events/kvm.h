@@ -236,6 +236,42 @@ TRACE_EVENT(kvm_mmio,
 		  __entry->len, __entry->gpa, __entry->val)
 );
 
+TRACE_EVENT(kvm_mmu_invalidate_begin,
+	TP_PROTO(u64 gpa_start, u64 gpa_end),
+	TP_ARGS(gpa_start, gpa_end),
+
+	TP_STRUCT__entry(
+		__field(	u64,	gpa_start	)
+		__field(	u64,	gpa_end		)
+	),
+
+	TP_fast_assign(
+		__entry->gpa_start		= gpa_start;
+		__entry->gpa_end		= gpa_end;
+	),
+
+	TP_printk("gpa_start 0x%llx gpa_end 0x%llx",
+		  __entry->gpa_start, __entry->gpa_end)
+);
+
+TRACE_EVENT(kvm_mmu_invalidate_end,
+	TP_PROTO(u64 gpa_start, u64 gpa_end),
+	TP_ARGS(gpa_start, gpa_end),
+
+	TP_STRUCT__entry(
+		__field(	u64,	gpa_start	)
+		__field(	u64,	gpa_end		)
+	),
+
+	TP_fast_assign(
+		__entry->gpa_start		= gpa_start;
+		__entry->gpa_end		= gpa_end;
+	),
+
+	TP_printk("gpa_start 0x%llx gpa_end 0x%llx",
+		  __entry->gpa_start, __entry->gpa_end)
+);
+
 #define kvm_fpu_load_symbol	\
 	{0, "unload"},		\
 	{1, "load"}

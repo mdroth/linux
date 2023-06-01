@@ -526,7 +526,7 @@ u64 snp_rmpentry_get_gpa(u64 pfn, int *level, unsigned int asid)
 	if (IS_ERR(e))
 		return 0;
 
-	if (rmpentry_assigned(e) && e->info.asid == asid)
+	if (rmpentry_assigned(e) && (!asid || e->info.asid == asid))
 		return (e->info.gpa << PAGE_SHIFT);
 
 	return 0;

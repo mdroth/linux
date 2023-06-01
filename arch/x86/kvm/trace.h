@@ -444,8 +444,8 @@ TRACE_EVENT(snp_page_move,
 			   __entry->code	= code;
 			   ),
 
-	    TP_printk("%s: srcpfn 0x%016llx dstpfn 0x%016llx gpa 0x%016llx",
-		      __print_symbolic(__entry->code, snp_page_move_shorthand),
+	    TP_printk("code=%lld: srcpfn 0x%016llx dstpfn 0x%016llx gpa 0x%016llx",
+		      __entry->code,
 		      __entry->srcpfn, __entry->dstpfn, __entry->gpa)
 	    );
 
