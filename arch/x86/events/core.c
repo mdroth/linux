@@ -131,11 +131,7 @@ u64 x86_perf_event_update(struct perf_event *event)
 	 */
 again:
 	prev_raw_count = local64_read(&hwc->prev_count);
-
-	if (hwc->event_base_rdpmc != X86_RDPMC_IDX_UNAVAILABLE)
-		rdpmcl(hwc->event_base_rdpmc, new_raw_count);
-	else
-		rdmsrl(hwc->event_base, new_raw_count);
+	rdpmcl(hwc->event_base_rdpmc, new_raw_count);
 
 	if (local64_cmpxchg(&hwc->prev_count, prev_raw_count,
 					new_raw_count) != prev_raw_count)

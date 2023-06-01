@@ -266,7 +266,6 @@ static unsigned int count_offsets[X86_PMC_IDX_MAX] __read_mostly;
  *
  * CPUs with core performance counter extensions:
  *   6 counters starting at 0xc0010200 each offset by 2
- *   2 debug counters starting at 0xc0010188 each offset by 2
  */
 static inline int amd_pmu_addr_offset(int index, bool eventsel)
 {
@@ -288,24 +287,12 @@ static inline int amd_pmu_addr_offset(int index, bool eventsel)
 	else
 		offset = index << 1;
 
-	if (boot_cpu_data.x86 >= 0x17 && index >= AMD64_NUM_COUNTERS_CORE)
-		offset = (MSR_F17H_DBG_PERF_CTL - x86_pmu.eventsel) +
-			 ((index - AMD64_NUM_COUNTERS_CORE) << 1);
-
 	if (eventsel)
 		event_offsets[index] = offset;
 	else
 		count_offsets[index] = offset;
 
 	return offset;
-}
-
-static int amd_pmu_rdpmc_index(int index)
-{
-	if (boot_cpu_data.x86 >= 0x17 && index >= AMD64_NUM_COUNTERS_CORE)
-		return X86_RDPMC_IDX_UNAVAILABLE;
-
-	return index;
 }
 
 /*
@@ -1239,7 +1226,6 @@ static __initconst const struct x86_pmu amd_pmu = {
 	.eventsel		= MSR_K7_EVNTSEL0,
 	.perfctr		= MSR_K7_PERFCTR0,
 	.addr_offset            = amd_pmu_addr_offset,
-	.rdpmc_index		= amd_pmu_rdpmc_index,
 	.event_map		= amd_pmu_event_map,
 	.max_events		= ARRAY_SIZE(amd_perfmon_event_map),
 	.num_counters		= AMD64_NUM_COUNTERS,
@@ -1343,9 +1329,6 @@ static int __init amd_core_pmu_init(void)
 	x86_pmu.perfctr		= MSR_F15H_PERF_CTR;
 	x86_pmu.num_counters	= AMD64_NUM_COUNTERS_CORE;
 
-	if (boot_cpu_data.x86 >= 0x17)
-		x86_pmu.num_counters += AMD64_NUM_COUNTERS_CORE_DBG;
-
 	/* Check for Performance Monitoring v2 support */
 	if (boot_cpu_has(X86_FEATURE_PERFMON_V2)) {
 		ebx.full = cpuid_ebx(EXT_PERFMON_DEBUG_FEATURES);
@@ -1354,8 +1337,7 @@ static int __init amd_core_pmu_init(void)
 		x86_pmu.version = 2;
 
 		/* Find the number of available Core PMCs */
-		x86_pmu.num_counters = ebx.split.num_core_pmc +
-				       AMD64_NUM_COUNTERS_CORE_DBG;
+		x86_pmu.num_counters = ebx.split.num_core_pmc;
 
 		amd_pmu_global_cntr_mask = (1ULL << x86_pmu.num_counters) - 1;
 
