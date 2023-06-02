@@ -218,7 +218,7 @@ static int __init snp_rmptable_init(void)
 	 * is defined by the per-processor PPR. Restrict SNP support on the known CPU
 	 * model and family for which the RMP table entry format is currently defined for.
 	 */
-	if (family != 0x19 || model > 0xaf)
+	if (!(family == 0x19 && model <= 0xaf) && !(family == 0x1a && model <= 0xf))
 		goto nosnp;
 
 	if (amd_iommu_snp_enable())
