@@ -2276,6 +2276,113 @@ e_free:
 	return ret;
 }
 
+static int snp_get_instance_certs(struct kvm *kvm, struct kvm_sev_cmd *argp)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	struct kvm_sev_snp_get_certs params;
+	struct sev_snp_certs *snp_certs;
+	int rc = 0;
+
+	if (!sev_snp_guest(kvm))
+		return -ENOTTY;
+
+	if (!sev->snp_context)
+		return -EINVAL;
+
+	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data,
+			   sizeof(params)))
+		return -EFAULT;
+
+	snp_certs = sev_snp_certs_get(sev->snp_certs);
+	/* No instance certs set. */
+	if (!snp_certs)
+		return -ENOENT;
+
+	if (params.certs_len < sev->snp_certs->len) {
+		/* Output buffer too small. Return the required size. */
+		params.certs_len = sev->snp_certs->len;
+
+		if (copy_to_user((void __user *)(uintptr_t)argp->data, &params,
+				 sizeof(params)))
+			rc = -EFAULT;
+		else
+			rc = -EINVAL; /* May be ENOSPC? */
+	} else {
+		if (copy_to_user((void __user *)(uintptr_t)params.certs_uaddr,
+				 snp_certs->data, snp_certs->len))
+			rc = -EFAULT;
+	}
+
+	sev_snp_certs_put(snp_certs);
+
+	return rc;
+}
+
+static void snp_replace_certs(struct kvm_sev_info *sev, struct sev_snp_certs *snp_certs)
+{
+	sev_snp_certs_put(sev->snp_certs);
+	sev->snp_certs = snp_certs;
+}
+
+static int snp_set_instance_certs(struct kvm *kvm, struct kvm_sev_cmd *argp)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	unsigned long length = SEV_FW_BLOB_MAX_SIZE;
+	struct kvm_sev_snp_set_certs params;
+	struct sev_snp_certs *snp_certs;
+	void *to_certs;
+	int ret;
+
+	if (!sev_snp_guest(kvm))
+		return -ENOTTY;
+
+	if (!sev->snp_context)
+		return -EINVAL;
+
+	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data,
+			   sizeof(params)))
+		return -EFAULT;
+
+	if (params.certs_len > SEV_FW_BLOB_MAX_SIZE)
+		return -EINVAL;
+
+	/*
+	 * Setting a length of 0 is the same as "uninstalling" instance-
+	 * specific certificates.
+	 */
+	if (params.certs_len == 0) {
+		snp_replace_certs(sev, NULL);
+		return 0;
+	}
+
+	/* Page-align the length */
+	length = (params.certs_len + PAGE_SIZE - 1) & PAGE_MASK;
+
+	to_certs = kmalloc(length, GFP_KERNEL);
+	if (!to_certs)
+		return -ENOMEM;
+
+	if (copy_from_user(to_certs,
+			   (void __user *)(uintptr_t)params.certs_uaddr,
+			   params.certs_len)) {
+		ret = -EFAULT;
+		goto error_exit;
+	}
+
+	snp_certs = sev_snp_certs_new(to_certs, length);
+	if (!snp_certs) {
+		ret = -ENOMEM;
+		goto error_exit;
+	}
+
+	snp_replace_certs(sev, snp_certs);
+
+	return 0;
+error_exit:
+	kfree(to_certs);
+	return ret;
+}
+
 int sev_mem_enc_ioctl(struct kvm *kvm, void __user *argp)
 {
 	struct kvm_sev_cmd sev_cmd;
@@ -2374,6 +2481,12 @@ int sev_mem_enc_ioctl(struct kvm *kvm, void __user *argp)
 		break;
 	case KVM_SEV_SNP_LAUNCH_FINISH:
 		r = snp_launch_finish(kvm, &sev_cmd);
+		break;
+	case KVM_SEV_SNP_GET_CERTS:
+		r = snp_get_instance_certs(kvm, &sev_cmd);
+		break;
+	case KVM_SEV_SNP_SET_CERTS:
+		r = snp_set_instance_certs(kvm, &sev_cmd);
 		break;
 	default:
 		r = -EINVAL;
@@ -2584,6 +2697,8 @@ static int snp_decommission_context(struct kvm *kvm)
 	/* free the context page now */
 	snp_free_firmware_page(sev->snp_context);
 	sev->snp_context = NULL;
+
+	sev_snp_certs_put(sev->snp_certs);
 
 	return 0;
 }
