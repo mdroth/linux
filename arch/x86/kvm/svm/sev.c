@@ -461,9 +461,13 @@ e_free_dh:
 	return ret;
 }
 
-static struct page **sev_pin_memory(struct kvm *kvm, unsigned long uaddr,
-				    unsigned long ulen, unsigned long *n,
-				    int write)
+/*
+ * Legacy SEV guest pin the pages and return the array populated with pinned
+ * pages.
+ */
+static struct page **sev_memory_get_pages(struct kvm *kvm, unsigned long uaddr,
+					  unsigned long ulen, unsigned long *n,
+					  int write)
 {
 	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
 	unsigned long npages, size;
@@ -524,8 +528,8 @@ err:
 	return ERR_PTR(ret);
 }
 
-static void sev_unpin_memory(struct kvm *kvm, struct page **pages,
-			     unsigned long npages)
+static void sev_memory_put_pages(struct kvm *kvm, struct page **pages,
+				 unsigned long npages)
 {
 	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
 
@@ -595,7 +599,7 @@ static int sev_launch_update_shared_gfn_handler(struct kvm *kvm,
 	vaddr_end = vaddr + size;
 
 	/* Lock the user memory. */
-	inpages = sev_pin_memory(kvm, vaddr, size, &npages, 1);
+	inpages = sev_memory_get_pages(kvm, vaddr, size, &npages, 1);
 	if (IS_ERR(inpages))
 		return PTR_ERR(inpages);
 
@@ -626,20 +630,20 @@ static int sev_launch_update_shared_gfn_handler(struct kvm *kvm,
 		data.address = __sme_page_pa(inpages[i]) + offset;
 		ret = sev_issue_cmd(kvm, SEV_CMD_LAUNCH_UPDATE_DATA, &data, &argp->error);
 		if (ret)
-			goto e_unpin;
+			goto e_put_pages;
 
 		size -= len;
 		next_vaddr = vaddr + len;
 	}
 
-e_unpin:
+e_put_pages:
 	/* content of memory is updated, mark pages dirty */
 	for (i = 0; i < npages; i++) {
 		set_page_dirty_lock(inpages[i]);
 		mark_page_accessed(inpages[i]);
 	}
 	/* unlock the user pages */
-	sev_unpin_memory(kvm, inpages, npages);
+	sev_memory_put_pages(kvm, inpages, npages);
 	return ret;
 }
 
@@ -1139,13 +1143,13 @@ static int sev_dbg_crypt(struct kvm *kvm, struct kvm_sev_cmd *argp, bool dec)
 		int len, s_off, d_off;
 
 		/* lock userspace source and destination page */
-		src_p = sev_pin_memory(kvm, vaddr & PAGE_MASK, PAGE_SIZE, &n, 0);
+		src_p = sev_memory_get_pages(kvm, vaddr & PAGE_MASK, PAGE_SIZE, &n, 0);
 		if (IS_ERR(src_p))
 			return PTR_ERR(src_p);
 
-		dst_p = sev_pin_memory(kvm, dst_vaddr & PAGE_MASK, PAGE_SIZE, &n, 1);
+		dst_p = sev_memory_get_pages(kvm, dst_vaddr & PAGE_MASK, PAGE_SIZE, &n, 1);
 		if (IS_ERR(dst_p)) {
-			sev_unpin_memory(kvm, src_p, n);
+			sev_memory_put_pages(kvm, src_p, n);
 			return PTR_ERR(dst_p);
 		}
 
@@ -1179,8 +1183,8 @@ static int sev_dbg_crypt(struct kvm *kvm, struct kvm_sev_cmd *argp, bool dec)
 						     (void __user *)dst_vaddr,
 						     len, &argp->error);
 
-		sev_unpin_memory(kvm, src_p, n);
-		sev_unpin_memory(kvm, dst_p, n);
+		sev_memory_put_pages(kvm, src_p, n);
+		sev_memory_put_pages(kvm, dst_p, n);
 
 		if (ret)
 			goto err;
@@ -1209,7 +1213,7 @@ static int sev_launch_secret(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data, sizeof(params)))
 		return -EFAULT;
 
-	pages = sev_pin_memory(kvm, params.guest_uaddr, params.guest_len, &n, 1);
+	pages = sev_memory_get_pages(kvm, params.guest_uaddr, params.guest_len, &n, 1);
 	if (IS_ERR(pages))
 		return PTR_ERR(pages);
 
@@ -1225,7 +1229,7 @@ static int sev_launch_secret(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	 */
 	if (get_num_contig_pages(0, pages, n) != n) {
 		ret = -EINVAL;
-		goto e_unpin_memory;
+		goto e_put_pages;
 	}
 
 	memset(&data, 0, sizeof(data));
@@ -1237,7 +1241,7 @@ static int sev_launch_secret(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	blob = psp_copy_user_blob(params.trans_uaddr, params.trans_len);
 	if (IS_ERR(blob)) {
 		ret = PTR_ERR(blob);
-		goto e_unpin_memory;
+		goto e_put_pages;
 	}
 
 	data.trans_address = __psp_pa(blob);
@@ -1258,13 +1262,13 @@ static int sev_launch_secret(struct kvm *kvm, struct kvm_sev_cmd *argp)
 
 e_free_blob:
 	kfree(blob);
-e_unpin_memory:
+e_put_pages:
 	/* content of memory is updated, mark pages dirty */
 	for (i = 0; i < n; i++) {
 		set_page_dirty_lock(pages[i]);
 		mark_page_accessed(pages[i]);
 	}
-	sev_unpin_memory(kvm, pages, n);
+	sev_memory_put_pages(kvm, pages, n);
 	return ret;
 }
 
@@ -1494,8 +1498,8 @@ static int sev_send_update_data(struct kvm *kvm, struct kvm_sev_cmd *argp)
 		return -EINVAL;
 
 	/* Pin guest memory */
-	guest_page = sev_pin_memory(kvm, params.guest_uaddr & PAGE_MASK,
-				    PAGE_SIZE, &n, 0);
+	guest_page = sev_memory_get_pages(kvm, params.guest_uaddr & PAGE_MASK,
+					  PAGE_SIZE, &n, 0);
 	if (IS_ERR(guest_page))
 		return PTR_ERR(guest_page);
 
@@ -1503,7 +1507,7 @@ static int sev_send_update_data(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	ret = -ENOMEM;
 	hdr = kzalloc(params.hdr_len, GFP_KERNEL_ACCOUNT);
 	if (!hdr)
-		goto e_unpin;
+		goto e_put_pages;
 
 	trans_data = kzalloc(params.trans_len, GFP_KERNEL_ACCOUNT);
 	if (!trans_data)
@@ -1542,8 +1546,8 @@ e_free_trans_data:
 	kfree(trans_data);
 e_free_hdr:
 	kfree(hdr);
-e_unpin:
-	sev_unpin_memory(kvm, guest_page, n);
+e_put_pages:
+	sev_memory_put_pages(kvm, guest_page, n);
 
 	return ret;
 }
@@ -1690,8 +1694,8 @@ static int sev_receive_update_data(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	data.trans_len = params.trans_len;
 
 	/* Pin guest memory */
-	guest_page = sev_pin_memory(kvm, params.guest_uaddr & PAGE_MASK,
-				    PAGE_SIZE, &n, 1);
+	guest_page = sev_memory_get_pages(kvm, params.guest_uaddr & PAGE_MASK,
+					  PAGE_SIZE, &n, 1);
 	if (IS_ERR(guest_page)) {
 		ret = PTR_ERR(guest_page);
 		goto e_free_trans;
@@ -1713,7 +1717,7 @@ static int sev_receive_update_data(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	ret = sev_issue_cmd(kvm, SEV_CMD_RECEIVE_UPDATE_DATA, &data,
 				&argp->error);
 
-	sev_unpin_memory(kvm, guest_page, n);
+	sev_memory_put_pages(kvm, guest_page, n);
 
 e_free_trans:
 	kfree(trans);
@@ -2612,7 +2616,7 @@ int sev_mem_enc_register_region(struct kvm *kvm,
 		return -ENOMEM;
 
 	mutex_lock(&kvm->lock);
-	region->pages = sev_pin_memory(kvm, range->addr, range->size, &region->npages, 1);
+	region->pages = sev_memory_get_pages(kvm, range->addr, range->size, &region->npages, 1);
 	if (IS_ERR(region->pages)) {
 		ret = PTR_ERR(region->pages);
 		mutex_unlock(&kvm->lock);
@@ -2659,7 +2663,7 @@ find_enc_region(struct kvm *kvm, struct kvm_enc_region *range)
 static void __unregister_enc_region_locked(struct kvm *kvm,
 					   struct enc_region *region)
 {
-	sev_unpin_memory(kvm, region->pages, region->npages);
+	sev_memory_put_pages(kvm, region->pages, region->npages);
 	list_del(&region->list);
 	kfree(region);
 }
