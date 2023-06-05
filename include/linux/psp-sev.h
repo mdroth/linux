@@ -14,7 +14,7 @@
 
 #include <uapi/linux/psp-sev.h>
 
-#define SEV_FW_BLOB_MAX_SIZE	0x4000	/* 16KB */
+#define SEV_FW_BLOB_MAX_SIZE	0x5000	/* 20KB */
 
 struct sev_snp_certs {
 	void *data;

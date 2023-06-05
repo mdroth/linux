@@ -95,6 +95,7 @@ struct kvm_sev_info {
 	u64 snp_init_flags;
 	void *snp_context;      /* SNP guest context page */
 	u64 sev_features;	/* Features set at VMSA creation */
+	struct sev_snp_certs *snp_certs;
 };
 
 struct kvm_svm {
