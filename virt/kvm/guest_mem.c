@@ -185,7 +185,8 @@ static long kvm_gmem_punch_hole(struct file *file, loff_t offset, loff_t len)
 {
 	struct kvm_gmem *gmem = file->private_data;
 	struct kvm *kvm = gmem->kvm;
-	pgoff_t start, end;
+	pgoff_t start, end, index;
+	struct folio *folio;
 
 	if (!PAGE_ALIGNED(offset) || !PAGE_ALIGNED(len))
 		return 0;
@@ -205,7 +206,13 @@ static long kvm_gmem_punch_hole(struct file *file, loff_t offset, loff_t len)
 	truncate_inode_pages_range(file->f_mapping, offset, offset + len - 1);
 
 	kvm_gmem_invalidate_end(kvm, gmem, start, end);
-
+	for (index = start; index < end;) {
+		folio = kvm_gmem_get_folio(file, index);
+		if (!folio)
+			continue;
+		add_mm_counter(kvm->mm, mm_counter_file(folio_page(folio, index)), -1 * folio_nr_pages(folio));
+		index = folio_next_index(folio);
+	}
 	filemap_invalidate_unlock(file->f_mapping);
 
 	return 0;
@@ -215,6 +222,8 @@ static long kvm_gmem_allocate(struct file *file, loff_t offset, loff_t len)
 {
 	struct address_space *mapping = file->f_mapping;
 	pgoff_t start, index, end;
+	struct kvm_gmem *gmem;
+	struct inode *inode;
 	int r;
 
 	/* Dedicated guest is immutable by default. */
@@ -222,7 +231,8 @@ static long kvm_gmem_allocate(struct file *file, loff_t offset, loff_t len)
 		return -EINVAL;
 
 	filemap_invalidate_lock_shared(mapping);
-
+	inode = file_inode(file);
+	gmem = inode->i_mapping->private_data;
 	start = offset >> PAGE_SHIFT;
 	end = (offset + len) >> PAGE_SHIFT;
 
@@ -241,6 +251,7 @@ static long kvm_gmem_allocate(struct file *file, loff_t offset, loff_t len)
 			break;
 		}
 
+		add_mm_counter(gmem->kvm->mm, mm_counter_file(folio_page(folio, index)), folio_nr_pages(folio));
 		index = folio_next_index(folio);
 
 		folio_unlock(folio);
