@@ -350,6 +350,7 @@ int __weak kvm_arch_gmem_migrate(struct kvm *kvm, struct page *dst, struct page 
 }
 
 #include <asm/sev-host.h>
+static DEFINE_MUTEX(gmem_mutex);
 
 static int kvm_gmem_migrate_folio(struct address_space *mapping,
 				  struct folio *dst, struct folio *src,
@@ -377,7 +378,7 @@ static int kvm_gmem_migrate_folio(struct address_space *mapping,
 	pr_err_ratelimited("%s: got migrate call src_pfn %lx -> dst_pfn %lx, start %lx end %lx\n",
 			   __func__, page_to_pfn(&src->page), page_to_pfn(&dst->page), start, end);
 
-	spin_lock(&sb->s_inode_list_lock);
+	mutex_lock(&gmem_mutex);
 	list_for_each_entry_safe(inode, next, &sb->s_inodes, i_sb_list) {
 		struct kvm_gfn_range gfn_range = {
 			.pte = __pte(0),
@@ -395,10 +396,17 @@ static int kvm_gmem_migrate_folio(struct address_space *mapping,
 		kvm = gmem->kvm;
 
 		gpa = snp_rmpentry_get_gpa(page_to_pfn(&src->page), &level, 0);
+
+		mutex_lock(&kvm->slots_lock);
 		gfn_range.start = gpa_to_gfn(gpa);
 		gfn_range.end = gpa_to_gfn(gpa) + thp_nr_pages(&src->page);
 		gfn_range.slot = gfn_to_memslot(kvm, gpa_to_gfn(gpa));
 
+		if (!gfn_range.slot) {
+		  found = false;
+		  mutex_unlock(&kvm->slots_lock);
+		  break;
+		}
 		idx = srcu_read_lock(&kvm->srcu);
 		KVM_MMU_LOCK(kvm);
 		kvm_mmu_invalidate_begin(kvm);
@@ -408,11 +416,12 @@ static int kvm_gmem_migrate_folio(struct address_space *mapping,
 			kvm_flush_remote_tlbs(kvm);
 		KVM_MMU_UNLOCK(kvm);
 		srcu_read_unlock(&kvm->srcu, idx);
+		mutex_unlock(&kvm->slots_lock);
 
 		kvm_arch_gmem_migrate(kvm, &dst->page, &src->page);
 		break;
 	}
-	spin_unlock(&sb->s_inode_list_lock);
+	mutex_unlock(&gmem_mutex);
 
 	if (!found)
 		return -EBUSY;
@@ -643,8 +652,10 @@ err:
 
 void kvm_gmem_unbind(struct kvm_memory_slot *slot)
 {
+	struct super_block *sb = kvm_gmem_mnt->mnt_sb;
 	unsigned long start = slot->gmem.index;
 	unsigned long end = start + slot->npages;
+	struct inode *inode, *next;
 	struct kvm_gmem *gmem;
 	struct file *file;
 
@@ -662,6 +673,11 @@ void kvm_gmem_unbind(struct kvm_memory_slot *slot)
 	rcu_assign_pointer(slot->gmem.file, NULL);
 	synchronize_rcu();
 	filemap_invalidate_unlock(file->f_mapping);
+
+        mutex_lock(&gmem_mutex);
+        list_for_each_entry_safe(inode, next, &sb->s_inodes, i_sb_list)
+		list_del_init(&inode->i_sb_list);
+        mutex_unlock(&gmem_mutex);
 
 	fput(file);
 }
