@@ -2366,6 +2366,11 @@ static inline int kvm_gmem_get_pfn(struct kvm *kvm,
 	KVM_BUG_ON(1, kvm);
 	return -EIO;
 }
+
+static inline void kvm_arch_gmem_invalidate(struct kvm *kvm, kvm_pfn_t start,
+					    kvm_pfn_t end)
+{
+}
 #endif /* CONFIG_KVM_PRIVATE_MEM */
 
 #endif
