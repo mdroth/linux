@@ -2430,4 +2430,8 @@ static inline void kvm_arch_gmem_prepare(struct kvm *kvm, gfn_t gfn,
 }
 #endif /* CONFIG_KVM_PRIVATE_MEM */
 
+#ifdef CONFIG_ARCH_HAS_PRIVATE_MEM_INVALIDATE
+void kvm_arch_gmem_invalidate(kvm_pfn_t start, kvm_pfn_t end);
+#endif /* CONFIG_ARCH_HAS_PRIVATE_MEM_INVALIDATE */
+
 #endif
