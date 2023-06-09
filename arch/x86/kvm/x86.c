@@ -13306,6 +13306,11 @@ int kvm_arch_gmem_prepare(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn, int max_ord
 {
 	return static_call(kvm_x86_gmem_prepare)(kvm, pfn, gfn, max_order);
 }
+
+void kvm_arch_gmem_invalidate(struct kvm *kvm, kvm_pfn_t start, kvm_pfn_t end)
+{
+	static_call_cond(kvm_x86_gmem_invalidate)(kvm, start, end);
+}
 #endif
 
 int kvm_spec_ctrl_test_value(u64 value)

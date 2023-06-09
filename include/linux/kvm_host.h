@@ -2428,6 +2428,11 @@ static inline void kvm_arch_gmem_prepare(struct kvm *kvm, gfn_t gfn,
 					 kvm_pfn_t pfn, int max_order)
 {
 }
+
+static inline void kvm_arch_gmem_invalidate(struct kvm *kvm, kvm_pfn_t start,
+					    kvm_pfn_t end)
+{
+}
 #endif /* CONFIG_KVM_PRIVATE_MEM */
 
 #endif

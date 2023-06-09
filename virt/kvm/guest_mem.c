@@ -179,8 +179,13 @@ static void kvm_gmem_invalidate_end(struct kvm_gmem *gmem, pgoff_t start,
 	}
 }
 
-static long kvm_gmem_punch_hole(struct inode *inode, loff_t offset, loff_t len)
+void __weak kvm_arch_gmem_invalidate(struct kvm *kvm, kvm_pfn_t start, kvm_pfn_t end)
 {
+}
+
+static long kvm_gmem_punch_hole(struct file *file, loff_t offset, loff_t len)
+{
+	struct inode *inode = file_inode(file);
 	struct list_head *gmem_list = &inode->i_mapping->private_list;
 	pgoff_t start = offset >> PAGE_SHIFT;
 	pgoff_t end = (offset + len) >> PAGE_SHIFT;
@@ -267,7 +272,7 @@ static long kvm_gmem_fallocate(struct file *file, int mode, loff_t offset,
 		return -EINVAL;
 
 	if (mode & FALLOC_FL_PUNCH_HOLE)
-		ret = kvm_gmem_punch_hole(file_inode(file), offset, len);
+		ret = kvm_gmem_punch_hole(file, offset, len);
 	else
 		ret = kvm_gmem_allocate(file_inode(file), offset, len);
 
@@ -381,12 +386,25 @@ static int kvm_gmem_error_page(struct address_space *mapping, struct page *page)
 	return MF_DELAYED;
 }
 
+static void kvm_gmem_free_folio(struct folio *folio)
+{
+	struct page *page = folio_page(folio, 0);
+	kvm_pfn_t pfn = page_to_pfn(page);
+	int order = folio_order(folio);
+
+	pr_debug("%s: freeing folio for PFN %llx order %d count %ld\n",
+		 __func__, pfn, order, folio_nr_pages(folio));
+
+	kvm_arch_gmem_invalidate(NULL, pfn, pfn + (1ull << order));
+}
+
 static const struct address_space_operations kvm_gmem_aops = {
 	.dirty_folio = noop_dirty_folio,
 #ifdef CONFIG_MIGRATION
 	.migrate_folio	= kvm_gmem_migrate_folio,
 #endif
 	.error_remove_page = kvm_gmem_error_page,
+	.free_folio = kvm_gmem_free_folio,
 };
 
 static int kvm_gmem_getattr(struct mnt_idmap *idmap, const struct path *path,
