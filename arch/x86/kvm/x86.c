@@ -4633,6 +4633,11 @@ static bool kvm_is_vm_type_supported(unsigned long type)
 	return type < 32 && (kvm_caps.supported_vm_types & BIT(type));
 }
 
+bool kvm_is_vm_type(struct kvm *kvm, unsigned long type)
+{
+	return kvm->arch.vm_type == type;
+}
+
 int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 {
 	int r = 0;
