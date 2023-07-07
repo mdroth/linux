@@ -2144,6 +2144,8 @@ void kvm_configure_mmu(bool enable_tdp, int tdp_forced_root_level,
 #define kvm_arch_has_private_mem(kvm) false
 #endif
 
+bool kvm_is_vm_type(struct kvm *kvm, unsigned long type);
+
 static inline u16 kvm_read_ldt(void)
 {
 	u16 ldt;
