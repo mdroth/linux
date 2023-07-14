@@ -2131,14 +2131,6 @@ static int snp_launch_update_gfn_handler(struct kvm *kvm,
 		}
 	}
 
-	/*
-	 * Memory attribute updates via KVM_SET_MEMORY_ATTRIBUTES are serialized
-	 * via kvm->slots_lock, so use the same protocol for updating them here.
-	 */
-	mutex_lock(&kvm->slots_lock);
-	kvm_vm_set_region_attr(kvm, range->start, range->end, KVM_MEMORY_ATTRIBUTE_PRIVATE);
-	mutex_unlock(&kvm->slots_lock);
-
 e_release:
 	/* Content of memory is updated, mark pages dirty */
 	for (i = 0; i < n; i++) {
