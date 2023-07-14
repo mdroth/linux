@@ -4337,6 +4337,8 @@ static int kvm_faultin_pfn_private(struct kvm_vcpu *vcpu,
 	fault->max_level = min(max_level, fault->max_level);
 	fault->map_writable = !(fault->slot->flags & KVM_MEM_READONLY);
 
+	trace_kvm_mmu_faultin_private(fault);
+
 	return RET_PF_CONTINUE;
 }
 
