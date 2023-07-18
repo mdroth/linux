@@ -3750,8 +3750,8 @@ static void snp_handle_ext_guest_request(struct vcpu_svm *svm, gpa_t req_gpa, gp
 	}
 
 	/* Copy the certificate blob in the guest memory */
-	if (sev->snp_certs &&
-	    kvm_write_guest(kvm, data_gpa, sev->snp_certs->data, sev->snp_certs->len))
+	if (snp_certs &&
+	    kvm_write_guest(kvm, data_gpa, snp_certs->data, snp_certs->len))
 		exitcode = SEV_RET_INVALID_ADDRESS;
 
 cleanup:
