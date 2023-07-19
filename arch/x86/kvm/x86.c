@@ -12300,8 +12300,10 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 	int ret;
 	unsigned long flags;
 
-	if (!kvm_is_vm_type_supported(type))
+	if (!kvm_is_vm_type_supported(type)) {
+		pr_warn("VM type %lu is not supported.\n", type);
 		return -EINVAL;
+	}
 
 	kvm->arch.vm_type = type;
 
