@@ -3811,7 +3811,7 @@ int amd_iommu_snp_enable(void)
 	 * not configured in the passthrough mode.
 	 */
 	if (no_iommu || iommu_default_passthrough()) {
-		pr_err("SNP: IOMMU is disabled or configured in passthrough mode, SNP cannot be supported");
+		pr_err("SNP: IOMMU is disabled or configured in passthrough mode, SNP cannot be supported.\n");
 		return -EINVAL;
 	}
 
@@ -3826,14 +3826,16 @@ int amd_iommu_snp_enable(void)
 	}
 
 	amd_iommu_snp_en = check_feature_on_all_iommus(FEATURE_SNP);
-	if (!amd_iommu_snp_en)
+	if (!amd_iommu_snp_en) {
+		pr_err("SNP: IOMMU SNP feature is not enabled, SNP cannot be supported.\n");
 		return -EINVAL;
+	}
 
 	pr_info("SNP enabled\n");
 
 	/* Enforce IOMMU v1 pagetable when SNP is enabled. */
 	if (amd_iommu_pgtable != AMD_IOMMU_V1) {
-		pr_warn("Force to using AMD IOMMU v1 page table due to SNP\n");
+		pr_warn("Force to using AMD IOMMU v1 page table due to SNP.\n");
 		amd_iommu_pgtable = AMD_IOMMU_V1;
 	}
 
