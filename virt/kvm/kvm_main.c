@@ -535,6 +535,7 @@ struct kvm_mmu_notifier_range {
 	} arg;
 	gfn_handler_t handler;
 	on_lock_fn_t on_lock;
+	on_unlock_fn_t before_unlock;
 	on_unlock_fn_t on_unlock;
 	bool flush_on_ret;
 	bool may_block;
@@ -629,6 +630,8 @@ static __always_inline int __kvm_handle_hva_range(struct kvm *kvm,
 		kvm_flush_remote_tlbs(kvm);
 
 	if (locked) {
+		if (!IS_KVM_NULL_FN(range->before_unlock))
+			range->before_unlock(kvm);
 		KVM_MMU_UNLOCK(kvm);
 		if (!IS_KVM_NULL_FN(range->on_unlock))
 			range->on_unlock(kvm);
@@ -702,6 +705,7 @@ static __always_inline int kvm_handle_hva_range(struct mmu_notifier *mn,
 		.arg.pte	= pte,
 		.handler	= handler,
 		.on_lock	= (void *)kvm_null_fn,
+		.before_unlock	= (void *)kvm_null_fn,
 		.on_unlock	= (void *)kvm_null_fn,
 		.flush_on_ret	= true,
 		.may_block	= false,
@@ -721,6 +725,7 @@ static __always_inline int kvm_handle_hva_range_no_flush(struct mmu_notifier *mn
 		.end		= end,
 		.handler	= handler,
 		.on_lock	= (void *)kvm_null_fn,
+		.before_unlock	= (void *)kvm_null_fn,
 		.on_unlock	= (void *)kvm_null_fn,
 		.flush_on_ret	= false,
 		.may_block	= false,
@@ -825,6 +830,7 @@ static int kvm_mmu_notifier_invalidate_range_start(struct mmu_notifier *mn,
 		.end		= range->end,
 		.handler	= kvm_mmu_unmap_gfn_range,
 		.on_lock	= kvm_mmu_invalidate_begin,
+		.before_unlock	= (void *)kvm_null_fn,
 		.on_unlock	= kvm_arch_guest_memory_reclaimed,
 		.flush_on_ret	= true,
 		.may_block	= mmu_notifier_range_blockable(range),
@@ -864,6 +870,8 @@ static int kvm_mmu_notifier_invalidate_range_start(struct mmu_notifier *mn,
 
 void kvm_mmu_invalidate_end(struct kvm *kvm)
 {
+	lockdep_assert_held_write(&kvm->mmu_lock);
+
 	/*
 	 * This sequence increase will notify the kvm page fault that
 	 * the page that is going to be mapped in the spte could have
@@ -895,6 +903,7 @@ static void kvm_mmu_notifier_invalidate_range_end(struct mmu_notifier *mn,
 		.end		= range->end,
 		.handler	= (void *)kvm_null_fn,
 		.on_lock	= kvm_mmu_invalidate_end,
+		.before_unlock	= (void *)kvm_null_fn,
 		.on_unlock	= (void *)kvm_null_fn,
 		.flush_on_ret	= false,
 		.may_block	= mmu_notifier_range_blockable(range),
@@ -2482,6 +2491,8 @@ static __always_inline void kvm_handle_gfn_range(struct kvm *kvm,
 		kvm_flush_remote_tlbs(kvm);
 
 	if (locked) {
+		if (!IS_KVM_NULL_FN(range->before_unlock))
+			range->before_unlock(kvm);
 		KVM_MMU_UNLOCK(kvm);
 		if (!IS_KVM_NULL_FN(range->on_unlock))
 			range->on_unlock(kvm);
@@ -2496,6 +2507,7 @@ static int kvm_vm_set_mem_attributes(struct kvm *kvm, unsigned long attributes,
 		.end = end,
 		.handler = kvm_mmu_unmap_gfn_range,
 		.on_lock = kvm_mmu_invalidate_begin,
+		.before_unlock	= (void *)kvm_null_fn,
 		.on_unlock = (void *)kvm_null_fn,
 		.flush_on_ret = true,
 		.may_block = true,
@@ -2506,7 +2518,8 @@ static int kvm_vm_set_mem_attributes(struct kvm *kvm, unsigned long attributes,
 		.arg.attributes = attributes,
 		.handler = kvm_arch_post_set_memory_attributes,
 		.on_lock = (void *)kvm_null_fn,
-		.on_unlock = kvm_mmu_invalidate_end,
+		.before_unlock = kvm_mmu_invalidate_end,
+		.on_unlock = (void *)kvm_null_fn,
 		.may_block = true,
 	};
 	unsigned long i;
