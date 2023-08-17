@@ -3770,7 +3770,7 @@ int amd_iommu_snp_enable(void)
 
 	amd_iommu_snp_en = check_feature_on_all_iommus(FEATURE_SNP);
 	if (!amd_iommu_snp_en) {
-		pr_err("SNP: IOMMU does not support SNP feature, SNP cannot be supported.\n");
+		pr_err("SNP: IOMMU SNP feature is not enabled, SNP cannot be supported.\n");
 		return -EINVAL;
 	}
 
