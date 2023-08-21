@@ -4385,7 +4385,7 @@ int sev_gmem_prepare(struct kvm *kvm, struct kvm_memory_slot *slot,
 	if (rc)
 		return rc;
 
-	/* No conversion needed, just clamp xax_level according to RMP entry. */
+	/* No conversion needed, just clamp max_level according to RMP entry. */
 	if (assigned)
 		goto out_adjust_level;
 
