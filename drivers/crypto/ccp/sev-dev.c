@@ -21,6 +21,7 @@
 #include <linux/hw_random.h>
 #include <linux/ccp.h>
 #include <linux/firmware.h>
+#include <linux/panic_notifier.h>
 #include <linux/gfp.h>
 #include <linux/cpufeature.h>
 #include <linux/fs.h>
@@ -136,6 +137,19 @@ static int sev_wait_cmd_ioc(struct sev_device *sev,
 			    unsigned int *reg, unsigned int timeout)
 {
 	int ret;
+
+	if (irqs_disabled()) {
+		unsigned long timeout_usecs = timeout * USEC_PER_SEC;
+		/* poll for SEV command completion: */
+		for (; timeout_usecs; timeout_usecs--, udelay(1)) {
+			*reg = ioread32(sev->io_regs + sev->vdata->cmdresp_reg);
+			if (*reg & PSP_CMDRESP_RESP)
+				break;
+		}
+		if (timeout_usecs == 0)
+			return -ETIMEDOUT;
+		return 0;
+	}
 
 	ret = wait_event_timeout(sev->int_queue,
 			sev->int_rcvd, timeout * HZ);
@@ -1500,7 +1514,8 @@ static int __sev_snp_shutdown_locked(int *error)
 	sev_snp_certs_put(sev->snp_certs);
 	sev->snp_certs = NULL;
 
-	wbinvd_on_all_cpus();
+	if (!irqs_disabled())
+		wbinvd_on_all_cpus();
 
 retry:
 	ret = __sev_do_cmd_locked(SEV_CMD_SNP_SHUTDOWN_EX, &data, error);
@@ -1553,6 +1568,59 @@ static int sev_snp_shutdown(int *error)
 
 	return rc;
 }
+
+static int sev_snp_shutdown_on_panic(struct notifier_block *nb,
+				     unsigned long reason, void *arg)
+{
+	struct sev_device *sev = psp_master->sev_data;
+	int error;
+
+	/*
+	 * Panic callbacks are executed with all other CPUs stopped, so do not
+	 * attempt to block here forever waiting for sev_cmd_mutex to be
+	 * released.
+	 */
+	if (mutex_is_locked(&sev_cmd_mutex))
+		return NOTIFY_DONE;
+
+	__sev_platform_shutdown_locked(NULL);
+
+	if (sev_es_tmr) {
+		/* The TMR area was encrypted, flush it from the cache */
+		if (!irqs_disabled())
+			wbinvd_on_all_cpus();
+
+		__snp_free_firmware_pages(virt_to_page(sev_es_tmr),
+					  get_order(sev_es_tmr_size),
+					  false);
+		sev_es_tmr = NULL;
+	}
+
+	if (sev_init_ex_buffer) {
+		free_pages((unsigned long)sev_init_ex_buffer,
+			   get_order(NV_LENGTH));
+		sev_init_ex_buffer = NULL;
+	}
+
+	if (snp_range_list) {
+		kfree(snp_range_list);
+		snp_range_list = NULL;
+	}
+
+	/*
+	 * The host map need to clear the immutable bit so it must be free'd
+	 * before the SNP firmware shutdown.
+	 */
+	free_snp_host_map(sev);
+
+	__sev_snp_shutdown_locked(&error);
+
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block sev_snp_panic_notifier = {
+	.notifier_call = sev_snp_shutdown_on_panic,
+};
 
 static int sev_ioctl_do_pek_import(struct sev_issue_cmd *argp, bool writable)
 {
@@ -2368,6 +2436,8 @@ void sev_pci_init(void)
 	dev_info(sev->dev, "SEV%s API:%d.%d build:%d\n", sev->snp_initialized ?
 		"-SNP" : "", sev->api_major, sev->api_minor, sev->build);
 
+	atomic_notifier_chain_register(&panic_notifier_list,
+				       &sev_snp_panic_notifier);
 	return;
 
 err:
@@ -2383,4 +2453,7 @@ void sev_pci_exit(void)
 		return;
 
 	sev_firmware_shutdown(sev);
+
+	atomic_notifier_chain_unregister(&panic_notifier_list,
+					 &sev_snp_panic_notifier);
 }
