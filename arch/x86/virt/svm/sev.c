@@ -111,6 +111,8 @@ static __init void snp_enable(void *arg)
 	__snp_enable(smp_processor_id());
 }
 
+#define RMP_ADDR_MASK GENMASK_ULL(51, 13)
+
 bool snp_get_rmptable_info(u64 *start, u64 *len)
 {
 	u64 max_rmp_pfn, calc_rmp_sz, rmp_sz, rmp_base, rmp_end;
@@ -118,8 +120,13 @@ bool snp_get_rmptable_info(u64 *start, u64 *len)
 	rdmsrl(MSR_AMD64_RMP_BASE, rmp_base);
 	rdmsrl(MSR_AMD64_RMP_END, rmp_end);
 
-	if (!rmp_base || !rmp_end) {
+	if (!(rmp_base & RMP_ADDR_MASK) || !(rmp_end & RMP_ADDR_MASK)) {
 		pr_err("Memory for the RMP table has not been reserved by BIOS\n");
+		return false;
+	}
+
+	if (rmp_base > rmp_end) {
+		pr_err("RMP configuration not valid: base=%#llx, end=%#llx\n", rmp_base, rmp_end);
 		return false;
 	}
 
