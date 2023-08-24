@@ -59,6 +59,13 @@ static void kdump_nmi_callback(int cpu, struct pt_regs *regs)
 	 */
 	cpu_emergency_stop_pt();
 
+	/*
+	 * for SNP do wbinvd() on remote CPUs to
+	 * safely do SNP_SHUTDOWN on the local CPU.
+	 */
+	if (cpu_feature_enabled(X86_FEATURE_SEV_SNP))
+		wbinvd();
+
 	disable_local_APIC();
 }
 
