@@ -3224,6 +3224,7 @@ static int sev_es_validate_vmgexit(struct vcpu_svm *svm)
 	case SVM_VMGEXIT_PSC:
 	case SVM_VMGEXIT_GUEST_REQUEST:
 	case SVM_VMGEXIT_EXT_GUEST_REQUEST:
+	case SVM_VMGEXIT_TERM_REQUEST:
 		break;
 	default:
 		reason = GHCB_ERR_INVALID_EVENT;
@@ -4060,6 +4061,14 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 					     control->exit_info_2);
 
 		ret = 1;
+		break;
+	case SVM_VMGEXIT_TERM_REQUEST:
+		pr_info("SEV-ES guess requested termination: reason %#llx info %#llx\n",
+			control->exit_info_1, control->exit_info_1);
+		vcpu->run->exit_reason = KVM_EXIT_SYSTEM_EVENT;
+		vcpu->run->system_event.type = KVM_SYSTEM_EVENT_SEV_TERM;
+		vcpu->run->system_event.ndata = 1;
+		vcpu->run->system_event.data[0] = control->ghcb_gpa;
 		break;
 	case SVM_VMGEXIT_UNSUPPORTED_EVENT:
 		vcpu_unimpl(vcpu,
