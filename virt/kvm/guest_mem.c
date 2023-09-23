@@ -553,6 +553,7 @@ int kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
 		     gfn_t gfn, kvm_pfn_t *pfn, int *max_order)
 {
 	pgoff_t index = gfn - slot->base_gfn + slot->gmem.pgoff;
+	pgoff_t huge_index;
 	struct kvm_gmem *gmem;
 	struct folio *folio;
 	struct page *page;
@@ -597,9 +598,12 @@ int kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
 	 * sub-ranges with hugepages (unless userspace comes up with a *really*
 	 * strong use case for needing hugepages within unaligned bindings).
 	 */
-	if (!IS_ALIGNED(slot->gmem.pgoff, 1ull << *max_order) ||
-	    !IS_ALIGNED(slot->npages, 1ull << *max_order))
+	huge_index = round_down(index, 1ull << *max_order);
+	if (huge_index < ALIGN(slot->gmem.pgoff, 1ull << *max_order) ||
+	    huge_index + (1ull << *max_order) > slot->gmem.pgoff + slot->npages) {
+		pr_debug("%s: GFN %llx failed alignment checks\n", __func__, gfn);
 		*max_order = 0;
+	}
 success:
 	r = 0;
 
