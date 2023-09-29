@@ -580,8 +580,10 @@ int kvm_gmem_get_pfn(struct kvm *kvm, struct kvm_memory_slot *slot,
 	 */
 	huge_index = ALIGN(index, 1ull << *max_order);
 	if (huge_index < ALIGN(slot->gmem.pgoff, 1ull << *max_order) ||
-	    huge_index + (1ull << *max_order) > slot->gmem.pgoff + slot->npages)
+	    huge_index + (1ull << *max_order) > slot->gmem.pgoff + slot->npages) {
+		pr_debug("%s: GFN %llx failed alignment checks\n", __func__, gfn);
 		*max_order = 0;
+	}
 success:
 	r = 0;
 
