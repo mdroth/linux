@@ -623,13 +623,6 @@ static bool early_rmptable_check(void)
 {
 	u64 rmp_base, rmp_size;
 
-	/*
-	 * For early BSP initialization, max_pfn won't be set up yet, wait until
-	 * it is set before performing the RMP table calculations.
-	 */
-	if (!max_pfn)
-		return true;
-
 	return snp_get_rmptable_info(&rmp_base, &rmp_size);
 }
 
