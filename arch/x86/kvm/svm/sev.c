@@ -4498,8 +4498,11 @@ int sev_gmem_prepare(struct kvm *kvm, kvm_pfn_t pfn, gfn_t gfn, int max_order)
 		return 0;
 
 	rc = snp_lookup_rmpentry(pfn, &assigned, &level);
-	if (rc)
-		return rc;
+	if (rc) {
+		pr_err_ratelimited("SEV: Failed to look up RMP entry: GFN %llx PFN %llx error %d\n",
+				   gfn, pfn, rc);
+		return -ENOENT;
+	}
 
 	if (assigned) {
 		pr_debug("%s: already assigned: gfn %llx pfn %llx max_order %d level %d\n",
