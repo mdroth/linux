@@ -4051,8 +4051,8 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 		ret = 1;
 		break;
 	case SVM_VMGEXIT_TERM_REQUEST:
-		pr_info("SEV-ES guess requested termination: reason %#llx info %#llx\n",
-			control->exit_info_1, control->exit_info_1);
+		pr_info("SEV-ES guest requested termination: reason %#llx info %#llx\n",
+			control->exit_info_1, control->exit_info_2);
 		vcpu->run->exit_reason = KVM_EXIT_SYSTEM_EVENT;
 		vcpu->run->system_event.type = KVM_SYSTEM_EVENT_SEV_TERM;
 		vcpu->run->system_event.ndata = 1;
