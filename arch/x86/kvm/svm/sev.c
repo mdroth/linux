@@ -3560,7 +3560,7 @@ static void snp_complete_psc(struct vcpu_svm *svm, u64 psc_ret)
 	svm->sev_es.psc_inflight = 0;
 	svm->sev_es.psc_idx = 0;
 	svm->sev_es.psc_2m = false;
-	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb, VMGEXIT_PSC_ERROR_GENERIC);
+	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb, psc_ret);
 }
 
 static void __snp_complete_one_psc(struct vcpu_svm *svm)
