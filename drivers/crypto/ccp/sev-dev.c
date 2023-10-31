@@ -88,8 +88,9 @@ static size_t sev_es_tmr_size = SEV_TMR_SIZE;
  *   allocator to allocate the memory, which will return aligned memory for the
  *   specified allocation order.
  */
-#define NV_LENGTH (32 * 1024)
-static void *sev_init_ex_buffer;
+#define NV_LENGTH	(32 * 1024)
+#define NV_PAGES	(NV_LENGTH >> PAGE_SHIFT)
+static struct page *sev_init_ex_page;
 
 /*
  * SEV_DATA_RANGE_LIST:
@@ -231,7 +232,7 @@ static int sev_read_init_ex_file(void)
 
 	lockdep_assert_held(&sev_cmd_mutex);
 
-	if (!sev_init_ex_buffer)
+	if (!sev_init_ex_page)
 		return -EOPNOTSUPP;
 
 	fp = open_file_as_root(init_ex_path, O_RDONLY, 0);
@@ -251,7 +252,7 @@ static int sev_read_init_ex_file(void)
 		return ret;
 	}
 
-	nread = kernel_read(fp, sev_init_ex_buffer, NV_LENGTH, NULL);
+	nread = kernel_read(fp, page_to_virt(sev_init_ex_page), NV_LENGTH, NULL);
 	if (nread != NV_LENGTH) {
 		dev_info(sev->dev,
 			"SEV: could not read %u bytes to non volatile memory area, ret %ld\n",
@@ -264,16 +265,44 @@ static int sev_read_init_ex_file(void)
 	return 0;
 }
 
+/*
+ * When SNP is enabled, the pages comprising the buffer used to populate
+ * the file specified by the init_ex_path module parameter needs to be set
+ * to firmware-owned, which removes the mapping from the kernel direct
+ * mapping since generally the hypervisor does not access firmware-owned
+ * pages. However, in this case the hypervisor does need to read the
+ * buffer to transfer the contents to the file at init_ex_path, so this
+ * function is used to create a temporary virtual mapping to be used for
+ * this purpose.
+ */
+static void *vmap_sev_init_ex_buffer(void)
+{
+	struct page *pages[NV_PAGES];
+	unsigned long base_pfn;
+	int i;
+
+	if (WARN_ON_ONCE(!sev_init_ex_page))
+		return NULL;
+
+	base_pfn = page_to_pfn(sev_init_ex_page);
+
+	for (i = 0; i < NV_PAGES; i++)
+		pages[i] = pfn_to_page(base_pfn + i);
+
+	return vmap(pages, NV_PAGES, VM_MAP, PAGE_KERNEL_RO);
+}
+
 static int sev_write_init_ex_file(void)
 {
 	struct sev_device *sev = psp_master->sev_data;
+	void *sev_init_ex_buffer;
 	struct file *fp;
 	loff_t offset = 0;
 	ssize_t nwrite;
 
 	lockdep_assert_held(&sev_cmd_mutex);
 
-	if (!sev_init_ex_buffer)
+	if (!sev_init_ex_page)
 		return 0;
 
 	fp = open_file_as_root(init_ex_path, O_CREAT | O_WRONLY, 0600);
@@ -286,6 +315,12 @@ static int sev_write_init_ex_file(void)
 		return ret;
 	}
 
+	sev_init_ex_buffer = vmap_sev_init_ex_buffer();
+	if (!sev_init_ex_buffer) {
+		dev_err(sev->dev, "SEV: failed to map non-volative memory area\n");
+		return -EIO;
+	}
+
 	nwrite = kernel_write(fp, sev_init_ex_buffer, NV_LENGTH, &offset);
 	vfs_fsync(fp, 0);
 	filp_close(fp, NULL);
@@ -294,10 +329,12 @@ static int sev_write_init_ex_file(void)
 		dev_err(sev->dev,
 			"SEV: failed to write %u bytes to non volatile memory area, ret %ld\n",
 			NV_LENGTH, nwrite);
+		vunmap(sev_init_ex_buffer);
 		return -EIO;
 	}
 
 	dev_dbg(sev->dev, "SEV: write successful to NV file\n");
+	vunmap(sev_init_ex_buffer);
 
 	return 0;
 }
@@ -306,7 +343,7 @@ static int sev_write_init_ex_file_if_required(int cmd_id)
 {
 	lockdep_assert_held(&sev_cmd_mutex);
 
-	if (!sev_init_ex_buffer)
+	if (!sev_init_ex_page)
 		return 0;
 
 	/*
@@ -599,7 +636,7 @@ static int __sev_init_ex_locked(int *error)
 
 	memset(&data, 0, sizeof(data));
 	data.length = sizeof(data);
-	data.nv_address = __psp_pa(sev_init_ex_buffer);
+	data.nv_address = sme_me_mask | PFN_PHYS(page_to_pfn(sev_init_ex_page));
 	data.nv_len = NV_LENGTH;
 
 	if (sev_es_tmr) {
@@ -618,7 +655,7 @@ static int __sev_init_ex_locked(int *error)
 
 static inline int __sev_do_init_locked(int *psp_ret)
 {
-	if (sev_init_ex_buffer)
+	if (sev_init_ex_page)
 		return __sev_init_ex_locked(psp_ret);
 	else
 		return __sev_init_locked(psp_ret);
@@ -787,10 +824,38 @@ static int __sev_platform_init_locked(int *error)
 		}
 	}
 
-	if (sev_init_ex_buffer) {
+	/*
+	 * If an init_ex_path is provided allocate a buffer for the file and
+	 * read in the contents. Additionally, if SNP is initialized, convert
+	 * the buffer pages to firmware pages.
+	 */
+	if (init_ex_path && !sev_init_ex_page) {
+		struct page *page;
+
+		page = alloc_pages(GFP_KERNEL, get_order(NV_LENGTH));
+		if (!page) {
+			dev_err(sev->dev, "SEV: INIT_EX NV memory allocation failed\n");
+			return -ENOMEM;
+		}
+
+		sev_init_ex_page = page;
+
 		rc = sev_read_init_ex_file();
 		if (rc)
 			return rc;
+
+		/* If SEV-SNP is initialized, transition to firmware page. */
+		if (sev->snp_initialized) {
+			unsigned long npages;
+
+			npages = 1UL << get_order(NV_LENGTH);
+			if (rmp_mark_pages_firmware(PFN_PHYS(page_to_pfn(sev_init_ex_page)),
+						    npages, false)) {
+				dev_err(sev->dev,
+					"SEV: INIT_EX NV memory page state change failed.\n");
+				return -ENOMEM;
+			}
+		}
 	}
 
 	rc = __sev_do_init_locked(&psp_ret);
@@ -1688,10 +1753,11 @@ static void sev_firmware_shutdown(struct sev_device *sev)
 		sev_es_tmr = NULL;
 	}
 
-	if (sev_init_ex_buffer) {
-		free_pages((unsigned long)sev_init_ex_buffer,
-			   get_order(NV_LENGTH));
-		sev_init_ex_buffer = NULL;
+	if (sev_init_ex_page) {
+		__snp_free_firmware_pages(sev_init_ex_page,
+					  get_order(NV_LENGTH),
+					  true);
+		sev_init_ex_page = NULL;
 	}
 
 	if (snp_range_list) {
@@ -1742,18 +1808,6 @@ void sev_pci_init(void)
 
 	if (sev_update_firmware(sev->dev) == 0)
 		sev_get_api_version();
-
-	/* If an init_ex_path is provided rely on INIT_EX for PSP initialization
-	 * instead of INIT.
-	 */
-	if (init_ex_path) {
-		sev_init_ex_buffer = sev_fw_alloc(NV_LENGTH);
-		if (!sev_init_ex_buffer) {
-			dev_err(sev->dev,
-				"SEV: INIT_EX NV memory allocation failed\n");
-			goto err;
-		}
-	}
 
 	/* Initialize the platform */
 	rc = sev_platform_init(&error, true);
