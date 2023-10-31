@@ -437,6 +437,13 @@ static int invalidate_direct_map(u64 pfn, int npages)
 	return ret;
 }
 
+static int readonly_direct_map(u64 pfn, int npages)
+{
+	unsigned long va = (unsigned long)__va(pfn << PAGE_SHIFT);
+
+	return set_memory_ro(va, npages);
+}
+
 static int rmpupdate(u64 pfn, struct rmp_state *val)
 {
 	unsigned long paddr = pfn << PAGE_SHIFT;
@@ -451,13 +458,22 @@ static int rmpupdate(u64 pfn, struct rmp_state *val)
 
 	/*
 	 * If page is getting assigned in the RMP table then unmap it from the
-	 * direct map.
+	 * direct map if it is for a guest or mark it readonly if making into
+	 * a firmware page (ASID == 0).
 	 */
 	if (val->assigned) {
-		if (invalidate_direct_map(pfn, npages)) {
-			pr_err("Failed to unmap %d pages at pfn 0x%llx from the direct_map\n",
-			       npages, pfn);
-			return -EFAULT;
+		if (val->asid) {
+			if (invalidate_direct_map(pfn, npages)) {
+				pr_err("Failed to unmap %d pages at pfn 0x%llx from the direct_map\n",
+				       npages, pfn);
+				return -EFAULT;
+			}
+		} else {
+			if (readonly_direct_map(pfn, npages)) {
+				pr_err("Failed to make %d pages readonly at pfn 0x%llx in the direct_map\n",
+				       npages, pfn);
+				return -EFAULT;
+			}
 		}
 	}
 

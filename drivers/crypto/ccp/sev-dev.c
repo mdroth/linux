@@ -1004,10 +1004,38 @@ static int ___sev_platform_init_locked(int *error, bool probe)
 		}
 	}
 
-	if (sev_init_ex_buffer) {
+	/*
+	 * If an init_ex_path is provided allocate a buffer for the file and
+	 * read in the contents. Additionally, if SNP is initialized, convert
+	 * the buffer pages to firmware pages.
+	 */
+	if (init_ex_path && !sev_init_ex_buffer) {
+		struct page *page;
+
+		page = alloc_pages(GFP_KERNEL, get_order(NV_LENGTH));
+		if (!page) {
+			dev_err(sev->dev, "SEV: INIT_EX NV memory allocation failed\n");
+			return -ENOMEM;
+		}
+
+		sev_init_ex_buffer = page_address(page);
+
 		rc = sev_read_init_ex_file();
 		if (rc)
 			return rc;
+
+		/* If SEV-SNP is initialized, transition to firmware page. */
+		if (sev->snp_initialized) {
+			unsigned long pa, npages;
+
+			pa = __pa((unsigned long)sev_init_ex_buffer);
+			npages = 1UL << get_order(NV_LENGTH);
+			if (rmp_mark_pages_firmware(pa, npages, false)) {
+				dev_err(sev->dev,
+					"SEV: INIT_EX NV memory page state change failed.\n");
+				return -ENOMEM;
+			}
+		}
 	}
 
 	rc = __sev_do_init_locked(&psp_ret);
@@ -2311,8 +2339,9 @@ static void __sev_firmware_shutdown(struct sev_device *sev, bool in_panic)
 	}
 
 	if (sev_init_ex_buffer) {
-		free_pages((unsigned long)sev_init_ex_buffer,
-			   get_order(NV_LENGTH));
+		__snp_free_firmware_pages(virt_to_page(sev_init_ex_buffer),
+					  get_order(NV_LENGTH),
+					  false);
 		sev_init_ex_buffer = NULL;
 	}
 
@@ -2399,18 +2428,6 @@ void sev_pci_init(void)
 
 	if (sev_update_firmware(sev->dev) == 0)
 		sev_get_api_version();
-
-	/* If an init_ex_path is provided rely on INIT_EX for PSP initialization
-	 * instead of INIT.
-	 */
-	if (init_ex_path) {
-		sev_init_ex_buffer = sev_fw_alloc(NV_LENGTH);
-		if (!sev_init_ex_buffer) {
-			dev_err(sev->dev,
-				"SEV: INIT_EX NV memory allocation failed\n");
-			goto err;
-		}
-	}
 
 	/* Initialize the platform */
 	rc = sev_platform_init_on_probe(&error);
