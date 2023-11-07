@@ -3814,6 +3814,25 @@ static int iommu_page_make_shared(void *page)
 	paddr = iommu_virt_to_phys(page);
 	/* Cbit maybe set in the paddr */
 	pfn = __sme_clr(paddr) >> PAGE_SHIFT;
+
+	if (!(pfn % PTRS_PER_PMD)) {
+		int ret, level;
+		bool assigned;
+
+		ret = snp_lookup_rmpentry(pfn, &assigned, &level);
+		if (ret)
+			pr_warn("DEBUG: IOMMU PFN %llx RMP lookup failed, ret %d\n",
+				pfn, ret);
+
+		if (!assigned)
+			pr_warn("DEBUG: IOMMU PFN %llx not assigned in RMP table\n",
+				pfn);
+
+		ret = psmash(pfn);
+		pr_warn("DEBUG: IOMMU PFN %llx was huge-aligned, attempted psmash before releasing, ret: %d, level: %d\n",
+			pfn, ret, level);
+	}
+
 	return rmp_make_shared(pfn, PG_LEVEL_4K);
 }
 
