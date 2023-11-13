@@ -3821,15 +3821,15 @@ static int iommu_page_make_shared(void *page)
 
 		ret = snp_lookup_rmpentry(pfn, &assigned, &level);
 		if (ret)
-			pr_warn("DEBUG: IOMMU PFN %llx RMP lookup failed, ret %d\n",
+			pr_warn("DEBUG: IOMMU PFN %lx RMP lookup failed, ret %d\n",
 				pfn, ret);
 
 		if (!assigned)
-			pr_warn("DEBUG: IOMMU PFN %llx not assigned in RMP table\n",
+			pr_warn("DEBUG: IOMMU PFN %lx not assigned in RMP table\n",
 				pfn);
 
 		ret = psmash(pfn);
-		pr_warn("DEBUG: IOMMU PFN %llx was huge-aligned, attempted psmash before releasing, ret: %d, level: %d\n",
+		pr_warn("DEBUG: IOMMU PFN %lx was huge-aligned, attempted psmash before releasing, ret: %d, level: %d\n",
 			pfn, ret, level);
 	}
 
