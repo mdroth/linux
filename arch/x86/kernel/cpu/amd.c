@@ -667,8 +667,19 @@ static void early_detect_mem_encrypt(struct cpuinfo_x86 *c)
 		if (!(msr & MSR_K7_HWCR_SMMLOCK))
 			goto clear_sev;
 
-		if (cpu_has(c, X86_FEATURE_SEV_SNP) && !early_rmptable_check())
-			goto clear_snp;
+		if (cpu_has(c, X86_FEATURE_SEV_SNP)) {
+			/*
+			 * RMP table entry format is not architectural and it can vary by processor
+			 * and is defined by the per-processor PPR. Restrict SNP support on the
+			 * known CPU model and family for which the RMP table entry format is
+			 * currently defined for.
+			 */
+			if (!(c->x86 == 0x19 && c->x86_model <= 0xaf) &&
+			    !(c->x86 == 0x1a && c->x86_model <= 0xf))
+				goto clear_snp;
+			if (!early_rmptable_check())
+				goto clear_snp;
+		}
 
 		return;
 

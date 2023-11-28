@@ -205,24 +205,11 @@ skip_enable:
 
 static int __init snp_rmptable_init(void)
 {
-	int family, model;
-
 	if (!cpu_feature_enabled(X86_FEATURE_SEV_SNP))
 		return 0;
 
-	family = boot_cpu_data.x86;
-	model  = boot_cpu_data.x86_model;
-
-	/*
-	 * RMP table entry format is not architectural and it can vary by processor and
-	 * is defined by the per-processor PPR. Restrict SNP support on the known CPU
-	 * model and family for which the RMP table entry format is currently defined for.
-	 */
-	if (!(family == 0x19 && model <= 0xaf) && !(family == 0x1a && model <= 0xf))
-		goto nosnp;
-
-	if (amd_iommu_snp_enable())
-		goto nosnp;
+	if (!amd_iommu_snp_en)
+		return 0;
 
 	if (__snp_rmptable_init())
 		goto nosnp;
@@ -237,15 +224,9 @@ nosnp:
 }
 
 /*
- * This must be called after the PCI subsystem. This is because amd_iommu_snp_enable()
- * is called to ensure the IOMMU supports the SEV-SNP feature, which can only be
- * called after subsys_initcall().
- *
- * NOTE: IOMMU is enforced by SNP to ensure that hypervisor cannot program DMA
- * directly into guest private memory. In case of SNP, the IOMMU ensures that
- * the page(s) used for DMA are hypervisor owned.
+ * This must be called after the IOMMU has been initialized.
  */
-fs_initcall(snp_rmptable_init);
+device_initcall(snp_rmptable_init);
 
 static int rmptable_entry(u64 pfn, struct rmpentry *entry)
 {
