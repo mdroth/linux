@@ -178,6 +178,17 @@ For more information on the certificate blob layout, see the GHCB spec
 The SNP_GET_EXT_CONFIG is used to query the system-wide configuration set
 through the SNP_SET_EXT_CONFIG.
 
+2.7 SNP_COMMIT
+--------------
+:Technology: sev-snp
+:Type: hypervisor ioctl cmd
+:Parameters (in): struct sev_data_snp_commit
+:Returns (out): 0 on success, -negative on error
+
+SNP_COMMIT is used to commit the currently installed firmware using the
+SEV-SNP firmware SNP_COMMIT command. This prevents roll-back to a previously
+committed firmware version.
+
 3. SEV-SNP CPUID Enforcement
 ============================
 

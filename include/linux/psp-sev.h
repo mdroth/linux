@@ -780,6 +780,15 @@ struct sev_data_snp_shutdown_ex {
 	u32 rsvd1:31;
 } __packed;
 
+/**
+ * struct sev_data_snp_commit - SNP_COMMIT structure
+ *
+ * @length: len of the command buffer read by the PSP
+ */
+struct sev_data_snp_commit {
+	u32 length;
+} __packed;
+
 #ifdef CONFIG_CRYPTO_DEV_SP_PSP
 
 /**
