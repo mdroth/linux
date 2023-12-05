@@ -3895,9 +3895,7 @@ static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
 		vcpu->run->exit_reason = KVM_EXIT_VMGEXIT;
 		vcpu->run->vmgexit.ghcb_msr = control->ghcb_gpa;
 		vcpu->arch.complete_userspace_io = snp_complete_psc_msr_protocol;
-
-		ret = -1;
-		break;
+		return 0;
 	case GHCB_MSR_TERM_REQ: {
 		u64 reason_set, reason_code;
 
