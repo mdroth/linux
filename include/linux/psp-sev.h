@@ -786,6 +786,7 @@ struct sev_data_snp_shutdown_ex {
  * sev_platform_init - perform SEV INIT command
  *
  * @error: SEV command return code
+ * @probe: SEV init on probe flag
  *
  * Returns:
  * 0 if the SEV successfully processed the command
@@ -794,7 +795,7 @@ struct sev_data_snp_shutdown_ex {
  * -%ETIMEDOUT if the SEV command timed out
  * -%EIO       if the SEV returned a non-zero return code
  */
-int sev_platform_init(int *error);
+int sev_platform_init(int *error, bool probe);
 
 /**
  * sev_platform_status - perform SEV PLATFORM_STATUS command
