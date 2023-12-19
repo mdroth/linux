@@ -61,6 +61,16 @@ static u64 probed_rmp_size __ro_after_init;
 static struct rmpentry *rmptable __ro_after_init;
 static u64 rmptable_max_pfn __ro_after_init;
 
+/* list of pages which are leaked and cannot be reclaimed */
+struct leaked_page {
+	struct page *page;
+	struct list_head list;
+};
+static LIST_HEAD(snp_leaked_pages_list);
+static DEFINE_SPINLOCK(snp_leaked_pages_list_lock);
+
+static unsigned long snp_nr_leaked_pages;
+
 #undef pr_fmt
 #define pr_fmt(fmt)	"SEV-SNP: " fmt
 
@@ -477,3 +487,27 @@ int rmp_make_shared(u64 pfn, enum pg_level level)
 	return rmpupdate(pfn, &state);
 }
 EXPORT_SYMBOL_GPL(rmp_make_shared);
+
+void snp_leak_pages(u64 pfn, unsigned int npages)
+{
+	struct page *page = pfn_to_page(pfn);
+	struct leaked_page *leak;
+
+	pr_debug("%s: leaking PFN range 0x%llx-0x%llx\n", __func__, pfn, pfn + npages);
+
+	spin_lock(&snp_leaked_pages_list_lock);
+	while (npages--) {
+		leak = kzalloc(sizeof(*leak), GFP_KERNEL_ACCOUNT);
+		if (!leak)
+			goto unlock;
+		leak->page = page;
+		list_add_tail(&leak->list, &snp_leaked_pages_list);
+		dump_rmpentry(pfn);
+		snp_nr_leaked_pages++;
+		pfn++;
+		page++;
+	}
+unlock:
+	spin_unlock(&snp_leaked_pages_list_lock);
+}
+EXPORT_SYMBOL_GPL(snp_leak_pages);
