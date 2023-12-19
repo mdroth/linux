@@ -370,13 +370,63 @@ int psmash(u64 pfn)
 }
 EXPORT_SYMBOL_GPL(psmash);
 
+static int restore_direct_map(u64 pfn, int npages)
+{
+	int i, ret = 0;
+
+	for (i = 0; i < npages; i++) {
+		ret = set_direct_map_default_noflush(pfn_to_page(pfn + i));
+		if (ret)
+			break;
+	}
+
+	if (ret)
+		pr_warn("Failed to restore direct map for pfn 0x%llx, ret: %d\n",
+			pfn + i, ret);
+
+	return ret;
+}
+
+static int invalidate_direct_map(u64 pfn, int npages)
+{
+	int i, ret = 0;
+
+	for (i = 0; i < npages; i++) {
+		ret = set_direct_map_invalid_noflush(pfn_to_page(pfn + i));
+		if (ret)
+			break;
+	}
+
+	if (ret) {
+		pr_warn("Failed to invalidate direct map for pfn 0x%llx, ret: %d\n",
+			pfn + i, ret);
+		restore_direct_map(pfn, i);
+	}
+
+	return ret;
+}
+
 static int rmpupdate(u64 pfn, struct rmp_state *state)
 {
 	unsigned long paddr = pfn << PAGE_SHIFT;
-	int ret;
+	int ret, level, npages;
 
 	if (!cpu_feature_enabled(X86_FEATURE_SEV_SNP))
 		return -ENODEV;
+
+	level = RMP_TO_PG_LEVEL(state->pagesize);
+	npages = page_level_size(level) / PAGE_SIZE;
+
+	/*
+	 * If the kernel uses a 2MB directmap mapping to write to an address,
+	 * and that 2MB range happens to contain a 4KB page that set to private
+	 * in the RMP table, an RMP #PF will trigger and cause a host crash.
+	 *
+	 * Prevent this by removing pages from the directmap prior to setting
+	 * them as private in the RMP table.
+	 */
+	if (state->assigned && invalidate_direct_map(pfn, npages))
+		return -EFAULT;
 
 	do {
 		/* Binutils version 2.36 supports the RMPUPDATE mnemonic. */
@@ -387,11 +437,15 @@ static int rmpupdate(u64 pfn, struct rmp_state *state)
 	} while (ret == RMPUPDATE_FAIL_OVERLAP);
 
 	if (ret) {
-		pr_err("RMPUPDATE failed for PFN %llx, ret: %d\n", pfn, ret);
+		pr_err("RMPUPDATE failed for PFN %llx, pg_level: %d, ret: %d\n",
+		       pfn, level, ret);
 		dump_rmpentry(pfn);
 		dump_stack();
 		return -EFAULT;
 	}
+
+	if (!state->assigned && restore_direct_map(pfn, npages))
+		return -EFAULT;
 
 	return 0;
 }
