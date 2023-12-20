@@ -599,11 +599,15 @@ static int __sev_snp_init_locked(int *error)
 	}
 
 	/*
-	 * Before invoking SNP_INIT_EX with INIT_RMP=1, make sure that
-	 * all dirty cache lines containing the RMP are flushed.
+	 * The following sequence must be issued before launching the
+	 * first SNP guest to ensure all dirty cache lines are flushed,
+	 * including from updates to the RMP table itself via RMPUPDATE
+	 * instructions:
 	 *
-	 * NOTE: that includes writes via RMPUPDATE instructions, which
-	 * are also cacheable writes.
+	 * - WBINDV on all running CPUs
+	 * - SEV_CMD_SNP_INIT[_EX] firmware command
+	 * - WBINDV on all running CPUs
+	 * - SEV_CMD_SNP_DF_FLUSH firmware command
 	 */
 	wbinvd_on_all_cpus();
 
@@ -623,35 +627,17 @@ static int __sev_snp_init_locked(int *error)
 	return rc;
 }
 
-static int __sev_platform_init_locked(int *error, bool probe)
+static int __sev_platform_init_locked(int *error)
 {
 	int rc, psp_ret = SEV_RET_NO_FW_CALL;
-	struct psp_device *psp = psp_master;
 	struct sev_device *sev;
 
-	if (!psp || !psp->sev_data)
+	if (!psp_master || !psp_master->sev_data)
 		return -ENODEV;
 
-	sev = psp->sev_data;
+	sev = psp_master->sev_data;
 
 	if (sev->state == SEV_STATE_INIT)
-		return 0;
-
-	/*
-	 * Legacy guests cannot be running while SNP_INIT(_EX) is executing,
-	 * so perform SEV-SNP initialization at probe time.
-	 */
-	rc = __sev_snp_init_locked(error);
-	if (rc && rc != -ENODEV) {
-		/*
-		 * Don't abort the probe if SNP INIT failed,
-		 * continue to initialize the legacy SEV firmware.
-		 */
-		dev_err(sev->dev, "SEV-SNP: failed to INIT rc %d, error %#x\n", rc, *error);
-	}
-
-	/* Delay SEV/SEV-ES support initialization */
-	if (probe && !psp_init_on_probe)
 		return 0;
 
 	if (!sev_es_tmr) {
@@ -707,12 +693,45 @@ static int __sev_platform_init_locked(int *error, bool probe)
 	return 0;
 }
 
+static int _sev_platform_init_locked(int *error, bool probe)
+{
+	struct sev_device *sev;
+	int rc;
+
+	if (!psp_master || !psp_master->sev_data)
+		return -ENODEV;
+
+	sev = psp_master->sev_data;
+
+	if (sev->state == SEV_STATE_INIT)
+		return 0;
+
+	/*
+	 * Legacy guests cannot be running while SNP_INIT(_EX) is executing,
+	 * so perform SEV-SNP initialization at probe time.
+	 */
+	rc = __sev_snp_init_locked(error);
+	if (rc && rc != -ENODEV) {
+		/*
+		 * Don't abort the probe if SNP INIT failed,
+		 * continue to initialize the legacy SEV firmware.
+		 */
+		dev_err(sev->dev, "SEV-SNP: failed to INIT rc %d, error %#x\n", rc, *error);
+	}
+
+	/* Defer legacy SEV/SEV-ES support if allowed by caller/module. */
+	if (probe && !psp_init_on_probe)
+		return 0;
+
+	return __sev_platform_init_locked(error);
+}
+
 int sev_platform_init(int *error, bool probe)
 {
 	int rc;
 
 	mutex_lock(&sev_cmd_mutex);
-	rc = __sev_platform_init_locked(error, probe);
+	rc = _sev_platform_init_locked(error, probe);
 	mutex_unlock(&sev_cmd_mutex);
 
 	return rc;
@@ -819,7 +838,7 @@ static int sev_ioctl_do_pek_pdh_gen(int cmd, struct sev_issue_cmd *argp, bool wr
 		return -EPERM;
 
 	if (sev->state == SEV_STATE_UNINIT) {
-		rc = __sev_platform_init_locked(&argp->error, false);
+		rc = __sev_platform_init_locked(&argp->error);
 		if (rc)
 			return rc;
 	}
@@ -862,7 +881,7 @@ static int sev_ioctl_do_pek_csr(struct sev_issue_cmd *argp, bool writable)
 
 cmd:
 	if (sev->state == SEV_STATE_UNINIT) {
-		ret = __sev_platform_init_locked(&argp->error, false);
+		ret = __sev_platform_init_locked(&argp->error);
 		if (ret)
 			goto e_free_blob;
 	}
@@ -1107,7 +1126,7 @@ static int sev_ioctl_do_pek_import(struct sev_issue_cmd *argp, bool writable)
 
 	/* If platform is not in INIT state then transition it to INIT */
 	if (sev->state != SEV_STATE_INIT) {
-		ret = __sev_platform_init_locked(&argp->error, false);
+		ret = __sev_platform_init_locked(&argp->error);
 		if (ret)
 			goto e_free_oca;
 	}
@@ -1238,7 +1257,7 @@ static int sev_ioctl_do_pdh_export(struct sev_issue_cmd *argp, bool writable)
 		if (!writable)
 			return -EPERM;
 
-		ret = __sev_platform_init_locked(&argp->error, false);
+		ret = __sev_platform_init_locked(&argp->error);
 		if (ret)
 			return ret;
 	}
