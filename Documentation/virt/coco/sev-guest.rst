@@ -128,8 +128,6 @@ the SEV-SNP specification for further details.
 
 The SNP_GET_EXT_REPORT ioctl is similar to the SNP_GET_REPORT. The difference is
 related to the additional certificate data that is returned with the report.
-The certificate data returned is being provided by the hypervisor through the
-SNP_SET_EXT_CONFIG.
 
 The ioctl uses the SNP_GUEST_REQUEST (MSG_REPORT_REQ) command provided by the SEV-SNP
 firmware to get the attestation report.
@@ -175,6 +173,41 @@ reported TCB version in the attestation report. The command is similar
 to SNP_CONFIG command defined in the SEV-SNP spec. The current values of
 the firmware parameters affected by this command can be queried via
 SNP_PLATFORM_STATUS.
+
+2.7 SNP_SET_CONFIG_START / SNP_SET_CONFIG_END
+---------------------------------------------
+:Technology: sev-snp
+:Type: hypervisor ioctl cmd
+:Parameters (out): struct sev_user_data_snp_config_transaction
+:Returns (out): 0 on success, -negative on error
+
+When requesting attestation reports, SNP guests have the option of issuing
+an extended guest request which allows host userspace to supply additional
+certificate data that can be used to validate the signature used to sign
+the attestation report. This signature is generated using a key that is
+derived from the reported TCB that can be set via the SNP_SET_CONFIG and
+SNP_COMMIT ioctls, so the accompanying certificate data needs to be kept in
+sync with the changes made to the reported TCB via these ioctls.
+
+To allow for this, SNP_SET_CONFIG_START can be issued prior to performing
+any updates to the reported TCB or certificate data that will be fetched
+from userspace. Any attestation report requests via extended guest requests
+that are in-progress, or received after SNP_SET_CONFIG_START is issued, will
+result in the guest receiving a GHCB-defined error message instructing it to
+retry the request. Once the updates are completed on the host,
+SNP_SET_CONFIG_END must be issued to resume normal servicing of extended
+guest requests.
+
+In general, hosts should never have more than 1 outstanding
+SNP_SET_CONFIG_{START,END} transaction in flight at any point in time, and
+attempting to issue SNP_SET_CONFIG_START will fail if a transaction is
+already in progress. However, there may be occassions where a transaction
+needs to be aborted via SNP_SET_CONFIG_END due to unexpected activity in
+userspace such as timeouts, crashes, etc. To allow for callers of
+SNP_SET_CONFIG_{START,END} to detect such a situation, each ioctl will return
+a transaction ID in the response so the caller can monitor whether the
+start/end ID both match. If they don't, the caller should assume the
+transaction has been invalidated and retry the full update sequence.
 
 3. SEV-SNP CPUID Enforcement
 ============================

@@ -70,6 +70,11 @@ static DEFINE_SPINLOCK(snp_leaked_pages_list_lock);
 
 static unsigned long snp_nr_leaked_pages;
 
+/* For synchronizing TCB updates with extended guest requests */
+static DEFINE_MUTEX(snp_transaction_lock);
+static u64 snp_transaction_id;
+static bool snp_transaction_pending;
+
 #undef pr_fmt
 #define pr_fmt(fmt)	"SEV-SNP: " fmt
 
@@ -558,3 +563,41 @@ void snp_leak_pages(u64 pfn, unsigned int npages)
 	spin_unlock(&snp_leaked_pages_list_lock);
 }
 EXPORT_SYMBOL_GPL(snp_leak_pages);
+
+int snp_config_transaction_start(u64 *transaction_id)
+{
+	mutex_lock(&snp_transaction_lock);
+
+	if (snp_transaction_pending) {
+		mutex_unlock(&snp_transaction_lock);
+		return -EBUSY;
+	}
+
+	/*
+	 * The actual transaction ID update will happen when
+	 * snp_config_transaction_end() is called, so return
+	 * the *anticipated* transaction ID that will be
+	 * return by snp_config_transaction_end(). This is to
+	 * ensure that unbalanced/aborted transactions will
+	 * be noticeable when the caller that started the
+	 * transaction calls snp_config_transaction_end().
+	 */
+	*transaction_id = snp_transaction_id + 1;
+	snp_transaction_pending = true;
+
+	mutex_unlock(&snp_transaction_lock);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(snp_config_transaction_start);
+
+void snp_config_transaction_end(u64 *transaction_id)
+{
+	mutex_lock(&snp_transaction_lock);
+
+	snp_transaction_pending = false;
+	*transaction_id = ++snp_transaction_id;
+
+	mutex_unlock(&snp_transaction_lock);
+}
+EXPORT_SYMBOL_GPL(snp_config_transaction_end);
