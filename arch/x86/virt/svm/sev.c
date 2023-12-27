@@ -601,3 +601,24 @@ void snp_config_transaction_end(u64 *transaction_id)
 	mutex_unlock(&snp_transaction_lock);
 }
 EXPORT_SYMBOL_GPL(snp_config_transaction_end);
+
+u64 snp_config_transaction_get_id(void)
+{
+	return snp_transaction_id;
+}
+EXPORT_SYMBOL_GPL(snp_config_transaction_get_id);
+
+bool snp_config_transaction_is_stale(u64 transaction_id)
+{
+	bool stale;
+
+	mutex_lock(&snp_transaction_lock);
+
+	stale = (snp_transaction_pending ||
+		 transaction_id != snp_transaction_id);
+
+	mutex_unlock(&snp_transaction_lock);
+
+	return stale;
+}
+EXPORT_SYMBOL_GPL(snp_config_transaction_is_stale);
