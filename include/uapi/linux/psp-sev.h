@@ -32,6 +32,8 @@ enum {
 	SNP_COMMIT,
 	SNP_SET_CONFIG,
 	SNP_VLEK_LOAD,
+	SNP_PAUSE_ATTESTATION,
+	SNP_RESUME_ATTESTATION,
 
 	SEV_MAX,
 };
@@ -239,6 +241,16 @@ struct sev_user_data_snp_vlek_load {
  */
 struct sev_user_data_snp_wrapped_vlek_hashstick {
 	__u8 data[432];				/* In */
+} __packed;
+
+/**
+ * struct sev_user_data_snp_pause_attestation - metadata for pausing attestation
+ *
+ * @id: the ID of the transaction started/ended by a call to SNP_PAUSE_ATTESTATION
+ *	or SNP_RESUME_ATTESTATION, respectively.
+ */
+struct sev_user_data_snp_pause_attestation {
+	__u64 id;				/* Out */
 } __packed;
 
 /**
