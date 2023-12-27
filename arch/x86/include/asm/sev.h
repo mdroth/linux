@@ -274,6 +274,8 @@ void snp_leak_pages(u64 pfn, unsigned int npages);
 void kdump_sev_callback(void);
 int snp_pause_attestation(u64 *transaction_id);
 void snp_resume_attestation(u64 *transaction_id);
+u64 snp_transaction_get_id(void);
+bool snp_transaction_is_stale(u64 transaction_id);
 #else
 static inline bool snp_probe_rmptable_info(void) { return false; }
 static inline int snp_lookup_rmpentry(u64 pfn, bool *assigned, int *level) { return -ENODEV; }
@@ -289,6 +291,8 @@ static inline void snp_leak_pages(u64 pfn, unsigned int npages) {}
 static inline void kdump_sev_callback(void) { }
 static inline int snp_pause_attestation(u64 *transaction_id) { return 0; }
 static inline void snp_resume_attestation(u64 *transaction_id) {}
+static inline u64 snp_transaction_get_id(void) { return 0; }
+static inline bool snp_transaction_is_stale(u64 transaction_id) { return false; }
 #endif
 
 #endif
