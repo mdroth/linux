@@ -72,6 +72,7 @@ static unsigned long snp_nr_leaked_pages;
 
 /* For synchronizing TCB/certificate updates with extended guest requests */
 DEFINE_MUTEX(snp_pause_attestation_lock);
+EXPORT_SYMBOL_GPL(snp_pause_attestation_lock);
 static u64 snp_transaction_id;
 static bool snp_attestation_paused;
 
@@ -611,3 +612,39 @@ void snp_resume_attestation(u64 *transaction_id)
 	mutex_unlock(&snp_pause_attestation_lock);
 }
 EXPORT_SYMBOL_GPL(snp_resume_attestation);
+
+u64 snp_transaction_get_id(void)
+{
+	u64 id;
+
+	mutex_lock(&snp_pause_attestation_lock);
+	id = snp_transaction_id;
+	mutex_unlock(&snp_pause_attestation_lock);
+
+	return id;
+}
+EXPORT_SYMBOL_GPL(snp_transaction_get_id);
+
+/* Must be called with snp_pause_attestion_lock held */
+bool __snp_transaction_is_stale(u64 transaction_id)
+{
+	lockdep_assert_held(&snp_pause_attestation_lock);
+
+	return (snp_attestation_paused ||
+		transaction_id != snp_transaction_id);
+}
+EXPORT_SYMBOL_GPL(__snp_transaction_is_stale);
+
+bool snp_transaction_is_stale(u64 transaction_id)
+{
+	bool stale;
+
+	mutex_lock(&snp_pause_attestation_lock);
+
+	stale = __snp_transaction_is_stale(transaction_id);
+
+	mutex_unlock(&snp_pause_attestation_lock);
+
+	return stale;
+}
+EXPORT_SYMBOL_GPL(snp_transaction_is_stale);
