@@ -2060,6 +2060,47 @@ static int sev_ioctl_do_snp_vlek_load(struct sev_issue_cmd *argp, bool writable)
 	return ret;
 }
 
+static int sev_ioctl_do_snp_pause_attestation(struct sev_issue_cmd *argp, bool writable)
+{
+	struct sev_user_data_snp_pause_attestation transaction = {0};
+	struct sev_device *sev = psp_master->sev_data;
+	int ret;
+
+	if (!sev->snp_initialized || !argp->data)
+		return -EINVAL;
+
+	if (!writable)
+		return -EPERM;
+
+	ret = snp_pause_attestation(&transaction.id);
+	if (ret)
+		return ret;
+
+	if (copy_to_user((void __user *)argp->data, &transaction, sizeof(transaction)))
+		return -EFAULT;
+
+	return 0;
+}
+
+static int sev_ioctl_do_snp_resume_attestation(struct sev_issue_cmd *argp, bool writable)
+{
+	struct sev_user_data_snp_pause_attestation transaction = {0};
+	struct sev_device *sev = psp_master->sev_data;
+
+	if (!sev->snp_initialized || !argp->data)
+		return -EINVAL;
+
+	if (!writable)
+		return -EPERM;
+
+	snp_resume_attestation(&transaction.id);
+
+	if (copy_to_user((void __user *)argp->data, &transaction, sizeof(transaction)))
+		return -EFAULT;
+
+	return 0;
+}
+
 static long sev_ioctl(struct file *file, unsigned int ioctl, unsigned long arg)
 {
 	void __user *argp = (void __user *)arg;
@@ -2122,6 +2163,12 @@ static long sev_ioctl(struct file *file, unsigned int ioctl, unsigned long arg)
 		break;
 	case SNP_VLEK_LOAD:
 		ret = sev_ioctl_do_snp_vlek_load(&input, writable);
+		break;
+	case SNP_PAUSE_ATTESTATION:
+		ret = sev_ioctl_do_snp_pause_attestation(&input, writable);
+		break;
+	case SNP_RESUME_ATTESTATION:
+		ret = sev_ioctl_do_snp_resume_attestation(&input, writable);
 		break;
 	default:
 		ret = -EINVAL;

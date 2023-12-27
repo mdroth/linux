@@ -128,8 +128,6 @@ the SEV-SNP specification for further details.
 
 The SNP_GET_EXT_REPORT ioctl is similar to the SNP_GET_REPORT. The difference is
 related to the additional certificate data that is returned with the report.
-The certificate data returned is being provided by the hypervisor through the
-SNP_SET_EXT_CONFIG.
 
 The ioctl uses the SNP_GUEST_REQUEST (MSG_REPORT_REQ) command provided by the SEV-SNP
 firmware to get the attestation report.
@@ -194,6 +192,54 @@ In the case of VLEK keys, the SNP_VLEK_LOAD SNP command is used to load
 them into the system after obtaining them from the KDS, and corresponds
 closely to the SNP_VLEK_LOAD firmware command specified in the SEV-SNP
 spec.
+
+2.8 SNP_PAUSE_ATTESTATION / SNP_RESUME_ATTESTATION
+--------------------------------------------------
+:Technology: sev-snp
+:Type: hypervisor ioctl cmd
+:Parameters (out): struct sev_user_data_snp_pause_transaction
+:Returns (out): 0 on success, -negative on error
+
+When requesting attestation reports, SNP guests have the option of issuing
+an extended guest request which allows host userspace to supply additional
+certificate data that can be used to validate the signature used to sign
+the attestation report. This signature is generated using a key that is
+derived from the reported TCB that can be set via the SNP_SET_CONFIG and
+SNP_COMMIT ioctls, so the accompanying certificate data needs to be kept in
+sync with the changes made to the reported TCB via these ioctls.
+
+Similarly, interfaces like SNP_LOAD_VLEK can modify the key used to sign
+the attestation reports, which may in turn require updating the certificate
+data provided to guests via extended guest requests.
+
+To allow for updating the reported TCB, endorsement key, and any certificate
+data in a manner that is atomic to guests, the SNP_PAUSE_ATTESTATION and
+SNP_RESUME_ATTESTATION commands are provided.
+
+After SNP_PAUSE_ATTESTATION is issued, any attestation report requests via
+extended guest requests that are in-progress, or received after
+SNP_PAUSE_ATTESTATION is issued, will result in the guest receiving a
+GHCB-defined error message instructing it to retry the request. Once all
+the desired reported TCB, endorsement keys, or certificate data updates
+are completed on the host, the SNP_RESUME_ATTESTATION command must be
+issued to allow guest attestation requests to proceed.
+
+In general, hosts should serialize updates of this sort and never have more
+than 1 outstanding transaction in flight that could result in the
+interleaving of multiple SNP_PAUSE_ATTESTATION/SNP_RESUME_ATTESTATION pairs.
+To guard against this, SNP_PAUSE_ATTESTATION will fail if another process
+has already paused attestation requests.
+
+However, there may be occassions where a transaction needs to be aborted due
+to unexpected activity in userspace such as timeouts, crashes, etc., so
+SNP_RESUME_ATTESTATION will always succeed. Nonetheless, this could
+potentially lead to SNP_RESUME_ATTESTATION being called out of sequence, so
+to allow for callers of SNP_{PAUSE,RESUME}_ATTESTATION to detect such
+occurrences, each ioctl will return a transaction ID in the response so the
+caller can monitor whether the start/end ID both match. If they don't, the
+caller should assume that attestation has been paused/resumed unexpectedly,
+and take whatever measures it deems necessary such as logging, reporting,
+auditing the sequence of events.
 
 3. SEV-SNP CPUID Enforcement
 ============================

@@ -70,6 +70,11 @@ static DEFINE_SPINLOCK(snp_leaked_pages_list_lock);
 
 static unsigned long snp_nr_leaked_pages;
 
+/* For synchronizing TCB/certificate updates with extended guest requests */
+DEFINE_MUTEX(snp_pause_attestation_lock);
+static u64 snp_transaction_id;
+static bool snp_attestation_paused;
+
 #undef pr_fmt
 #define pr_fmt(fmt)	"SEV-SNP: " fmt
 
@@ -568,3 +573,41 @@ void kdump_sev_callback(void)
 	if (cc_platform_has(CC_ATTR_HOST_SEV_SNP))
 		wbinvd();
 }
+
+int snp_pause_attestation(u64 *transaction_id)
+{
+	mutex_lock(&snp_pause_attestation_lock);
+
+	if (snp_attestation_paused) {
+		mutex_unlock(&snp_pause_attestation_lock);
+		return -EBUSY;
+	}
+
+	/*
+	 * The actual transaction ID update will happen when
+	 * snp_resume_attestation() is called, so return
+	 * the *anticipated* transaction ID that will be
+	 * returned by snp_resume_attestation(). This is
+	 * to ensure that unbalanced/aborted transactions will
+	 * be noticeable when the caller that started the
+	 * transaction calls snp_resume_attestation().
+	 */
+	*transaction_id = snp_transaction_id + 1;
+	snp_attestation_paused = true;
+
+	mutex_unlock(&snp_pause_attestation_lock);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(snp_pause_attestation);
+
+void snp_resume_attestation(u64 *transaction_id)
+{
+	mutex_lock(&snp_pause_attestation_lock);
+
+	snp_attestation_paused = false;
+	*transaction_id = ++snp_transaction_id;
+
+	mutex_unlock(&snp_pause_attestation_lock);
+}
+EXPORT_SYMBOL_GPL(snp_resume_attestation);
