@@ -589,3 +589,23 @@ u64 snp_config_transaction_end(void)
 	return id;
 }
 EXPORT_SYMBOL_GPL(snp_config_transaction_end);
+
+u64 snp_config_transaction_get_id(void)
+{
+	return snp_transaction_id;
+}
+EXPORT_SYMBOL_GPL(snp_config_transaction_get_id);
+
+bool snp_config_transaction_is_stale(u64 id)
+{
+	bool stale = false;
+
+	mutex_lock(&snp_transaction_lock);
+	if (snp_transaction_pending ||
+	    id != snp_transaction_id)
+		stale = true;
+	mutex_unlock(&snp_transaction_lock);
+
+	return stale;
+}
+EXPORT_SYMBOL_GPL(snp_config_transaction_is_stale);
