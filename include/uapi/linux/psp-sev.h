@@ -31,6 +31,8 @@ enum {
 	SNP_PLATFORM_STATUS,
 	SNP_COMMIT,
 	SNP_SET_CONFIG,
+	SNP_SET_CONFIG_START,
+	SNP_SET_CONFIG_END,
 
 	SEV_MAX,
 };
@@ -212,6 +214,16 @@ struct sev_user_data_snp_config {
 	__u32 mask_chip_key:1;  /* In */
 	__u32 rsvd:30;          /* In */
 	__u8 rsvd1[52];
+} __packed;
+
+/**
+ * struct sev_user_data_snp_config_transaction - metadata for config transactions
+ *
+ * @id: the ID of the transaction started/ended by a call to SNP_SET_CONFIG_START
+ *	or SNP_SET_CONFIG_END, respectively.
+ */
+struct sev_user_data_snp_config_transaction {
+	__u64 id;		/* Out */
 } __packed;
 
 /**
