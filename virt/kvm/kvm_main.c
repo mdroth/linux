@@ -410,7 +410,7 @@ static inline void *mmu_memory_cache_alloc_obj(struct kvm_mmu_memory_cache *mc,
 
 	page = (void *)__get_free_page(gfp_flags);
 	if (page && mc->init_value)
-		memset64(page, mc->init_value, PAGE_SIZE / sizeof(mc->init_value));
+		memset64(page, mc->init_value, PAGE_SIZE / sizeof(u64));
 	return page;
 }
 
