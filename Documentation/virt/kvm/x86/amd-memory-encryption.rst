@@ -474,6 +474,38 @@ Returns: 0 on success, -negative on error
 
 See the SEV-SNP specification for further detail on the launch input.
 
+20. KVM_SEV_SNP_LAUNCH_UPDATE
+-----------------------------
+
+The KVM_SEV_SNP_LAUNCH_UPDATE is used for encrypting a memory region. It also
+calculates a measurement of the memory contents. The measurement is a signature
+of the memory contents that can be sent to the guest owner as an attestation
+that the memory was encrypted correctly by the firmware.
+
+Parameters (in): struct  kvm_sev_snp_launch_update
+
+Returns: 0 on success, -negative on error
+
+::
+
+        struct kvm_sev_snp_launch_update {
+                __u64 start_gfn;        /* Guest page number to load/encrypt data into. */
+                __u64 uaddr;            /* Userspace address of data to be loaded/encrypted. */
+                __u32 len;              /* Length of memory region. */
+                __u8 page_type;         /* The type of the guest page being initialized. */
+        };
+
+where the allowed values for page_type are::
+
+	#define KVM_SEV_SNP_PAGE_TYPE_NORMAL           0x1
+	#define KVM_SEV_SNP_PAGE_TYPE_VMSA             0x2
+	#define KVM_SEV_SNP_PAGE_TYPE_ZERO             0x3
+	#define KVM_SEV_SNP_PAGE_TYPE_UNMEASURED       0x4
+	#define KVM_SEV_SNP_PAGE_TYPE_SECRETS          0x5
+	#define KVM_SEV_SNP_PAGE_TYPE_CPUID            0x6
+
+See the SEV-SNP spec for further details on how each page type is used/measured.
+
 References
 ==========
 
