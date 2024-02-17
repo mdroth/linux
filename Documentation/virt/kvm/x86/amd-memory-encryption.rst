@@ -455,6 +455,25 @@ The flags bitmap allows for future extensions but is currently unused.
 If the any bits specified via flags are not supported then -EOPNOTSUPP is returned,
 and the supported flags are returned.
 
+19. KVM_SEV_SNP_LAUNCH_START
+----------------------------
+
+The KVM_SNP_LAUNCH_START command is used for creating the memory encryption
+context for the SEV-SNP guest.
+
+Parameters (in): struct  kvm_sev_snp_launch_start
+
+Returns: 0 on success, -negative on error
+
+::
+
+        struct kvm_sev_snp_launch_start {
+                __u64 policy;           /* Guest policy to use. */
+                __u8 gosvw[16];         /* Guest OS visible workarounds. */
+        };
+
+See the SEV-SNP specification for further detail on the launch input.
+
 References
 ==========
 
