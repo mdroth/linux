@@ -247,6 +247,36 @@ static void sev_decommission(unsigned int handle)
 	sev_guest_decommission(&decommission, NULL);
 }
 
+static int snp_page_reclaim(u64 pfn)
+{
+	struct sev_data_snp_page_reclaim data = {0};
+	int err, rc;
+
+	data.paddr = __sme_set(pfn << PAGE_SHIFT);
+	rc = sev_do_cmd(SEV_CMD_SNP_PAGE_RECLAIM, &data, &err);
+	if (rc) {
+		/*
+		 * If the reclaim failed, then page is no longer safe
+		 * to use.
+		 */
+		snp_leak_pages(pfn, 1);
+	}
+
+	return rc;
+}
+
+static int host_rmp_make_shared(u64 pfn, enum pg_level level, bool leak)
+{
+	int rc;
+
+	rc = rmp_make_shared(pfn, level);
+	if (rc && leak)
+		snp_leak_pages(pfn,
+			       page_level_size(level) >> PAGE_SHIFT);
+
+	return rc;
+}
+
 static void sev_unbind_asid(struct kvm *kvm, unsigned int handle)
 {
 	struct sev_data_deactivate deactivate;
@@ -2085,6 +2115,157 @@ e_free_context:
 	return rc;
 }
 
+static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
+{
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	struct sev_data_snp_launch_update data = {0};
+	struct kvm_sev_snp_launch_update params;
+	int *error = &argp->error;
+	int i, n = 0, ret = 0;
+	unsigned int npages;
+	kvm_pfn_t *pfns;
+	gfn_t gfn;
+
+	if (!sev_snp_guest(kvm) || !sev->snp_context)
+		return -EINVAL;
+
+	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data, sizeof(params)))
+		return -EFAULT;
+
+	if (!IS_ALIGNED(params.len, PAGE_SIZE) ||
+	    (params.type != KVM_SEV_SNP_PAGE_TYPE_NORMAL &&
+	     params.type != KVM_SEV_SNP_PAGE_TYPE_ZERO &&
+	     params.type != KVM_SEV_SNP_PAGE_TYPE_UNMEASURED &&
+	     params.type != KVM_SEV_SNP_PAGE_TYPE_SECRETS &&
+	     params.type != KVM_SEV_SNP_PAGE_TYPE_CPUID))
+		return -EINVAL;
+
+	npages = params.len / PAGE_SIZE;
+	pfns = kvmalloc_array(npages, sizeof(*pfns), GFP_KERNEL_ACCOUNT);
+	if (!pfns)
+		return -ENOMEM;
+
+	data.gctx_paddr = __psp_pa(sev->snp_context);
+
+	pr_debug("%s: GFN range 0x%llx-0x%llx type %d\n", __func__,
+		 params.gfn_start, params.gfn_start + npages, params.type);
+
+	/*
+	 * For each GFN that's being prepared as part of the initial guest
+	 * state, the following pre-conditions are verified:
+	 *
+	 *   1) The backing memslot is a valid private memslot.
+	 *   2) The GFN has been set to private via KVM_SET_MEMORY_ATTRIBUTES
+	 *      beforehand.
+	 *   3) The PFN of the guest_memfd has not already been set to private
+	 *      in the RMP table.
+	 *
+	 * The KVM MMU relies on kvm->mmu_invalidate_seq to retry nested page
+	 * faults if there's a race between a fault and an attribute update via
+	 * KVM_SET_MEMORY_ATTRIBUTES, and a similar approach could be utilized
+	 * here. However, kvm->slots_lock guards against both this as well as
+	 * concurrent memslot updates occurring while these checks are being
+	 * performed, so use that here to make it easier to reason about the
+	 * initial expected state and better guard against unexpected
+	 * situations.
+	 */
+	mutex_lock(&kvm->slots_lock);
+
+	for (gfn = params.gfn_start, i = 0; gfn < params.gfn_start + npages; gfn++, i++) {
+		struct kvm_memory_slot *memslot;
+		int order, level;
+		bool assigned;
+		void *kvaddr;
+
+		if (!kvm_mem_is_private(kvm, gfn)) {
+			pr_debug("Failed to ensure GFN 0x%llx has private memory attribute set\n",
+				 gfn);
+			ret = -EINVAL;
+			goto e_release;
+		}
+
+		memslot = gfn_to_memslot(kvm, params.gfn_start);
+		if (!kvm_slot_can_be_private(memslot)) {
+			ret = -EINVAL;
+			goto e_release;
+		}
+
+		ret = __kvm_gmem_get_pfn(kvm, memslot, gfn, &pfns[i], &order, false);
+		if (ret) {
+			ret = -EINVAL;
+			goto e_release;
+		}
+
+		n++;
+		ret = snp_lookup_rmpentry((u64)pfns[i], &assigned, &level);
+		if (ret || assigned) {
+			pr_debug("Failed to ensure GFN 0x%llx RMP entry is initial shared state, ret: %d assigned: %d\n",
+				 gfn, ret, assigned);
+			ret = -EINVAL;
+			goto e_release;
+		}
+
+		kvaddr = pfn_to_kaddr(pfns[i]);
+		if (!virt_addr_valid(kvaddr)) {
+			ret = -EINVAL;
+			goto e_release;
+		}
+
+		ret = copy_from_user(kvaddr, (void __user *)params.uaddr + i * PAGE_SIZE,
+				     PAGE_SIZE);
+		if (ret)
+			goto e_release;
+
+		ret = rmp_make_private(pfns[i], gfn << PAGE_SHIFT, PG_LEVEL_4K,
+				       sev_get_asid(kvm), true);
+		if (ret)
+			goto e_release;
+
+		data.address = __sme_set(pfns[i] << PAGE_SHIFT);
+		data.page_size = PG_LEVEL_TO_RMP(PG_LEVEL_4K);
+		data.page_type = params.type;
+		ret = __sev_issue_cmd(argp->sev_fd, SEV_CMD_SNP_LAUNCH_UPDATE,
+				      &data, error);
+		if (ret) {
+			pr_debug("SEV-SNP launch update failed, ret: 0x%x, fw_error: 0x%x\n",
+				 ret, *error);
+			snp_page_reclaim(pfns[i]);
+
+			/*
+			 * When invalid CPUID function entries are detected,
+			 * firmware writes the expected values into page and
+			 * leaves it unencrypted so it can be used for debugging
+			 * and error-reporting.
+			 *
+			 * Copy this page back into the source buffer so
+			 * userspace can use this information to provide
+			 * information on which CPUID leaves/fields failed CPUID
+			 * validation.
+			 */
+			if (params.type == KVM_SEV_SNP_PAGE_TYPE_CPUID &&
+			    *error == SEV_RET_INVALID_PARAM) {
+				host_rmp_make_shared(pfns[i], PG_LEVEL_4K, true);
+				if (copy_to_user((void __user *)params.uaddr, kvaddr, PAGE_SIZE))
+					pr_debug("Failed to write CPUID page back to userspace\n");
+			}
+
+			goto e_release;
+		}
+	}
+
+e_release:
+	for (i = 0; i < n; i++) {
+		if (ret)
+			host_rmp_make_shared(pfns[i], PG_LEVEL_4K, true);
+
+		kvm_release_pfn_dirty(pfns[i]);
+	}
+
+	mutex_unlock(&kvm->slots_lock);
+	kvfree(pfns);
+	return ret;
+}
+
 int sev_mem_enc_ioctl(struct kvm *kvm, void __user *argp)
 {
 	struct kvm_sev_cmd sev_cmd;
@@ -2180,6 +2361,9 @@ int sev_mem_enc_ioctl(struct kvm *kvm, void __user *argp)
 		break;
 	case KVM_SEV_SNP_LAUNCH_START:
 		r = snp_launch_start(kvm, &sev_cmd);
+		break;
+	case KVM_SEV_SNP_LAUNCH_UPDATE:
+		r = snp_launch_update(kvm, &sev_cmd);
 		break;
 	default:
 		r = -EINVAL;
