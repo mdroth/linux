@@ -498,7 +498,6 @@ Returns: 0 on success, -negative on error
 where the allowed values for page_type are::
 
 	#define KVM_SEV_SNP_PAGE_TYPE_NORMAL           0x1
-	#define KVM_SEV_SNP_PAGE_TYPE_VMSA             0x2
 	#define KVM_SEV_SNP_PAGE_TYPE_ZERO             0x3
 	#define KVM_SEV_SNP_PAGE_TYPE_UNMEASURED       0x4
 	#define KVM_SEV_SNP_PAGE_TYPE_SECRETS          0x5
