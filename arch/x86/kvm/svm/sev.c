@@ -2059,45 +2059,57 @@ e_free_context:
 	return rc;
 }
 
-static int snp_launch_update_gfn_handler(struct kvm *kvm,
-					 struct kvm_gfn_range *range,
-					 void *opaque)
+static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
 {
 	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
-	struct kvm_memory_slot *memslot = range->slot;
 	struct sev_data_snp_launch_update data = {0};
 	struct kvm_sev_snp_launch_update params;
-	struct kvm_sev_cmd *argp = opaque;
 	int *error = &argp->error;
 	int i, n = 0, ret = 0;
-	unsigned long npages;
+	unsigned int npages;
 	kvm_pfn_t *pfns;
 	gfn_t gfn;
+	int idx;
 
-	if (!kvm_slot_can_be_private(memslot)) {
-		pr_err("SEV-SNP requires private memory support via guest_memfd.\n");
+	if (!sev_snp_guest(kvm) || !sev->snp_context)
 		return -EINVAL;
-	}
 
-	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data, sizeof(params))) {
-		pr_err("Failed to copy user parameters for SEV-SNP launch.\n");
+	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data, sizeof(params)))
 		return -EFAULT;
-	}
 
-	data.gctx_paddr = __psp_pa(sev->snp_context);
+	if (!IS_ALIGNED(params.len, PAGE_SIZE) ||
+	    (params.type != KVM_SEV_SNP_PAGE_TYPE_NORMAL &&
+	     params.type != KVM_SEV_SNP_PAGE_TYPE_ZERO &&
+	     params.type != KVM_SEV_SNP_PAGE_TYPE_UNMEASURED &&
+	     params.type != KVM_SEV_SNP_PAGE_TYPE_SECRETS &&
+	     params.type != KVM_SEV_SNP_PAGE_TYPE_CPUID))
+		return -EINVAL;
 
-	npages = range->end - range->start;
+	/* TODO: make params.len a page count instead...? */
+	npages = params.len / PAGE_SIZE;
 	pfns = kvmalloc_array(npages, sizeof(*pfns), GFP_KERNEL_ACCOUNT);
 	if (!pfns)
 		return -ENOMEM;
 
-	pr_debug("%s: GFN range 0x%llx-0x%llx, type %d\n", __func__,
-		 range->start, range->end, params.page_type);
+	data.gctx_paddr = __psp_pa(sev->snp_context);
 
-	for (gfn = range->start, i = 0; gfn < range->end; gfn++, i++) {
+	pr_debug("%s: GFN range 0x%llx-0x%llx type %d\n", __func__,
+		 params.gfn_start, params.gfn_start + npages, params.type);
+
+	idx = srcu_read_lock(&kvm->srcu);
+
+	for (gfn = params.gfn_start, i = 0; gfn < params.gfn_start + npages; gfn++, i++) {
+		struct kvm_memory_slot *memslot;
 		int order, level;
 		bool assigned;
 		void *kvaddr;
+
+		memslot = gfn_to_memslot(kvm, params.gfn_start);
+		if (!kvm_slot_can_be_private(memslot))
+			goto e_release;
+
+		pr_debug("%s: GFN 0x%llx type %d slot %px\n",
+			 __func__, gfn, params.type, memslot);
 
 		ret = __kvm_gmem_get_pfn(kvm, memslot, gfn, &pfns[i], &order, false);
 		if (ret)
@@ -2108,6 +2120,7 @@ static int snp_launch_update_gfn_handler(struct kvm *kvm,
 		if (ret || assigned) {
 			pr_err("Failed to ensure GFN 0x%llx is in initial shared state, ret: %d, assigned: %d\n",
 			       gfn, ret, assigned);
+			goto e_release;
 			return -EFAULT;
 		}
 
@@ -2118,7 +2131,7 @@ static int snp_launch_update_gfn_handler(struct kvm *kvm,
 			goto e_release;
 		}
 
-		ret = kvm_read_guest_page(kvm, gfn, kvaddr, 0, PAGE_SIZE);
+		ret = copy_from_user(kvaddr, (void __user *)params.uaddr + i * PAGE_SIZE, PAGE_SIZE);
 		if (ret) {
 			pr_err("Guest read failed, ret: 0x%x\n", ret);
 			goto e_release;
@@ -2133,7 +2146,7 @@ static int snp_launch_update_gfn_handler(struct kvm *kvm,
 
 		data.address = __sme_set(pfns[i] << PAGE_SHIFT);
 		data.page_size = PG_LEVEL_TO_RMP(PG_LEVEL_4K);
-		data.page_type = params.page_type;
+		data.page_type = params.type;
 		ret = __sev_issue_cmd(argp->sev_fd, SEV_CMD_SNP_LAUNCH_UPDATE,
 				      &data, error);
 		if (ret) {
@@ -2150,13 +2163,13 @@ static int snp_launch_update_gfn_handler(struct kvm *kvm,
 			 * Copy the corrected CPUID page back to shared memory so
 			 * userpsace can retrieve this information.
 			 */
-			if (params.page_type == SNP_PAGE_TYPE_CPUID &&
+			if (params.type == KVM_SEV_SNP_PAGE_TYPE_CPUID &&
 			    *error == SEV_RET_INVALID_PARAM) {
 				int ret;
 
 				host_rmp_make_shared(pfns[i], PG_LEVEL_4K, true);
 
-				ret = kvm_write_guest_page(kvm, gfn, kvaddr, 0, PAGE_SIZE);
+				ret = copy_to_user((void __user *)params.uaddr, kvaddr, PAGE_SIZE);
 				if (ret)
 					pr_err("Failed to write CPUID page back to userspace, ret: 0x%x\n",
 					       ret);
@@ -2182,26 +2195,9 @@ e_release:
 		put_page(pfn_to_page(pfns[i]));
 	}
 
+	srcu_read_unlock(&kvm->srcu, idx);
 	kvfree(pfns);
 	return ret;
-}
-
-static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
-{
-	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
-	struct kvm_sev_snp_launch_update params;
-
-	if (!sev_snp_guest(kvm))
-		return -ENOTTY;
-
-	if (!sev->snp_context)
-		return -EINVAL;
-
-	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data, sizeof(params)))
-		return -EFAULT;
-
-	return kvm_vm_do_hva_range_op(kvm, params.uaddr, params.uaddr + params.len,
-				      snp_launch_update_gfn_handler, argp);
 }
 
 static int snp_launch_update_vmsa(struct kvm *kvm, struct kvm_sev_cmd *argp)
