@@ -204,14 +204,11 @@ void __init probe_roms(void)
 	int i;
 
 	/*
-	 * The ROM memory range is not part of the e820 table and is therefore not
-	 * pre-validated by BIOS. The kernel page table maps the ROM region as encrypted
-	 * memory, and SNP requires encrypted memory to be validated before access.
-	 * Do that here.
+	 * These probes are skipped in SEV-SNP guests because the ROM range
+	 * is not pre-validated, meaning access would cause a crash.
 	 */
-	snp_prep_memory(video_rom_resource.start,
-			((system_rom_resource.end + 1) - video_rom_resource.start),
-			SNP_PAGE_STATE_PRIVATE);
+	if (cc_platform_has(CC_ATTR_GUEST_SEV_SNP))
+		return;
 
 	/* video rom */
 	upper = adapter_rom_resources[0].start;

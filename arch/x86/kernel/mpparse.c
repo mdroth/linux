@@ -564,6 +564,13 @@ static int __init smp_scan_config(unsigned long base, unsigned long length)
 		    base, base + length - 1);
 	BUILD_BUG_ON(sizeof(*mpf) != 16);
 
+	/*
+	 * Skip scan in SEV-SNP guest if it would touch the legacy ROM region,
+	 * as this memory is not pre-validated and would thus cause a crash.
+	 */
+	if (cc_platform_has(CC_ATTR_GUEST_SEV_SNP) && base < 0x100000 && base + length >= 0xC0000)
+		return 0;
+
 	while (length > 0) {
 		bp = early_memremap(base, length);
 		mpf = (struct mpf_intel *)bp;

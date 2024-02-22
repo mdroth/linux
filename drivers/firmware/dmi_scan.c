@@ -703,7 +703,12 @@ static void __init dmi_scan_machine(void)
 			dmi_available = 1;
 			return;
 		}
-	} else if (IS_ENABLED(CONFIG_DMI_SCAN_MACHINE_NON_EFI_FALLBACK)) {
+	} else if (IS_ENABLED(CONFIG_DMI_SCAN_MACHINE_NON_EFI_FALLBACK) &&
+		!cc_platform_has(CC_ATTR_GUEST_SEV_SNP)) {
+		/*
+		 * This scan is skipped in SEV-SNP guests because the ROM range
+		 * is not pre-validated, meaning access would cause a crash.
+		 */
 		p = dmi_early_remap(SMBIOS_ENTRY_POINT_SCAN_START, 0x10000);
 		if (p == NULL)
 			goto error;
