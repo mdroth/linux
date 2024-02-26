@@ -339,7 +339,7 @@ static int sev_launch_start(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	if (!sev_guest(kvm))
 		return -ENOTTY;
 
-	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data, sizeof(params)))
+	if (copy_from_user(&params, u64_to_user_ptr(argp->data), sizeof(params)))
 		return -EFAULT;
 
 	memset(&start, 0, sizeof(start));
@@ -383,7 +383,7 @@ static int sev_launch_start(struct kvm *kvm, struct kvm_sev_cmd *argp)
 
 	/* return handle to userspace */
 	params.handle = start.handle;
-	if (copy_to_user((void __user *)(uintptr_t)argp->data, &params, sizeof(params))) {
+	if (copy_to_user(u64_to_user_ptr(argp->data), &params, sizeof(params))) {
 		sev_unbind_asid(kvm, start.handle);
 		ret = -EFAULT;
 		goto e_free_session;
@@ -522,7 +522,7 @@ static int sev_launch_update_data(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	if (!sev_guest(kvm))
 		return -ENOTTY;
 
-	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data, sizeof(params)))
+	if (copy_from_user(&params, u64_to_user_ptr(argp->data), sizeof(params)))
 		return -EFAULT;
 
 	vaddr = params.uaddr;
@@ -695,7 +695,7 @@ static int sev_launch_update_vmsa(struct kvm *kvm, struct kvm_sev_cmd *argp)
 
 static int sev_launch_measure(struct kvm *kvm, struct kvm_sev_cmd *argp)
 {
-	void __user *measure = (void __user *)(uintptr_t)argp->data;
+	void __user *measure = u64_to_user_ptr(argp->data);
 	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
 	struct sev_data_launch_measure data;
 	struct kvm_sev_launch_measure params;
@@ -715,7 +715,7 @@ static int sev_launch_measure(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	if (!params.len)
 		goto cmd;
 
-	p = (void __user *)(uintptr_t)params.uaddr;
+	p = u64_to_user_ptr(params.uaddr);
 	if (p) {
 		if (params.len > SEV_FW_BLOB_MAX_SIZE)
 			return -EINVAL;
@@ -788,7 +788,7 @@ static int sev_guest_status(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	params.state = data.state;
 	params.handle = data.handle;
 
-	if (copy_to_user((void __user *)(uintptr_t)argp->data, &params, sizeof(params)))
+	if (copy_to_user(u64_to_user_ptr(argp->data), &params, sizeof(params)))
 		ret = -EFAULT;
 
 	return ret;
@@ -953,7 +953,7 @@ static int sev_dbg_crypt(struct kvm *kvm, struct kvm_sev_cmd *argp, bool dec)
 	if (!sev_guest(kvm))
 		return -ENOTTY;
 
-	if (copy_from_user(&debug, (void __user *)(uintptr_t)argp->data, sizeof(debug)))
+	if (copy_from_user(&debug, u64_to_user_ptr(argp->data), sizeof(debug)))
 		return -EFAULT;
 
 	if (!debug.len || debug.src_uaddr + debug.len < debug.src_uaddr)
@@ -1037,7 +1037,7 @@ static int sev_launch_secret(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	if (!sev_guest(kvm))
 		return -ENOTTY;
 
-	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data, sizeof(params)))
+	if (copy_from_user(&params, u64_to_user_ptr(argp->data), sizeof(params)))
 		return -EFAULT;
 
 	pages = sev_pin_memory(kvm, params.guest_uaddr, params.guest_len, &n, 1);
@@ -1101,7 +1101,7 @@ e_unpin_memory:
 
 static int sev_get_attestation_report(struct kvm *kvm, struct kvm_sev_cmd *argp)
 {
-	void __user *report = (void __user *)(uintptr_t)argp->data;
+	void __user *report = u64_to_user_ptr(argp->data);
 	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
 	struct sev_data_attestation_report data;
 	struct kvm_sev_attestation_report params;
@@ -1112,7 +1112,7 @@ static int sev_get_attestation_report(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	if (!sev_guest(kvm))
 		return -ENOTTY;
 
-	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data, sizeof(params)))
+	if (copy_from_user(&params, u64_to_user_ptr(argp->data), sizeof(params)))
 		return -EFAULT;
 
 	memset(&data, 0, sizeof(data));
@@ -1121,7 +1121,7 @@ static int sev_get_attestation_report(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	if (!params.len)
 		goto cmd;
 
-	p = (void __user *)(uintptr_t)params.uaddr;
+	p = u64_to_user_ptr(params.uaddr);
 	if (p) {
 		if (params.len > SEV_FW_BLOB_MAX_SIZE)
 			return -EINVAL;
@@ -1174,7 +1174,7 @@ __sev_send_start_query_session_length(struct kvm *kvm, struct kvm_sev_cmd *argp,
 	ret = sev_issue_cmd(kvm, SEV_CMD_SEND_START, &data, &argp->error);
 
 	params->session_len = data.session_len;
-	if (copy_to_user((void __user *)(uintptr_t)argp->data, params,
+	if (copy_to_user(u64_to_user_ptr(argp->data), params,
 				sizeof(struct kvm_sev_send_start)))
 		ret = -EFAULT;
 
@@ -1193,7 +1193,7 @@ static int sev_send_start(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	if (!sev_guest(kvm))
 		return -ENOTTY;
 
-	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data,
+	if (copy_from_user(&params, u64_to_user_ptr(argp->data),
 				sizeof(struct kvm_sev_send_start)))
 		return -EFAULT;
 
@@ -1248,7 +1248,7 @@ static int sev_send_start(struct kvm *kvm, struct kvm_sev_cmd *argp)
 
 	ret = sev_issue_cmd(kvm, SEV_CMD_SEND_START, &data, &argp->error);
 
-	if (!ret && copy_to_user((void __user *)(uintptr_t)params.session_uaddr,
+	if (!ret && copy_to_user(u64_to_user_ptr(params.session_uaddr),
 			session_data, params.session_len)) {
 		ret = -EFAULT;
 		goto e_free_amd_cert;
@@ -1256,7 +1256,7 @@ static int sev_send_start(struct kvm *kvm, struct kvm_sev_cmd *argp)
 
 	params.policy = data.policy;
 	params.session_len = data.session_len;
-	if (copy_to_user((void __user *)(uintptr_t)argp->data, &params,
+	if (copy_to_user(u64_to_user_ptr(argp->data), &params,
 				sizeof(struct kvm_sev_send_start)))
 		ret = -EFAULT;
 
@@ -1287,7 +1287,7 @@ __sev_send_update_data_query_lengths(struct kvm *kvm, struct kvm_sev_cmd *argp,
 	params->hdr_len = data.hdr_len;
 	params->trans_len = data.trans_len;
 
-	if (copy_to_user((void __user *)(uintptr_t)argp->data, params,
+	if (copy_to_user(u64_to_user_ptr(argp->data), params,
 			 sizeof(struct kvm_sev_send_update_data)))
 		ret = -EFAULT;
 
@@ -1307,7 +1307,7 @@ static int sev_send_update_data(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	if (!sev_guest(kvm))
 		return -ENOTTY;
 
-	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data,
+	if (copy_from_user(&params, u64_to_user_ptr(argp->data),
 			sizeof(struct kvm_sev_send_update_data)))
 		return -EFAULT;
 
@@ -1358,14 +1358,14 @@ static int sev_send_update_data(struct kvm *kvm, struct kvm_sev_cmd *argp)
 		goto e_free_trans_data;
 
 	/* copy transport buffer to user space */
-	if (copy_to_user((void __user *)(uintptr_t)params.trans_uaddr,
+	if (copy_to_user(u64_to_user_ptr(params.trans_uaddr),
 			 trans_data, params.trans_len)) {
 		ret = -EFAULT;
 		goto e_free_trans_data;
 	}
 
 	/* Copy packet header to userspace. */
-	if (copy_to_user((void __user *)(uintptr_t)params.hdr_uaddr, hdr,
+	if (copy_to_user(u64_to_user_ptr(params.hdr_uaddr), hdr,
 			 params.hdr_len))
 		ret = -EFAULT;
 
@@ -1417,7 +1417,7 @@ static int sev_receive_start(struct kvm *kvm, struct kvm_sev_cmd *argp)
 		return -ENOTTY;
 
 	/* Get parameter from the userspace */
-	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data,
+	if (copy_from_user(&params, u64_to_user_ptr(argp->data),
 			sizeof(struct kvm_sev_receive_start)))
 		return -EFAULT;
 
@@ -1459,7 +1459,7 @@ static int sev_receive_start(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	}
 
 	params.handle = start.handle;
-	if (copy_to_user((void __user *)(uintptr_t)argp->data,
+	if (copy_to_user(u64_to_user_ptr(argp->data),
 			 &params, sizeof(struct kvm_sev_receive_start))) {
 		ret = -EFAULT;
 		sev_unbind_asid(kvm, start.handle);
@@ -1490,7 +1490,7 @@ static int sev_receive_update_data(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	if (!sev_guest(kvm))
 		return -EINVAL;
 
-	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data,
+	if (copy_from_user(&params, u64_to_user_ptr(argp->data),
 			sizeof(struct kvm_sev_receive_update_data)))
 		return -EFAULT;
 
