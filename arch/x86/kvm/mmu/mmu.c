@@ -4352,6 +4352,7 @@ static int kvm_faultin_pfn_private(struct kvm_vcpu *vcpu,
 static int __kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 {
 	struct kvm_memory_slot *slot = fault->slot;
+	bool ignore_private_fault = false;
 	bool async;
 
 	/*
@@ -4386,7 +4387,19 @@ static int __kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 		return -EFAULT;
 	}
 
-	if (fault->is_private)
+	/*
+	 * In some cases SNP guests will make MMIO accesses with the encryption
+	 * bit set. Handle these via the normal MMIO fault path but report them
+	 * for awareness.
+	 *
+	 * TODO: address the remaining case in OVMF and drop this handling.
+	 */
+	if (!slot && fault->is_private && kvm_is_vm_type(vcpu->kvm, KVM_X86_SNP_VM)) {
+		pr_warn("%s: private MMIO fault for fault->gfn %llx\n", __func__, fault->gfn);
+		ignore_private_fault = true;
+	}
+
+	if (fault->is_private && !ignore_private_fault)
 		return kvm_faultin_pfn_private(vcpu, fault);
 
 	async = false;
