@@ -2126,16 +2126,116 @@ e_free_context:
 	return rc;
 }
 
+struct sev_gmem_populate_args {
+	struct kvm_sev_snp_launch_update *params;
+	int sev_fd;
+	int *fw_error;
+};
+
+static int sev_gmem_populate_cb(struct kvm *kvm, struct kvm_memory_slot *slot,
+				gfn_t gfn_start, kvm_pfn_t pfn, int order, void *opaque)
+{
+	struct sev_gmem_populate_args *sev_populate_args = opaque;
+	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	struct kvm_sev_snp_launch_update *params;
+	int ret, i, sev_fd, *fw_error;
+	int n_private = 0;
+	int npages;
+	gfn_t gfn;
+
+	params = sev_populate_args->params;
+	fw_error = sev_populate_args->fw_error;
+	sev_fd = sev_populate_args->sev_fd;
+	npages = (1 << order);
+
+	pr_debug("%s: gfn_start %llx pfn_start %llx npages %d\n",
+		 __func__, gfn_start, pfn, npages);
+
+	for (gfn = gfn_start, i = 0; gfn < gfn_start + npages; gfn++, i++) {
+		struct sev_data_snp_launch_update fw_args = {0};
+		bool assigned;
+		int level;
+
+		if (!kvm_mem_is_private(kvm, gfn)) {
+			pr_debug("%s: Failed to ensure GFN 0x%llx has private memory attribute set\n",
+				 __func__, gfn);
+			ret = -EINVAL;
+			break;
+		}
+
+		/* TODO: implement handling for 2MB pages? */
+		ret = snp_lookup_rmpentry((u64)pfn + i, &assigned, &level);
+		if (ret || assigned) {
+			pr_debug("%s: Failed to ensure GFN 0x%llx RMP entry is initial shared state, ret: %d assigned: %d\n",
+				 __func__, gfn, ret, assigned);
+			break;
+		}
+
+		ret = rmp_make_private(pfn + i, gfn << PAGE_SHIFT, PG_LEVEL_4K,
+				       sev_get_asid(kvm), true);
+		if (ret) {
+			pr_debug("%s: Failed to convert GFN 0x%llx to private, ret: %d\n",
+				 __func__, gfn, ret);
+			break;
+		}
+
+		n_private++;
+
+		fw_args.gctx_paddr = __psp_pa(sev->snp_context);
+		fw_args.address = __sme_set((pfn + i) << PAGE_SHIFT);
+		fw_args.page_size = PG_LEVEL_TO_RMP(PG_LEVEL_4K);
+		fw_args.page_type = params->type;
+		ret = __sev_issue_cmd(sev_fd, SEV_CMD_SNP_LAUNCH_UPDATE,
+				      &fw_args, fw_error);
+		if (ret) {
+			pr_debug("%s: SEV-SNP launch update failed, ret: 0x%x, fw_error: 0x%x\n",
+				 __func__, ret, *fw_error);
+			snp_page_reclaim(pfn + i);
+
+			/*
+			 * When invalid CPUID function entries are detected,
+			 * firmware writes the expected values into page and
+			 * leaves it unencrypted so it can be used for debugging
+			 * and error-reporting.
+			 *
+			 * Copy this page back into the source buffer so
+			 * userspace can use this information to provide
+			 * information on which CPUID leaves/fields failed CPUID
+			 * validation.
+			 */
+			/* TODO: don't rely on directmap of pfn */
+			if (params->type == KVM_SEV_SNP_PAGE_TYPE_CPUID &&
+			    *fw_error == SEV_RET_INVALID_PARAM) {
+				host_rmp_make_shared(pfn + i, PG_LEVEL_4K, true);
+				if (copy_to_user((void __user *)(params->uaddr + i * PAGE_SIZE), __va(pfn + i), PAGE_SIZE))
+					pr_debug("Failed to write CPUID page back to userspace\n");
+			}
+
+			break;
+		}
+	}
+
+	if (ret) {
+		pr_debug("%s: exiting with ret %d i %d\n", __func__, ret, i);
+		for (i = 0; i < n_private; i++)
+			host_rmp_make_shared(pfn + i, PG_LEVEL_4K, true);
+	}
+
+	return ret;
+}
+
 static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
 {
 	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
-	struct sev_data_snp_launch_update data = {0};
+	struct sev_gmem_populate_args sev_populate_args = {0};
+	struct kvm_gmem_populate_args populate_args = {0};
 	struct kvm_sev_snp_launch_update params;
-	int *error = &argp->error;
-	int i, n = 0, ret = 0;
+	struct kvm_memory_slot *memslot;
 	unsigned int npages;
-	kvm_pfn_t *pfns;
-	gfn_t gfn;
+	int ret = 0;
+	//kvm_pfn_t *pfns;
+	/* TODO: propagate firmware error to userspace somehow. */
+	//int *error = &argp->error;
 
 	if (!sev_snp_guest(kvm) || !sev->snp_context)
 		return -EINVAL;
@@ -2152,11 +2252,11 @@ static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
 		return -EINVAL;
 
 	npages = params.len / PAGE_SIZE;
+#if 0
 	pfns = kvmalloc_array(npages, sizeof(*pfns), GFP_KERNEL_ACCOUNT);
 	if (!pfns)
 		return -ENOMEM;
-
-	data.gctx_paddr = __psp_pa(sev->snp_context);
+#endif
 
 	pr_debug("%s: GFN range 0x%llx-0x%llx type %d\n", __func__,
 		 params.gfn_start, params.gfn_start + npages, params.type);
@@ -2182,6 +2282,33 @@ static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
 	 */
 	mutex_lock(&kvm->slots_lock);
 
+	memslot = gfn_to_memslot(kvm, params.gfn_start);
+	if (!kvm_slot_can_be_private(memslot)) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	sev_populate_args.fw_error = &argp->error;
+	sev_populate_args.sev_fd = argp->sev_fd;
+	sev_populate_args.params = &params;
+
+	populate_args.opaque = &sev_populate_args;
+	populate_args.gfn = params.gfn_start;
+	populate_args.src = (void __user *)params.uaddr;
+	populate_args.npages = npages;
+	populate_args.do_memcpy = true;
+	populate_args.callback = sev_gmem_populate_cb;
+
+	ret = kvm_gmem_populate(kvm, memslot, &populate_args);
+	if (ret)
+		pr_debug("%s: kvm_gmem_populate failed, ret %d\n", __func__, ret);
+
+out:
+	mutex_unlock(&kvm->slots_lock);
+
+	return ret;
+
+#if 0
 	for (gfn = params.gfn_start, i = 0; gfn < params.gfn_start + npages; gfn++, i++) {
 		struct kvm_memory_slot *memslot;
 		int order, level;
@@ -2273,8 +2400,10 @@ e_release:
 	}
 
 	mutex_unlock(&kvm->slots_lock);
-	kvfree(pfns);
+	//kvfree(pfns);
+	//
 	return ret;
+#endif
 }
 
 static int snp_launch_update_vmsa(struct kvm *kvm, struct kvm_sev_cmd *argp)
