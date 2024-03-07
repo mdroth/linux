@@ -633,3 +633,50 @@ out_fput:
 	return r;
 }
 EXPORT_SYMBOL_GPL(kvm_gmem_undo_get_pfn);
+
+int kvm_gmem_populate(struct kvm *kvm, struct kvm_memory_slot *slot,
+		      struct kvm_gmem_populate_args *args)
+{
+	int ret, max_order, i;
+
+	for (i = 0; i < args->npages; i += (1 << max_order)) {
+		void __user *src = args->src + i * PAGE_SIZE;
+		gfn_t gfn = args->gfn + i;
+		kvm_pfn_t pfn;
+
+		ret = __kvm_gmem_get_pfn(kvm, slot, gfn, &pfn, &max_order, false);
+		if (ret)
+			break;
+
+		if (!IS_ALIGNED(gfn, (1 << max_order)) ||
+		    (args->npages - i) < (1 << max_order))
+			max_order = 0;
+
+		if (args->do_memcpy) {
+			pr_debug("%s: GFN %llx copying into PFN %llx from HVA base %px cur %px (pgoff %d pages %d)\n",
+				 __func__, gfn, pfn, args->src, src, i, (1 << max_order));
+			ret = copy_from_user(pfn_to_kaddr(pfn), src, (1 << max_order) * PAGE_SIZE);
+			if (ret)
+				goto e_release;
+			pr_debug("%s: GFN %llx PFN %llx contents from HVA %px, hva[%ld]: %x, hva[%ld]: %x\n",
+				 __func__, gfn, pfn, args->src, i * PAGE_SIZE,
+				 ((__u8 *)(pfn_to_kaddr(pfn)))[i * PAGE_SIZE],
+				 (i + (1 << max_order)) * PAGE_SIZE - 1,
+				 ((__u8 *)(pfn_to_kaddr(pfn)))[(i + (1 << max_order)) * PAGE_SIZE - 1]);
+		}
+
+		if (args->callback) {
+			ret = args->callback(kvm, slot, gfn, pfn, max_order, args->opaque);
+			if (ret)
+				goto e_release;
+
+		}
+e_release:
+		put_page(pfn_to_page(pfn));
+		if (ret)
+			break;
+	}
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(kvm_gmem_populate);

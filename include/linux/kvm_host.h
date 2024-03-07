@@ -2470,4 +2470,17 @@ int kvm_arch_gmem_prepare(struct kvm *kvm, gfn_t gfn, kvm_pfn_t pfn, int max_ord
 void kvm_arch_gmem_invalidate(kvm_pfn_t start, kvm_pfn_t end);
 #endif
 
+struct kvm_gmem_populate_args {
+	gfn_t gfn;
+	void __user *src;
+	int npages;
+	bool do_memcpy;
+	int (*callback)(struct kvm *kvm, struct kvm_memory_slot *slot,
+			gfn_t gfn, kvm_pfn_t pfn, int order, void *opaque);
+	void *opaque;
+};
+
+int kvm_gmem_populate(struct kvm *kvm, struct kvm_memory_slot *slot,
+		      struct kvm_gmem_populate_args *args);
+
 #endif
