@@ -298,25 +298,6 @@ static void sev_unbind_asid(struct kvm *kvm, unsigned int handle)
 	sev_decommission(handle);
 }
 
-static int verify_snp_init_flags(struct kvm *kvm, struct kvm_sev_cmd *argp)
-{
-	struct kvm_snp_init params;
-	int ret = 0;
-
-	if (copy_from_user(&params, (void __user *)(uintptr_t)argp->data, sizeof(params)))
-		return -EFAULT;
-
-	if (params.flags & ~SEV_SNP_SUPPORTED_FLAGS)
-		ret = -EOPNOTSUPP;
-
-	params.flags = SEV_SNP_SUPPORTED_FLAGS;
-
-	if (copy_to_user((void __user *)(uintptr_t)argp->data, &params, sizeof(params)))
-		ret = -EFAULT;
-
-	return ret;
-}
-
 static int __sev_guest_init(struct kvm *kvm, struct kvm_sev_cmd *argp,
 			    struct kvm_sev_init *data,
 			    unsigned long vm_type)
@@ -347,12 +328,6 @@ static int __sev_guest_init(struct kvm *kvm, struct kvm_sev_cmd *argp,
 	ret = sev_asid_new(sev);
 	if (ret)
 		goto e_no_asid;
-
-	if (sev->snp_active) {
-		ret = verify_snp_init_flags(kvm, argp);
-		if (ret)
-			goto e_free;
-	}
 
 	init_args.probe = false;
 	ret = sev_platform_init(&init_args);
@@ -402,7 +377,8 @@ static int sev_guest_init2(struct kvm *kvm, struct kvm_sev_cmd *argp)
 		return -EINVAL;
 
 	if (kvm->arch.vm_type != KVM_X86_SEV_VM &&
-	    kvm->arch.vm_type != KVM_X86_SEV_ES_VM)
+	    kvm->arch.vm_type != KVM_X86_SEV_ES_VM &&
+	    kvm->arch.vm_type != KVM_X86_SNP_VM)
 		return -EINVAL;
 
 	if (copy_from_user(&data, u64_to_user_ptr(argp->data), sizeof(data)))
