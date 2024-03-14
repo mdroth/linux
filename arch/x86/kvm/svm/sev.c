@@ -804,6 +804,14 @@ static int __sev_launch_update_vmsa(struct kvm *kvm, struct kvm_vcpu *vcpu,
 	 */
 	fpstate_set_confidential(&vcpu->arch.guest_fpu);
 	vcpu->arch.guest_state_protected = true;
+
+	/*
+	 * SEV-ES guests maintain an encrypted version of their FPU
+	 * state which is restored and saved on VMRUN and VMEXIT.
+	 * Mark vcpu->arch.guest_fpu->fpstate as scratch so it won't
+	 * do xsave/xrstor on it.
+	 */
+	fpstate_set_confidential(&vcpu->arch.guest_fpu);
 	return 0;
 }
 
@@ -2425,7 +2433,8 @@ handle_remaining_vcpus:
 			return ret;
 		}
 
-		svm->vcpu.arch.guest_state_protected = true;
+		vcpu->arch.guest_state_protected = true;
+		fpstate_set_confidential(&vcpu->arch.guest_fpu);
 
 		if (!boot_vcpu_handled) {
 			boot_vcpu_handled = true;
