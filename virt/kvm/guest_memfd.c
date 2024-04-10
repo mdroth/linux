@@ -579,7 +579,7 @@ static int __kvm_gmem_get_pfn(struct file *file, struct kvm_memory_slot *slot,
 		return -EIO;
 	}
 
-	folio = kvm_gmem_get_folio(file_inode(file), index, true);
+	folio = kvm_gmem_get_folio(file_inode(file), index, prepare);
 	if (!folio)
 		return -ENOMEM;
 
