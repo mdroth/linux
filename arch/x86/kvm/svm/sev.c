@@ -3274,6 +3274,10 @@ static int sev_es_validate_vmgexit(struct vcpu_svm *svm)
 	case SVM_VMGEXIT_HV_FEATURES:
 	case SVM_VMGEXIT_TERM_REQUEST:
 		break;
+	case SVM_VMGEXIT_PSC:
+		if (!sev_snp_guest(vcpu->kvm) || !kvm_ghcb_sw_scratch_is_valid(svm))
+			goto vmgexit_err;
+		break;
 	default:
 		reason = GHCB_ERR_INVALID_EVENT;
 		goto vmgexit_err;
@@ -3501,6 +3505,175 @@ static int snp_begin_psc_msr(struct vcpu_svm *svm, u64 ghcb_msr)
 	vcpu->arch.complete_userspace_io = snp_complete_psc_msr;
 
 	return 0; /* forward request to userspace */
+}
+
+struct psc_buffer {
+	struct psc_hdr hdr;
+	struct psc_entry entries[];
+} __packed;
+
+static int snp_begin_psc(struct vcpu_svm *svm, struct psc_buffer *psc);
+
+static int snp_complete_psc(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+	struct psc_buffer *psc = svm->sev_es.ghcb_sa;
+	struct psc_entry *entries = psc->entries;
+	struct psc_hdr *hdr = &psc->hdr;
+	__u64 psc_ret;
+	__u16 idx;
+
+	if (vcpu->run->hypercall.ret) {
+		psc_ret = VMGEXIT_PSC_ERROR_GENERIC;
+		goto out_resume;
+	}
+
+	/*
+	 * Everything in-flight has been processed successfully. Update the
+	 * corresponding entries in the guest's PSC buffer.
+	 */
+	for (idx = svm->sev_es.psc_idx; svm->sev_es.psc_inflight;
+	     svm->sev_es.psc_inflight--, idx++) {
+		struct psc_entry *entry = &entries[idx];
+
+		entry->cur_page = svm->sev_es.psc_2m ? 512 : 1;
+	}
+
+	hdr->cur_entry = idx;
+
+	/* Handle the next range (if any). */
+	return snp_begin_psc(svm, psc);
+
+out_resume:
+	svm->sev_es.psc_idx = 0;
+	svm->sev_es.psc_inflight = 0;
+	svm->sev_es.psc_2m = false;
+	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb, psc_ret);
+
+	return 1; /* resume guest */
+}
+
+static int snp_begin_psc(struct vcpu_svm *svm, struct psc_buffer *psc)
+{
+	struct psc_entry *entries = psc->entries;
+	struct kvm_vcpu *vcpu = &svm->vcpu;
+	struct psc_hdr *hdr = &psc->hdr;
+	struct psc_entry entry_start;
+	u16 idx, idx_start, idx_end;
+	__u64 psc_ret, gpa;
+	int npages;
+
+	/* There should be no other PSCs in-flight at this point. */
+	if (WARN_ON_ONCE(svm->sev_es.psc_inflight)) {
+		psc_ret = VMGEXIT_PSC_ERROR_GENERIC;
+		goto out_resume;
+	}
+
+	if (!(vcpu->kvm->arch.hypercall_exit_enabled & (1 << KVM_HC_MAP_GPA_RANGE))) {
+		psc_ret = VMGEXIT_PSC_ERROR_GENERIC;
+		goto out_resume;
+	}
+
+	/*
+	 * The PSC descriptor buffer can be modified by a misbehaved guest after
+	 * validation, so take care to only use validated copies of values used
+	 * for things like array indexing.
+	 */
+	idx_start = hdr->cur_entry;
+	idx_end = hdr->end_entry;
+
+	if (idx_end >= VMGEXIT_PSC_MAX_COUNT) {
+		psc_ret = VMGEXIT_PSC_ERROR_INVALID_HDR;
+		goto out_resume;
+	}
+
+	/* Nothing more to process. */
+	if (idx_start > idx_end) {
+		psc_ret = 0;
+		goto out_resume;
+	}
+
+	/* Find the start of the next range which needs processing. */
+	for (idx = idx_start; idx <= idx_end; idx++, hdr->cur_entry++) {
+		__u16 cur_page;
+		gfn_t gfn;
+		bool huge;
+
+		entry_start = entries[idx];
+
+		/* Only private/shared conversions are currently supported. */
+		if (entry_start.operation != VMGEXIT_PSC_OP_PRIVATE &&
+		    entry_start.operation != VMGEXIT_PSC_OP_SHARED)
+			continue;
+
+		gfn = entry_start.gfn;
+		cur_page = entry_start.cur_page;
+		huge = entry_start.pagesize;
+
+		if ((huge && (cur_page > 512 || !IS_ALIGNED(gfn, 512))) ||
+		    (!huge && cur_page > 1)) {
+			psc_ret = VMGEXIT_PSC_ERROR_INVALID_ENTRY;
+			goto out_resume;
+		}
+
+		/* All sub-pages already processed. */
+		if ((huge && cur_page == 512) || (!huge && cur_page == 1))
+			continue;
+
+		/*
+		 * If this is a partially-completed 2M range, force 4K handling
+		 * for the remaining pages since they're effectively split at
+		 * this point. Subsequent code should ensure this doesn't get
+		 * combined with adjacent PSC entries where 2M handling is still
+		 * possible.
+		 */
+		svm->sev_es.psc_2m = cur_page ? false : huge;
+		svm->sev_es.psc_idx = idx;
+		svm->sev_es.psc_inflight = 1;
+
+		gpa = gfn_to_gpa(gfn + cur_page);
+		npages = huge ? 512 - cur_page : 1;
+		break;
+	}
+
+	/*
+	 * Find all subsequent PSC entries that contain adjacent GPA
+	 * ranges/operations and can be combined into a single
+	 * KVM_HC_MAP_GPA_RANGE exit.
+	 */
+	for (idx = svm->sev_es.psc_idx + 1; idx <= idx_end; idx++) {
+		struct psc_entry entry = entries[idx];
+
+		if (entry.operation != entry_start.operation ||
+		    entry.gfn != entry_start.gfn + npages ||
+		    !!entry.pagesize != svm->sev_es.psc_2m)
+			break;
+
+		svm->sev_es.psc_inflight++;
+		npages += entry_start.pagesize ? 512 : 1;
+	}
+
+	vcpu->run->exit_reason = KVM_EXIT_HYPERCALL;
+	vcpu->run->hypercall.nr = KVM_HC_MAP_GPA_RANGE;
+	vcpu->run->hypercall.args[0] = gpa;
+	vcpu->run->hypercall.args[1] = npages;
+	vcpu->run->hypercall.args[2] = entry_start.operation == VMGEXIT_PSC_OP_PRIVATE
+				       ? KVM_MAP_GPA_RANGE_ENCRYPTED
+				       : KVM_MAP_GPA_RANGE_DECRYPTED;
+	vcpu->run->hypercall.args[2] |= entry_start.pagesize
+					? KVM_MAP_GPA_RANGE_PAGE_SZ_2M
+					: KVM_MAP_GPA_RANGE_PAGE_SZ_4K;
+	vcpu->arch.complete_userspace_io = snp_complete_psc;
+
+	return 0; /* forward request to userspace */
+
+out_resume:
+	svm->sev_es.psc_idx = 0;
+	svm->sev_es.psc_inflight = 0;
+	svm->sev_es.psc_2m = false;
+	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb, psc_ret);
+
+	return 1; /* resume guest */
 }
 
 static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
@@ -3760,6 +3933,13 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 		vcpu->run->system_event.type = KVM_SYSTEM_EVENT_SEV_TERM;
 		vcpu->run->system_event.ndata = 1;
 		vcpu->run->system_event.data[0] = control->ghcb_gpa;
+		break;
+	case SVM_VMGEXIT_PSC:
+		ret = setup_vmgexit_scratch(svm, true, control->exit_info_2);
+		if (ret)
+			break;
+
+		ret = snp_begin_psc(svm, svm->sev_es.ghcb_sa);
 		break;
 	case SVM_VMGEXIT_UNSUPPORTED_EVENT:
 		vcpu_unimpl(vcpu,
