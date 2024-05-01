@@ -19,6 +19,7 @@
 #include <linux/misc_cgroup.h>
 #include <linux/processor.h>
 #include <linux/trace_events.h>
+#include <uapi/linux/sev-guest.h>
 
 #include <asm/pkru.h>
 #include <asm/trapnr.h>
@@ -3292,6 +3293,10 @@ static int sev_es_validate_vmgexit(struct vcpu_svm *svm)
 		if (!sev_snp_guest(vcpu->kvm) || !kvm_ghcb_sw_scratch_is_valid(svm))
 			goto vmgexit_err;
 		break;
+	case SVM_VMGEXIT_GUEST_REQUEST:
+		if (!sev_snp_guest(vcpu->kvm))
+			goto vmgexit_err;
+		break;
 	default:
 		reason = GHCB_ERR_INVALID_EVENT;
 		goto vmgexit_err;
@@ -3914,6 +3919,70 @@ out:
 	return ret;
 }
 
+static int snp_handle_guest_req(struct vcpu_svm *svm, gpa_t req_gpa, gpa_t resp_gpa)
+{
+	struct sev_data_snp_guest_request data = {0};
+	struct kvm *kvm = svm->vcpu.kvm;
+	kvm_pfn_t req_pfn, resp_pfn;
+	sev_ret_code fw_err = 0;
+	int ret;
+
+	if (!sev_snp_guest(kvm))
+		return -EINVAL;
+
+	if (!PAGE_ALIGNED(req_gpa) || !PAGE_ALIGNED(resp_gpa))
+		return -EINVAL;
+
+	req_pfn = gfn_to_pfn(kvm, gpa_to_gfn(req_gpa));
+	if (is_error_noslot_pfn(req_pfn))
+		return -EINVAL;
+
+	resp_pfn = gfn_to_pfn(kvm, gpa_to_gfn(resp_gpa));
+	if (is_error_noslot_pfn(resp_pfn)) {
+		ret = -EINVAL;
+		goto release_req;
+	}
+
+	if (rmp_make_private(resp_pfn, 0, PG_LEVEL_4K, 0, true)) {
+		ret = -EINVAL;
+		kvm_release_pfn_clean(resp_pfn);
+		goto release_req;
+	}
+
+	data.gctx_paddr = __psp_pa(to_kvm_sev_info(kvm)->snp_context);
+	data.req_paddr = __sme_set(req_pfn << PAGE_SHIFT);
+	data.res_paddr = __sme_set(resp_pfn << PAGE_SHIFT);
+
+	ret = sev_issue_cmd(kvm, SEV_CMD_SNP_GUEST_REQUEST, &data, &fw_err);
+
+	/*
+	 * If the pages can't be placed back in the expected state then it is
+	 * more reliable to always report the error to userspace than to try to
+	 * let the guest deal with it somehow. Either way, the guest would
+	 * likely terminate itself soon after a guest request failure anyway.
+	 */
+	if (snp_page_reclaim(resp_pfn) ||
+	    host_rmp_make_shared(resp_pfn, PG_LEVEL_4K)) {
+		ret = -EIO;
+		goto release_req;
+	}
+
+	/*
+	 * Unlike with reclaim failures, firmware failures should be
+	 * communicated back to the guest via SW_EXITINFO2 rather than be
+	 * treated as immediately fatal.
+	 */
+	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb,
+				SNP_GUEST_ERR(ret ? SNP_GUEST_VMM_ERR_GENERIC : 0,
+					      fw_err));
+	ret = 1; /* resume guest */
+	kvm_release_pfn_dirty(resp_pfn);
+
+release_req:
+	kvm_release_pfn_clean(req_pfn);
+	return ret;
+}
+
 static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
 {
 	struct vmcb_control_area *control = &svm->vmcb->control;
@@ -4187,6 +4256,9 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 		}
 
 		ret = 1;
+		break;
+	case SVM_VMGEXIT_GUEST_REQUEST:
+		ret = snp_handle_guest_req(svm, control->exit_info_1, control->exit_info_2);
 		break;
 	case SVM_VMGEXIT_UNSUPPORTED_EVENT:
 		vcpu_unimpl(vcpu,
