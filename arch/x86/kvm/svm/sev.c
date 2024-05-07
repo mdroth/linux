@@ -3555,19 +3555,19 @@ struct psc_buffer {
 
 static int snp_begin_psc(struct vcpu_svm *svm, struct psc_buffer *psc);
 
-static int snp_complete_psc(struct kvm_vcpu *vcpu)
+static void snp_reset_inflight_psc(struct vcpu_svm *svm)
 {
-	struct vcpu_svm *svm = to_svm(vcpu);
+	svm->sev_es.psc_idx = 0;
+	svm->sev_es.psc_inflight = 0;
+	svm->sev_es.psc_2m = false;
+}
+
+static void __snp_complete_psc(struct vcpu_svm *svm)
+{
 	struct psc_buffer *psc = svm->sev_es.ghcb_sa;
 	struct psc_entry *entries = psc->entries;
 	struct psc_hdr *hdr = &psc->hdr;
-	__u64 psc_ret;
 	__u16 idx;
-
-	if (vcpu->run->hypercall.ret) {
-		psc_ret = VMGEXIT_PSC_ERROR_GENERIC;
-		goto out_resume;
-	}
 
 	/*
 	 * Everything in-flight has been processed successfully. Update the
@@ -3581,14 +3581,26 @@ static int snp_complete_psc(struct kvm_vcpu *vcpu)
 	}
 
 	hdr->cur_entry = idx;
+}
+
+static int snp_complete_psc(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+	struct psc_buffer *psc = svm->sev_es.ghcb_sa;
+	__u64 psc_ret;
+
+	if (vcpu->run->hypercall.ret) {
+		psc_ret = VMGEXIT_PSC_ERROR_GENERIC;
+		goto out_resume;
+	}
+
+	__snp_complete_psc(svm);
 
 	/* Handle the next range (if any). */
 	return snp_begin_psc(svm, psc);
 
 out_resume:
-	svm->sev_es.psc_idx = 0;
-	svm->sev_es.psc_inflight = 0;
-	svm->sev_es.psc_2m = false;
+	snp_reset_inflight_psc(svm);
 	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb, psc_ret);
 
 	return 1; /* resume guest */
@@ -3634,6 +3646,7 @@ static int snp_begin_psc(struct vcpu_svm *svm, struct psc_buffer *psc)
 		goto out_resume;
 	}
 
+next_range:
 	/* Find the start of the next range which needs processing. */
 	for (idx = idx_start; idx <= idx_end; idx++, hdr->cur_entry++) {
 		__u16 cur_page;
@@ -3641,11 +3654,6 @@ static int snp_begin_psc(struct vcpu_svm *svm, struct psc_buffer *psc)
 		bool huge;
 
 		entry_start = entries[idx];
-
-		/* Only private/shared conversions are currently supported. */
-		if (entry_start.operation != VMGEXIT_PSC_OP_PRIVATE &&
-		    entry_start.operation != VMGEXIT_PSC_OP_SHARED)
-			continue;
 
 		gfn = entry_start.gfn;
 		cur_page = entry_start.cur_page;
@@ -3694,6 +3702,26 @@ static int snp_begin_psc(struct vcpu_svm *svm, struct psc_buffer *psc)
 		npages += entry_start.pagesize ? 512 : 1;
 	}
 
+	/*
+	 * Only shared/private PSC operations are currently supported, so if the
+	 * entire range consists of unsupported operations (e.g. SMASH/UNSMASH),
+	 * then consider the entire range completed and avoid exiting to
+	 * userspace. In theory snp_complete_psc() can always be called directly
+	 * at this point to complete the current range and start the next one,
+	 * but that could lead to unexpected levels of recursion, so only do
+	 * that if there are no more entries to process and the entire request
+	 * has been completed.
+	 */
+	if (entry_start.operation != VMGEXIT_PSC_OP_PRIVATE &&
+	    entry_start.operation != VMGEXIT_PSC_OP_SHARED) {
+		if (idx > idx_end)
+			return snp_complete_psc(vcpu);
+
+		__snp_complete_psc(svm);
+		snp_reset_inflight_psc(svm);
+		goto next_range;
+	}
+
 	vcpu->run->exit_reason = KVM_EXIT_HYPERCALL;
 	vcpu->run->hypercall.nr = KVM_HC_MAP_GPA_RANGE;
 	vcpu->run->hypercall.args[0] = gpa;
@@ -3709,9 +3737,7 @@ static int snp_begin_psc(struct vcpu_svm *svm, struct psc_buffer *psc)
 	return 0; /* forward request to userspace */
 
 out_resume:
-	svm->sev_es.psc_idx = 0;
-	svm->sev_es.psc_inflight = 0;
-	svm->sev_es.psc_2m = false;
+	snp_reset_inflight_psc(svm);
 	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb, psc_ret);
 
 	return 1; /* resume guest */
