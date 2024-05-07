@@ -3695,6 +3695,7 @@ next_range:
 
 		if (entry.operation != entry_start.operation ||
 		    entry.gfn != entry_start.gfn + npages ||
+		    entry.cur_page != 0 ||
 		    !!entry.pagesize != svm->sev_es.psc_2m)
 			break;
 
