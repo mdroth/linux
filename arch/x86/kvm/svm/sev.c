@@ -3577,7 +3577,7 @@ static void __snp_complete_psc(struct vcpu_svm *svm)
 	     svm->sev_es.psc_inflight--, idx++) {
 		struct psc_entry *entry = &entries[idx];
 
-		entry->cur_page = svm->sev_es.psc_2m ? 512 : 1;
+		entry->cur_page = entry->pagesize ? 512 : 1;
 	}
 
 	hdr->cur_entry = idx;
