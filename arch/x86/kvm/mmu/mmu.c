@@ -3296,7 +3296,7 @@ static int kvm_handle_noslot_fault(struct kvm_vcpu *vcpu,
 	return RET_PF_CONTINUE;
 }
 
-static bool page_fault_can_be_fast(struct kvm_page_fault *fault)
+static bool page_fault_can_be_fast(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 {
 	/*
 	 * Page faults with reserved bits set, i.e. faults on MMIO SPTEs, only
@@ -3305,6 +3305,32 @@ static bool page_fault_can_be_fast(struct kvm_page_fault *fault)
 	 * the slow path.  Note, EPT Misconfigs do NOT set the PRESENT flag!
 	 */
 	if (fault->rsvd)
+		return false;
+
+	/*
+	 * For hardware-protected VMs, certain conditions like attempting to
+	 * perform a write to a page which is not in the state that the guest
+	 * expects it to be in can result in a nested/extended #PF. In this
+	 * case, the below code might misconstrue this situation as being the
+	 * result of a write-protected access, and treat it as a spurious case
+	 * rather than taking any action to satisfy the real source of the #PF
+	 * such as generating a KVM_EXIT_MEMORY_FAULT. This can lead to the
+	 * guest spinning on a #PF indefinitely.
+	 *
+	 * For now, just skip the fast path for hardware-protected VMs since
+	 * they don't currently utilize any of this machinery anyway. In the
+	 * future, these considerations will need to be taken into account if
+	 * there's any need/desire to re-enable the fast path for
+	 * hardware-protected VMs.
+	 *
+	 * Since software-protected VMs don't have a notion of a shared vs.
+	 * private that's separate from what KVM is tracking, the above
+	 * KVM_EXIT_MEMORY_FAULT condition wouldn't occur, so avoid the
+	 * special handling for that case for now.
+	 */
+	if (kvm_slot_can_be_private(fault->slot) &&
+	    !(IS_ENABLED(CONFIG_KVM_SW_PROTECTED_VM) &&
+	      vcpu->kvm->arch.vm_type == KVM_X86_SW_PROTECTED_VM))
 		return false;
 
 	/*
@@ -3407,7 +3433,7 @@ static int fast_page_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 	u64 *sptep;
 	uint retry_count = 0;
 
-	if (!page_fault_can_be_fast(fault))
+	if (!page_fault_can_be_fast(vcpu, fault))
 		return ret;
 
 	walk_shadow_page_lockless_begin(vcpu);
