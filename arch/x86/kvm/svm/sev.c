@@ -3919,11 +3919,16 @@ out:
 	return ret;
 }
 
-static int snp_setup_guest_buf(struct kvm *kvm, struct sev_data_snp_guest_request *data,
-			       gpa_t req_gpa, gpa_t resp_gpa)
+static int snp_handle_guest_req(struct vcpu_svm *svm, gpa_t req_gpa, gpa_t resp_gpa)
 {
-	struct kvm_sev_info *sev = &to_kvm_svm(kvm)->sev_info;
+	struct sev_data_snp_guest_request data = {0};
+	struct kvm *kvm = svm->vcpu.kvm;
 	kvm_pfn_t req_pfn, resp_pfn;
+	sev_ret_code fw_err = 0;
+	int ret;
+
+	if (!sev_snp_guest(kvm))
+		return -EINVAL;
 
 	if (!PAGE_ALIGNED(req_gpa) || !PAGE_ALIGNED(resp_gpa))
 		return -EINVAL;
@@ -3933,64 +3938,49 @@ static int snp_setup_guest_buf(struct kvm *kvm, struct sev_data_snp_guest_reques
 		return -EINVAL;
 
 	resp_pfn = gfn_to_pfn(kvm, gpa_to_gfn(resp_gpa));
-	if (is_error_noslot_pfn(resp_pfn))
-		return -EINVAL;
+	if (is_error_noslot_pfn(resp_pfn)) {
+		ret = -EINVAL;
+		goto release_req;
+	}
 
-	if (rmp_make_private(resp_pfn, 0, PG_LEVEL_4K, 0, true))
-		return -EINVAL;
+	if (rmp_make_private(resp_pfn, 0, PG_LEVEL_4K, 0, true)) {
+		ret = -EINVAL;
+		kvm_release_pfn_clean(resp_pfn);
+		goto release_req;
+	}
 
-	data->gctx_paddr = __psp_pa(sev->snp_context);
-	data->req_paddr = __sme_set(req_pfn << PAGE_SHIFT);
-	data->res_paddr = __sme_set(resp_pfn << PAGE_SHIFT);
+	data.gctx_paddr = __psp_pa(to_kvm_sev_info(kvm)->snp_context);
+	data.req_paddr = __sme_set(req_pfn << PAGE_SHIFT);
+	data.res_paddr = __sme_set(resp_pfn << PAGE_SHIFT);
 
-	return 0;
-}
+	ret = sev_issue_cmd(kvm, SEV_CMD_SNP_GUEST_REQUEST, &data, &fw_err);
 
-static int snp_cleanup_guest_buf(struct sev_data_snp_guest_request *data)
-{
-	u64 pfn = __sme_clr(data->res_paddr) >> PAGE_SHIFT;
+	/*
+	 * If the pages can't be placed back in the expected state then it is
+	 * more reliable to always report the error to userspace than to try to
+	 * let the guest deal with it somehow. Either way, the guest would
+	 * likely terminate itself soon after a guest request failure anyway.
+	 */
+	if (snp_page_reclaim(resp_pfn) ||
+	    host_rmp_make_shared(resp_pfn, PG_LEVEL_4K)) {
+		ret = -EIO;
+		goto release_req;
+	}
 
-	if (snp_page_reclaim(pfn) || rmp_make_shared(pfn, PG_LEVEL_4K))
-		return -EINVAL;
+	/*
+	 * Unlike with reclaim failures, firmware failures should be
+	 * communicated back to the guest via SW_EXITINFO2 rather than be
+	 * treated as immediately fatal.
+	 */
+	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb,
+				SNP_GUEST_ERR(ret ? SNP_GUEST_VMM_ERR_GENERIC : 0,
+					      fw_err));
+	ret = 1; /* resume guest */
+	kvm_release_pfn_dirty(resp_pfn);
 
-	return 0;
-}
-
-static int __snp_handle_guest_req(struct kvm *kvm, gpa_t req_gpa, gpa_t resp_gpa,
-				  sev_ret_code *fw_err)
-{
-	struct sev_data_snp_guest_request data = {0};
-	int ret;
-
-	if (!sev_snp_guest(kvm))
-		return -EINVAL;
-
-	ret = snp_setup_guest_buf(kvm, &data, req_gpa, resp_gpa);
-	if (ret)
-		return ret;
-
-	ret = sev_issue_cmd(kvm, SEV_CMD_SNP_GUEST_REQUEST, &data, fw_err);
-	if (ret)
-		return ret;
-
-	ret = snp_cleanup_guest_buf(&data);
-	if (ret)
-		return ret;
-
-	return 0;
-}
-
-static void snp_handle_guest_req(struct vcpu_svm *svm, gpa_t req_gpa, gpa_t resp_gpa)
-{
-	struct kvm_vcpu *vcpu = &svm->vcpu;
-	struct kvm *kvm = vcpu->kvm;
-	sev_ret_code fw_err = 0;
-	int vmm_ret = 0;
-
-	if (__snp_handle_guest_req(kvm, req_gpa, resp_gpa, &fw_err))
-		vmm_ret = SNP_GUEST_VMM_ERR_GENERIC;
-
-	ghcb_set_sw_exit_info_2(svm->sev_es.ghcb, SNP_GUEST_ERR(vmm_ret, fw_err));
+release_req:
+	kvm_release_pfn_clean(req_pfn);
+	return ret;
 }
 
 static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
@@ -4268,8 +4258,7 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
 		ret = 1;
 		break;
 	case SVM_VMGEXIT_GUEST_REQUEST:
-		snp_handle_guest_req(svm, control->exit_info_1, control->exit_info_2);
-		ret = 1;
+		ret = snp_handle_guest_req(svm, control->exit_info_1, control->exit_info_2);
 		break;
 	case SVM_VMGEXIT_UNSUPPORTED_EVENT:
 		vcpu_unimpl(vcpu,
