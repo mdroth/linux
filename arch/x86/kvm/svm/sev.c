@@ -4675,6 +4675,9 @@ void sev_gmem_invalidate(kvm_pfn_t start, kvm_pfn_t end)
 {
 	kvm_pfn_t pfn;
 
+	if (!cc_platform_has(CC_ATTR_HOST_SEV_SNP))
+		return;
+
 	pr_debug("%s: PFN start 0x%llx PFN end 0x%llx\n", __func__, start, end);
 
 	for (pfn = start; pfn < end;) {
