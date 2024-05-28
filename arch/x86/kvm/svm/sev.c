@@ -2388,8 +2388,7 @@ static int snp_launch_update_vmsa(struct kvm *kvm, struct kvm_sev_cmd *argp)
 		ret = __sev_issue_cmd(argp->sev_fd, SEV_CMD_SNP_LAUNCH_UPDATE,
 				      &data, &argp->error);
 		if (ret) {
-			if (!snp_page_reclaim(pfn))
-				host_rmp_make_shared(pfn, PG_LEVEL_4K);
+			snp_page_reclaim(kvm, pfn);
 
 			return ret;
 		}
@@ -3077,7 +3076,7 @@ void sev_free_vcpu(struct kvm_vcpu *vcpu)
 	if (sev_snp_guest(vcpu->kvm)) {
 		u64 pfn = __pa(svm->sev_es.vmsa) >> PAGE_SHIFT;
 
-		if (host_rmp_make_shared(pfn, PG_LEVEL_4K))
+		if (kvm_rmp_make_shared(vcpu->kvm, pfn, PG_LEVEL_4K))
 			goto skip_vmsa_free;
 	}
 
