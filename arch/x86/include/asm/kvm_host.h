@@ -1305,6 +1305,7 @@ struct kvm_arch {
 	u8 vm_type;
 	bool has_private_mem;
 	bool has_protected_state;
+	bool is_finalized;
 	struct hlist_head mmu_page_hash[KVM_NUM_MMU_PAGES];
 	struct list_head active_mmu_pages;
 	struct list_head zapped_obsolete_pages;
@@ -2187,8 +2188,10 @@ void kvm_configure_mmu(bool enable_tdp, int tdp_forced_root_level,
 
 #ifdef CONFIG_KVM_PRIVATE_MEM
 #define kvm_arch_has_private_mem(kvm) ((kvm)->arch.has_private_mem)
+#define kvm_arch_is_finalized(kvm) ((kvm)->arch.is_finalized)
 #else
 #define kvm_arch_has_private_mem(kvm) false
+#define kvm_arch_is_finalized(kvm) false
 #endif
 
 static inline u16 kvm_read_ldt(void)
