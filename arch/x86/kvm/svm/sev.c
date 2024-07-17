@@ -2421,6 +2421,30 @@ static int snp_launch_update(struct kvm *kvm, struct kvm_sev_cmd *argp)
 			 __func__, count, argp->error);
 		ret = -EIO;
 	} else {
+		struct kvm_vcpu *vcpu;
+
+		/*
+		 * Grab the BSP to handle pre-faulting operations. If it's not available
+		 * yet just skip the pre-faulting, it's only a best-effort optimization.
+		 */
+		vcpu = kvm_get_vcpu_by_id(kvm, 0);
+		if (vcpu) {
+			struct kvm_pre_fault_memory range = {0};
+			long mapped_sz;
+
+			range.gpa = gfn_to_gpa(params.gfn_start);
+			range.size = count * PAGE_SIZE;
+			mapped_sz = kvm_arch_vcpu_pre_fault_memory(vcpu, &range);
+
+			if (mapped_sz != range.size)
+				pr_debug_ratelimited("%s: Failed to pre-fault GFN range at 0x%llx, mapped %ld bytes but expected %lld bytes\n",
+						     __func__, params.gfn_start,
+						     mapped_sz, range.size);
+		} else {
+			pr_debug("%s: Unable to fetch vCPU id 0. Pre-faulting will be skipped for initial guest memory.\n",
+				 __func__);
+		}
+
 		params.gfn_start += count;
 		params.len -= count * PAGE_SIZE;
 		if (params.type != KVM_SEV_SNP_PAGE_TYPE_ZERO)

@@ -4768,6 +4768,7 @@ long kvm_arch_vcpu_pre_fault_memory(struct kvm_vcpu *vcpu,
 	end = (range->gpa & KVM_HPAGE_MASK(level)) + KVM_HPAGE_SIZE(level);
 	return min(range->size, end - range->gpa);
 }
+EXPORT_SYMBOL_GPL(kvm_arch_vcpu_pre_fault_memory);
 
 static void nonpaging_init_context(struct kvm_mmu *context)
 {
