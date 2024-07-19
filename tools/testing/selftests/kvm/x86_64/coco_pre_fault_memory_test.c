@@ -35,8 +35,8 @@ static void guest_code_sev(void)
 	GUEST_DONE();
 }
 
-static void __pre_fault_memory(struct kvm_vcpu *vcpu, u64 gpa, u64 size,
-			       u64 left, bool private)
+static void ____pre_fault_memory(struct kvm_vcpu *vcpu, u64 gpa, u64 size,
+				 u64 left, bool private, bool assert_fail)
 {
 	struct kvm_pre_fault_memory range = {
 		.gpa = gpa,
@@ -50,18 +50,23 @@ static void __pre_fault_memory(struct kvm_vcpu *vcpu, u64 gpa, u64 size,
 		prev = range.size;
 		ret = __vcpu_ioctl(vcpu, KVM_PRE_FAULT_MEMORY, &range);
 		save_errno = errno;
-		TEST_ASSERT((range.size < prev) ^ (ret < 0),
-			    "%sexpecting range.size to change on %s",
-			    ret < 0 ? "not " : "",
-			    ret < 0 ? "failure" : "success");
+		if (!assert_fail)
+			TEST_ASSERT((range.size < prev) ^ (ret < 0),
+				    "%sexpecting range.size to change on %s",
+				    ret < 0 ? "not " : "",
+				    ret < 0 ? "failure" : "success");
 	} while (ret >= 0 ? range.size : save_errno == EINTR);
 
-	TEST_ASSERT(range.size == left,
-		    "Completed with %lld bytes left, expected %" PRId64,
-		    range.size, left);
+	if (!assert_fail)
+		TEST_ASSERT(range.size == left,
+			    "Completed with %lld bytes left, expected %" PRId64,
+			    range.size, left);
 
 	if (left == 0) {
-		__TEST_ASSERT_VM_VCPU_IOCTL(!ret, "KVM_PRE_FAULT_MEMORY", ret, vcpu->vm);
+		if (assert_fail)
+			__TEST_ASSERT_VM_VCPU_IOCTL(ret, "KVM_PRE_FAULT_MEMORY expected failure but got success.", ret, vcpu->vm);
+		else
+			__TEST_ASSERT_VM_VCPU_IOCTL(assert_fail ? ret : !ret, "KVM_PRE_FAULT_MEMORY failed.", ret, vcpu->vm);
 	} else {
 		/*
 		 * For shared memory, no memory slot causes RET_PF_EMULATE. It
@@ -76,9 +81,19 @@ static void __pre_fault_memory(struct kvm_vcpu *vcpu, u64 gpa, u64 size,
 		 *  good to distinguish between these cases to tighten up the
 		 *  error-checking.
 		 */
-		__TEST_ASSERT_VM_VCPU_IOCTL(ret && (save_errno == EFAULT || save_errno == ENOENT),
-					    "KVM_PRE_FAULT_MEMORY", ret, vcpu->vm);
+		if (assert_fail)
+			__TEST_ASSERT_VM_VCPU_IOCTL(ret,
+						    "KVM_PRE_FAULT_MEMORY expected failure but got success.", ret, vcpu->vm);
+		else
+			__TEST_ASSERT_VM_VCPU_IOCTL(ret && (save_errno == EFAULT || save_errno == ENOENT),
+						    "KVM_PRE_FAULT_MEMORY failed.", ret, vcpu->vm);
 	}
+}
+
+static void __pre_fault_memory(struct kvm_vcpu *vcpu, u64 gpa, u64 size,
+			       u64 left, bool private)
+{
+	____pre_fault_memory(vcpu, gpa, size, left, private, false);
 }
 
 static void pre_fault_memory(struct kvm_vcpu *vcpu, u64 gpa, u64 size,
@@ -126,6 +141,8 @@ static void test_pre_fault_memory_sev(unsigned long vm_type, bool private, bool 
 		uint64_t policy = SNP_POLICY_SMT | SNP_POLICY_RSVD_MBO;
 		int ret;
 
+		____pre_fault_memory(vcpu, TEST_GPA, SZ_2M, 0, false, true);
+
 		ret = snp_vm_launch(vm, policy, 0);
 		TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_SNP_LAUNCH_START, ret));
 
@@ -149,12 +166,12 @@ static void test_pre_fault_memory_sev(unsigned long vm_type, bool private, bool 
 			 * access by the guest and so that the expected gmem
 			 * backing pages are used.
 			 */
+			____pre_fault_memory(vcpu, TEST_GPA, SZ_2M, 0, false, true);
 			vm_mem_set_private(vm, TEST_GPA, TEST_SIZE);
+			____pre_fault_memory(vcpu, TEST_GPA, SZ_2M, 0, true, true);
 		} else {
 			/* Shared pages can be pre-faulted any time. */
-			pre_fault_memory(vcpu, TEST_GPA, SZ_2M, 0);
-			pre_fault_memory(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE);
-			pre_fault_memory(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE);
+			____pre_fault_memory(vcpu, TEST_GPA, SZ_2M, 0, false, true);
 		}
 
 		ret = snp_vm_launch_update(vm, KVM_SEV_SNP_PAGE_TYPE_NORMAL);
