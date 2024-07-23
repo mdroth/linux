@@ -144,10 +144,15 @@ static void test_pre_fault_memory_sev(unsigned long vm_type, bool private, bool 
 		uint64_t policy = SNP_POLICY_SMT | SNP_POLICY_RSVD_MBO;
 		int ret;
 
+		falloc_region(vm, falloc_hole);
 		pre_fault_memory_negative(vcpu, TEST_GPA, SZ_2M, 0, false);
+		falloc_region(vm, false);
+		falloc_region(vm, true);
+		falloc_region(vm, false);
 
 		ret = snp_vm_launch(vm, policy, 0);
 		TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_SNP_LAUNCH_START, ret));
+		falloc_region(vm, false);
 
 		falloc_region(vm, falloc_hole);
 		/*
