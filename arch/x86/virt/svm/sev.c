@@ -301,6 +301,17 @@ static int get_rmpentry(u64 pfn, struct rmpentry *entry)
 {
 	struct rmpentry_raw *e;
 
+	if (cpu_feature_enabled(X86_FEATURE_RMPREAD)) {
+		int ret;
+
+		asm volatile(".byte 0xf2, 0x0f, 0x01, 0xfd"
+			     : "=a" (ret)
+			     : "a" (pfn << PAGE_SHIFT), "c" (entry)
+			     : "memory", "cc");
+
+		return ret;
+	}
+
 	e = __get_rmpentry(pfn);
 	if (IS_ERR(e))
 		return PTR_ERR(e);
